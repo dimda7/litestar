@@ -1,0 +1,7 @@
+=== Execute SQL: 2026-06-22 08:55:37 ===
+Rows inserted: 4
+
+INSERT INTO grom.models (id_train_type, id_car_place, id_design_number, lcn, is_default) VALUES (13, 699, 430, 'M13.1.6.2', FALSE);
+INSERT INTO grom.models (id_train_type, id_car_place, id_design_number, lcn, is_default) VALUES (13, 700, 430, 'M13.1.6.3', FALSE);
+INSERT INTO grom.models (id_train_type, id_car_place, id_design_number, lcn, is_default) VALUES (13, 12714, 430, 'M13.5.6.2', FALSE);
+INSERT INTO grom.models (id_train_type, id_car_place, id_design_number, lcn, is_default) VALUES (13, 12715, 430, 'M13.5.6.3', FALSE);

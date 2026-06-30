@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}Пользователи{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Пользователи</h1>
+    <p class="page-subtitle">Управление учетными записями — {{ total }} записей</p>
+</div>
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <label for="per_page" style="font-size: 14px; color: var(--text-secondary);">На странице:</label>
+            <select id="per_page" onchange="changePerPage(this.value)" class="form-input" style="width: auto; padding: 8px 12px;">
+                {% for n in [10, 25, 50, 100] %}
+                <option value="{{ n }}" {{ 'selected' if per_page == n }}>{{ n }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <span style="font-size: 14px; color: var(--text-secondary);">
+            Стр. {{ page }} из {{ total_pages }}
+        </span>
+    </div>
+
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Имя</th>
+                    <th>Фамилия</th>
+                    <th>Статус</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.id }}</td>
+                    <td>{{ user.username or '—' }}</td>
+                    <td>{{ user.firstname or '—' }}</td>
+                    <td>{{ user.lastname or '—' }}</td>
+                    <td>
+                        {% if user.active %}
+                        <span style="display: inline-flex; align-items: center; gap: 4px; color: #2e7d32;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                            Активен
+                        </span>
+                        {% else %}
+                        <span style="display: inline-flex; align-items: center; gap: 4px; color: #c62828;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                            Неактивен
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="pagination">
+        {% if page > 1 %}
+        <a class="page-btn" href="?page=1&per_page={{ per_page }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.41 16.59L13.82 12l4.59-4.59L17 6l-6 6 6 6 1.41-1.41z"/></svg>
+        </a>
+        <a class="page-btn" href="?page={{ page - 1 }}&per_page={{ per_page }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+        </a>
+        {% endif %}
+
+        {% set start = [1, page - 2] | max %}
+        {% set end = [total_pages, page + 2] | min %}
+        {% for p in range(start, end + 1) %}
+        <a class="page-btn {{ 'active' if p == page }}" href="?page={{ p }}&per_page={{ per_page }}">{{ p }}</a>
+        {% endfor %}
+
+        {% if page < total_pages %}
+        <a class="page-btn" href="?page={{ page + 1 }}&per_page={{ per_page }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+        </a>
+        <a class="page-btn" href="?page={{ total_pages }}&per_page={{ per_page }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M5.59 7.41L10.18 12l-4.59 4.59L7 18l6-6-6-6 1.41-1.41z"/></svg>
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function changePerPage(val) {
+    const url = new URL(window.location);
+    url.searchParams.set('per_page', val);
+    url.searchParams.set('page', '1');
+    window.location = url;
+}
+</script>
+{% endblock %}

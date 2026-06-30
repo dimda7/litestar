@@ -1,0 +1,48 @@
+import time
+
+from litestar.types import ASGIApp, Scope, Receive, Send
+from starlette.responses import RedirectResponse
+
+
+EXCLUDE_PATHS = {"/auth/login", "/auth/logout"}
+EXCLUDE_PREFIXES = ("/static/",)
+
+SESSION_TIMEOUT = 3600  # 1 hour in seconds
+
+
+class AuthMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        raw_path = scope.get("raw_path", b"")
+        path = raw_path.decode() if isinstance(raw_path, bytes) else scope.get("path", "")
+        session = scope.get("session", {})
+
+        if any(path.startswith(p) for p in EXCLUDE_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
+        if path in EXCLUDE_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        if not session.get("user_id"):
+            response = RedirectResponse("/auth/login", status_code=303)
+            await response(scope, receive, send)
+            return
+
+        last_activity = session.get("last_activity")
+        now = time.time()
+        if last_activity and (now - last_activity) > SESSION_TIMEOUT:
+            session.clear()
+            response = RedirectResponse("/auth/login", status_code=303)
+            await response(scope, receive, send)
+            return
+
+        session["last_activity"] = now
+        await self.app(scope, receive, send)

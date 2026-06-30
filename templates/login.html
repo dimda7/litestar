@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+    <title>Вход — Litestar App</title>
+</head>
+<body class="login-page">
+    <div class="login-card">
+        <div class="login-logo">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="48" height="48" rx="12" fill="#1976d2"/>
+                <path d="M14 17h20v3H14zm0 6h20v3H14zm0 6h14v3H14z" fill="white"/>
+            </svg>
+        </div>
+        <h1 class="login-title">Вход в систему</h1>
+
+        {% if error %}
+        <div class="alert alert-error">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        <form method="post" action="/auth/login">
+            <div class="form-group">
+                <label for="username" class="form-label">Логин</label>
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    required
+                    autofocus
+                    class="form-input"
+                    placeholder="Введите логин"
+                >
+            </div>
+            <div class="form-group">
+                <label for="password" class="form-label">Пароль</label>
+                <div style="position: relative;">
+                    <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        required
+                        class="form-input"
+                        placeholder="Введите пароль"
+                        style="padding-right: 48px;"
+                    >
+                    <button
+                        type="button"
+                        onclick="togglePassword()"
+                        style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: var(--text-hint); padding: 4px;"
+                        tabindex="-1"
+                    >
+                        <svg id="eye-open" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                        </svg>
+                        <svg id="eye-closed" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="hidden">
+                            <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
+                Войти
+            </button>
+        </form>
+
+        <p style="margin-top: 20px;">
+            <button type="button" onclick="document.getElementById('forgot-modal').style.display='flex'" style="background: none; border: none; color: var(--accent); cursor: pointer; font-size: 14px;">
+                Забыли пароль или логин?
+            </button>
+        </p>
+    </div>
+
+    <div id="forgot-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000;" onclick="this.style.display='none'">
+        <div style="background: white; border-radius: 16px; padding: 32px; max-width: 400px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2);" onclick="event.stopPropagation()">
+            <h2 style="font-size: 18px; font-weight: 500; margin-bottom: 16px; color: var(--text-primary);">Забыли логин или пароль?</h2>
+            <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.6;">
+                Обратитесь к администратору за вашей учетной записью по почте
+                <a href="mailto:grom.help@vsmservice.ru" style="color: var(--accent);">grom.help@vsmservice.ru</a>
+            </p>
+            <button onclick="document.getElementById('forgot-modal').style.display='none'" class="btn btn-primary" style="width: 100%;">
+                Закрыть
+            </button>
+        </div>
+    </div>
+
+    <script>
+        function togglePassword() {
+            const input = document.getElementById('password');
+            const eyeOpen = document.getElementById('eye-open');
+            const eyeClosed = document.getElementById('eye-closed');
+            if (input.type === 'password') {
+                input.type = 'text';
+                eyeOpen.classList.add('hidden');
+                eyeClosed.classList.remove('hidden');
+            } else {
+                input.type = 'password';
+                eyeOpen.classList.remove('hidden');
+                eyeClosed.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
