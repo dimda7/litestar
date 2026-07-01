@@ -57,7 +57,6 @@ class AuthController(Controller):
                 template_name="login.html",
                 context={"error": "Неверный логин или пароль"},
             )
-        print(password, user.password)
         if not user.password or not bcrypt.checkpw(
             password.encode(), user.password.encode()
         ):

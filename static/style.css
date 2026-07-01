@@ -439,6 +439,54 @@ tbody tr.error-row {
     font-size: 14px;
 }
 
+/* Dark Theme */
+[data-theme="dark"] {
+    --bg-primary: #121212;
+    --bg-secondary: #1e1e1e;
+    --bg-card: #1e1e1e;
+    --text-primary: rgba(255, 255, 255, 0.87);
+    --text-secondary: rgba(255, 255, 255, 0.6);
+    --text-hint: rgba(255, 255, 255, 0.38);
+    --accent: #64b5f6;
+    --accent-hover: #90caf9;
+    --accent-light: rgba(100, 181, 246, 0.12);
+    --border: rgba(255, 255, 255, 0.12);
+    --shadow: 0px 2px 1px -1px rgba(0, 0, 0, 0.5), 0px 1px 1px 0px rgba(0, 0, 0, 0.4), 0px 1px 3px 0px rgba(0, 0, 0, 0.3);
+    --shadow-hover: 0px 3px 3px -2px rgba(0, 0, 0, 0.5), 0px 3px 4px 0px rgba(0, 0, 0, 0.4), 0px 1px 8px 0px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] thead {
+    background: #2a2a2a;
+}
+
+[data-theme="dark"] tbody tr:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] tbody tr.error-row {
+    background: rgba(244, 67, 54, 0.12);
+}
+
+[data-theme="dark"] .alert-error {
+    background: rgba(244, 67, 54, 0.12);
+    border-color: rgba(244, 67, 54, 0.3);
+    color: #ef9a9a;
+}
+
+[data-theme="dark"] .alert-success {
+    background: rgba(102, 187, 106, 0.12);
+    border-color: rgba(102, 187, 106, 0.3);
+    color: #a5d6a7;
+}
+
+[data-theme="dark"] .file-upload {
+    background: #2a2a2a;
+}
+
+[data-theme="dark"] .page-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .sidebar {
