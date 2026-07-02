@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from litestar import Controller, Litestar, get
@@ -22,12 +23,25 @@ from controllers.settings import SettingsController
 from middleware import AuthMiddleware
 from models import Base
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
 db_config = SQLAlchemyAsyncConfig(
     connection_string=settings.db_url,
     metadata=Base.metadata,
 )
 
 session_config = CookieBackendConfig(secret=settings.session_secret)
+
+
+def not_found_handler(request: Request, exc: Exception) -> Template:
+    """Кастомная страница 404."""
+    return Template(template_name="errors/404.html", status_code=404)
+
+
+def server_error_handler(request: Request, exc: Exception) -> Template:
+    """Кастомная страница 500. Полная ошибка уходит в лог, пользователю — без деталей."""
+    logging.getLogger("app").error("Unhandled error on %s %s", request.method, request.url, exc_info=exc)
+    return Template(template_name="errors/500.html", status_code=500)
 
 
 class HomeController(Controller):
@@ -64,6 +78,10 @@ app = Litestar(
     ],
     plugins=[SQLAlchemyPlugin(config=db_config)],
     middleware=[session_config.middleware, AuthMiddleware],
+    exception_handlers={
+        404: not_found_handler,
+        500: server_error_handler,
+    },
     openapi_config=OpenAPIConfig(
         title="Grom API",
         version="1.0.0",

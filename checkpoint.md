@@ -73,10 +73,12 @@
 - [x] Экранирование пользовательских строк в генерируемом SQL — добавлен `sql_utils.py` с `sql_escape()`
 - [x] `sql_escape()` применён в `parser.py`, `train_parser.py`, `design_number_parser.py` во всех местах, где строки из Excel (lcn, train_name, active_number, lcn_new, serial_number, number и др.) подставлялись в SQL/лог напрямую через f-строку (уязвимость к разрыву SQL / инъекции в сгенерированном .sql-файле)
 - [x] `cryptography>=42.0` добавлена в `requirements.txt` явно (требуется для `CookieBackendConfig`, раньше отсутствовала в списке зависимостей)
+- [x] Кастомные страницы ошибок 404/500 (`templates/errors/404.html`, `templates/errors/500.html`) — простой layout без сайдбара, переиспользует стили `.login-page`/`.login-card`/`.btn`
+- [x] В `app.py` зарегистрированы `exception_handlers` (404, 500); обработчики должны быть синхронными `def`, а не `async def` — Litestar вызывает их без `await`
+- [x] 500-обработчик логирует полный трейсбек через `logging` (traceback не уходит в ответ пользователю), добавлен минимальный `logging.basicConfig` в `app.py` — полноценная настройка логирования (файлы, ротация) остаётся в следующих шагах
 
 ## Следующие шаги
-1. Настроить кастомные error pages (404, 500)
-2. Убрать из git закоммиченные лог-файлы (`log/*.log`) — уже отслеживаются, `.gitignore` их не подхватывает задним числом
-3. Настроить логирование (basicConfig/handler) — вызовы `logger.info/error` в контроллерах сейчас никуда не выводятся
-4. Вынести дублирующиеся `_load_data`/`_save_data`/`_cleanup_old_files` из `parser.py`, `train_parser.py`, `design_number_parser.py` в общий модуль
-5. Покрыть тестами валидацию (FK/UNIQUE-проверки) в контроллерах парсинга
+1. Убрать из git закоммиченные лог-файлы (`log/*.log`) — уже отслеживаются, `.gitignore` их не подхватывает задним числом
+2. Настроить логирование по каждому модулю (handler на файл, ротация) — сейчас есть только базовый `basicConfig` в консоль
+3. Вынести дублирующиеся `_load_data`/`_save_data`/`_cleanup_old_files` из `parser.py`, `train_parser.py`, `design_number_parser.py` в общий модуль
+4. Покрыть тестами валидацию (FK/UNIQUE-проверки) в контроллерах парсинга
