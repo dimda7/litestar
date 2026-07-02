@@ -18,26 +18,9 @@ from litestar.response import Template, Response, Redirect
 from models import TrainType, DesignNumber, Models, Train, Location, Actives, MileageTrain, CounterActive
 from schemas import GenerateSQLRequest
 from sql_utils import sql_escape
-
-PARSER_DATA_DIR = Path(__file__).parent.parent / "parser_data"
-PARSER_DATA_DIR.mkdir(exist_ok=True)
-
-LOG_DIR = Path(__file__).parent.parent / "log"
-LOG_DIR.mkdir(exist_ok=True)
+from parser_storage import LOG_DIR, load_data as _load_data, save_data as _save_data
 
 logger = logging.getLogger("train_parser")
-
-
-def _load_data(session_id: str) -> dict | None:
-    path = PARSER_DATA_DIR / f"{session_id}.json"
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    return None
-
-
-def _save_data(session_id: str, data: dict) -> None:
-    path = PARSER_DATA_DIR / f"{session_id}.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
 
 
 def _lcn_to_model(lsn: str, id_train_type: int) -> str:

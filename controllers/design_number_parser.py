@@ -18,36 +18,16 @@ from litestar.response import Template, Response, Redirect
 from models import DesignNumber, CounterGroup
 from schemas import DesignNumberSelectSheetRequest
 from sql_utils import sql_escape
-
-PARSER_DATA_DIR = Path(__file__).parent.parent / "parser_data"
-PARSER_DATA_DIR.mkdir(exist_ok=True)
-
-LOG_DIR = Path(__file__).parent.parent / "log"
-LOG_DIR.mkdir(exist_ok=True)
+from parser_storage import (
+    LOG_DIR,
+    load_data as _load_data,
+    save_data as _save_data,
+    cleanup_old_files as _cleanup_old_files,
+)
 
 logger = logging.getLogger("design_number_parser")
 
 PREFIX = "dn_parser"
-
-
-def _load_data(session_id: str) -> dict | None:
-    path = PARSER_DATA_DIR / f"{session_id}.json"
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    return None
-
-
-def _save_data(session_id: str, data: dict) -> None:
-    path = PARSER_DATA_DIR / f"{session_id}.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
-
-
-def _cleanup_old_files() -> None:
-    import time
-    now = time.time()
-    for f in PARSER_DATA_DIR.glob("*.json"):
-        if now - f.stat().st_mtime > 3600:
-            f.unlink(missing_ok=True)
 
 
 class DesignNumberParserController(Controller):
