@@ -105,7 +105,7 @@ class TrainParserController(Controller):
 
             model_result = await db_session.execute(
                 text(
-                    "SELECT id_car_place FROM grom.models "
+                    "SELECT id_car_place FROM public.models "
                     "WHERE id_train_type = :tt AND id_design_number = :dn AND lcn::text = :lcn"
                 ),
                 {"tt": id_type_train, "dn": id_design_number, "lcn": lcn_model},
@@ -122,7 +122,7 @@ class TrainParserController(Controller):
                 else:
                     parent_result = await db_session.execute(
                         text(
-                            "SELECT active_number FROM grom.actives "
+                            "SELECT active_number FROM public.actives "
                             "WHERE lcn::text = :lcn LIMIT 1"
                         ),
                         {"lcn": _lcn_to_lcn(pre_lcn, id_train)},
@@ -297,8 +297,8 @@ class TrainParserController(Controller):
             today = date.today()
             sql_lines: list[str] = []
 
-            sql_lines.append(f"INSERT INTO grom.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{sql_escape(train_name)}', true, false);")
-            sql_lines.append(f"INSERT INTO grom.mileage_train (id_train, milage, mileage_average, date, date_average) VALUES ({id_train}, 0, 0, '{now}', '{today}');")
+            sql_lines.append(f"INSERT INTO public.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{sql_escape(train_name)}', true, false);")
+            sql_lines.append(f"INSERT INTO public.mileage_train (id_train, milage, mileage_average, date, date_average) VALUES ({id_train}, 0, 0, '{now}', '{today}');")
 
             for vr in valid_rows:
                 sn = vr["serial_number"]
@@ -310,25 +310,25 @@ class TrainParserController(Controller):
                 ut_val = str(vr["id_unit_type"]) if vr["id_unit_type"] is not None else "NULL"
 
                 sql_lines.append(
-                    f"INSERT INTO grom.location (id, id_type_location, id_train, car_number, id_car_place) "
+                    f"INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
                     f"VALUES ({id_location}, 2, {id_train}, {car_num_val}, {cp_val});"
                 )
                 sql_lines.append(
-                    f"INSERT INTO grom.actives (id, active_number, id_unit_type, id_design_number, id_location, "
+                    f"INSERT INTO public.actives (id, active_number, id_unit_type, id_design_number, id_location, "
                     f"serial_number, lcn, id_actves_parent, id_actives_root) "
                     f"VALUES ({id_actives}, '{sql_escape(vr['active_number'])}', {ut_val}, {vr['id_design_number']}, "
                     f"{id_location}, {sn_val}, '{sql_escape(vr['lcn_new'])}', {parent_val}, {root_val});"
                 )
 
                 if vr["is_root"]:
-                    sql_lines.append(f"UPDATE grom.counter_active SET is_train = true WHERE id_active = {id_actives};")
+                    sql_lines.append(f"UPDATE public.counter_active SET is_train = true WHERE id_active = {id_actives};")
 
                 id_location += 1
                 id_actives += 1
 
-            sql_lines.append(f"SELECT setval('grom.actives_id_seq', {id_actives});")
-            sql_lines.append(f"SELECT setval('grom.location_id_seq', {id_location});")
-            sql_lines.append(f"SELECT setval('grom.train_id_seq', {id_train});")
+            sql_lines.append(f"SELECT setval('public.actives_id_seq', {id_actives});")
+            sql_lines.append(f"SELECT setval('public.location_id_seq', {id_location});")
+            sql_lines.append(f"SELECT setval('public.train_id_seq', {id_train});")
 
             content = "\n".join(sql_lines)
             return Response(
@@ -410,7 +410,7 @@ class TrainParserController(Controller):
         try:
             await db_session.execute(
                 text(
-                    "INSERT INTO grom.train (id, id_train_type, name, is_active, is_delete) "
+                    "INSERT INTO public.train (id, id_train_type, name, is_active, is_delete) "
                     "VALUES (:id, :tt, :name, true, false)"
                 ),
                 {"id": id_train, "tt": id_type_train, "name": train_name},
@@ -420,7 +420,7 @@ class TrainParserController(Controller):
             today = date.today()
             await db_session.execute(
                 text(
-                    "INSERT INTO grom.mileage_train (id_train, milage, mileage_average, date, date_average) "
+                    "INSERT INTO public.mileage_train (id_train, milage, mileage_average, date, date_average) "
                     "VALUES (:id_train, 0, 0, :date, :date_average)"
                 ),
                 {"id_train": id_train, "date": now, "date_average": today},
@@ -432,7 +432,7 @@ class TrainParserController(Controller):
 
                 await db_session.execute(
                     text(
-                        "INSERT INTO grom.location (id, id_type_location, id_train, car_number, id_car_place) "
+                        "INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
                         "VALUES (:id, 2, :id_train, :car_number, :id_car_place)"
                     ),
                     {"id": id_location, "id_train": id_train, "car_number": vr["car_number"], "id_car_place": vr["car_place_id"]},
@@ -440,7 +440,7 @@ class TrainParserController(Controller):
 
                 await db_session.execute(
                     text(
-                        "INSERT INTO grom.actives (id, active_number, id_unit_type, id_design_number, id_location, "
+                        "INSERT INTO public.actives (id, active_number, id_unit_type, id_design_number, id_location, "
                         "serial_number, lcn, id_actves_parent, id_actives_root) "
                         "VALUES (:id, :active_number, :id_unit_type, :id_design_number, :id_location, "
                         ":serial_number, :lcn, :parent, :root)"
@@ -460,16 +460,16 @@ class TrainParserController(Controller):
 
                 if vr["is_root"]:
                     await db_session.execute(
-                        text("UPDATE grom.counter_active SET is_train = true WHERE id_active = :id"),
+                        text("UPDATE public.counter_active SET is_train = true WHERE id_active = :id"),
                         {"id": id_actives},
                     )
 
                 id_location += 1
                 id_actives += 1
 
-            await db_session.execute(text(f"SELECT setval('grom.actives_id_seq', {id_actives})"))
-            await db_session.execute(text(f"SELECT setval('grom.location_id_seq', {id_location})"))
-            await db_session.execute(text(f"SELECT setval('grom.train_id_seq', {id_train})"))
+            await db_session.execute(text(f"SELECT setval('public.actives_id_seq', {id_actives})"))
+            await db_session.execute(text(f"SELECT setval('public.location_id_seq', {id_location})"))
+            await db_session.execute(text(f"SELECT setval('public.train_id_seq', {id_train})"))
 
             await db_session.commit()
 
