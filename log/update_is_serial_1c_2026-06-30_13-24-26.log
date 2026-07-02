@@ -1,9 +1,0 @@
-=== Update is_serial_1c: 2026-06-30 13:24:26 ===
-Rows updated: 6
-
-UPDATE design_number SET is_serial_1c = FALSE WHERE number = 'A2V00001704399';
-UPDATE design_number SET is_serial_1c = FALSE WHERE number = 'DU0011741';
-UPDATE design_number SET is_serial_1c = FALSE WHERE number = 'DU0012142';
-UPDATE design_number SET is_serial_1c = FALSE WHERE number = 'DU0018628';
-UPDATE design_number SET is_serial_1c = FALSE WHERE number = 'RU008210';
-UPDATE design_number SET is_serial_1c = FALSE WHERE number = 'RU008210_L1';

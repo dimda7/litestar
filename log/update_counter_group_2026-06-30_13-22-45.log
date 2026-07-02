@@ -1,9 +1,0 @@
-=== Update id_counter_group: 2026-06-30 13:22:45 ===
-Rows updated: 6
-
-UPDATE design_number SET id_counter_group = 1 WHERE number = 'A2V00001704399';
-UPDATE design_number SET id_counter_group = 1 WHERE number = 'DU0011741';
-UPDATE design_number SET id_counter_group = 1 WHERE number = 'DU0012142';
-UPDATE design_number SET id_counter_group = 1 WHERE number = 'DU0018628';
-UPDATE design_number SET id_counter_group = 1 WHERE number = 'RU008210';
-UPDATE design_number SET id_counter_group = 1 WHERE number = 'RU008210_L1';
