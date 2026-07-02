@@ -65,5 +65,18 @@
 - [x] Исправлен 404: заменён импорт старого `controllers/design_number` на `controllers.design_number_parser`
 - [x] Удалены старые файлы `controllers/design_number.py` и `templates/design_number.html`
 
+## Фаза 6: Аудит проекта и исправление критичных проблем — ВЫПОЛНЕНА
+- [x] SESSION_SECRET больше не генерируется заново при каждом запуске (`controllers/auth.py`) — раньше это сбрасывало все сессии на рестарте и ломалось при нескольких воркерах
+- [x] Добавлено поле `session_secret` в `config.py` (Settings), читается из `.env` как hex-строка
+- [x] `app.py` использует `settings.session_secret` для `CookieBackendConfig`
+- [x] В `.env` и `.env.example` добавлена переменная `SESSION_SECRET` (в example — с инструкцией по генерации)
+- [x] Экранирование пользовательских строк в генерируемом SQL — добавлен `sql_utils.py` с `sql_escape()`
+- [x] `sql_escape()` применён в `parser.py`, `train_parser.py`, `design_number_parser.py` во всех местах, где строки из Excel (lcn, train_name, active_number, lcn_new, serial_number, number и др.) подставлялись в SQL/лог напрямую через f-строку (уязвимость к разрыву SQL / инъекции в сгенерированном .sql-файле)
+- [x] `cryptography>=42.0` добавлена в `requirements.txt` явно (требуется для `CookieBackendConfig`, раньше отсутствовала в списке зависимостей)
+
 ## Следующие шаги
 1. Настроить кастомные error pages (404, 500)
+2. Убрать из git закоммиченные лог-файлы (`log/*.log`) — уже отслеживаются, `.gitignore` их не подхватывает задним числом
+3. Настроить логирование (basicConfig/handler) — вызовы `logger.info/error` в контроллерах сейчас никуда не выводятся
+4. Вынести дублирующиеся `_load_data`/`_save_data`/`_cleanup_old_files` из `parser.py`, `train_parser.py`, `design_number_parser.py` в общий модуль
+5. Покрыть тестами валидацию (FK/UNIQUE-проверки) в контроллерах парсинга

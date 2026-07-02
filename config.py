@@ -14,6 +14,7 @@ class Settings:
     db_password: str = field(default_factory=lambda: environ["DB_PASSWORD"])
     db_name: str = field(default_factory=lambda: environ["DB_NAME"])
     server_port: int = field(default_factory=lambda: int(environ.get("SERVER_PORT", "8011")))
+    session_secret: bytes = field(default_factory=lambda: bytes.fromhex(environ["SESSION_SECRET"]))
 
     @property
     def db_url(self) -> str:

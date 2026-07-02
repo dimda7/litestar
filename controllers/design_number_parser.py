@@ -17,6 +17,7 @@ from litestar.response import Template, Response, Redirect
 
 from models import DesignNumber, CounterGroup
 from schemas import DesignNumberSelectSheetRequest
+from sql_utils import sql_escape
 
 PARSER_DATA_DIR = Path(__file__).parent.parent / "parser_data"
 PARSER_DATA_DIR.mkdir(exist_ok=True)
@@ -345,7 +346,7 @@ class DesignNumberParserController(Controller):
             "",
         ]
         for dn_id, number, cg_id in valid_rows:
-            log_lines.append(f"UPDATE design_number SET id_counter_group = {cg_id} WHERE number = '{number}';")
+            log_lines.append(f"UPDATE design_number SET id_counter_group = {cg_id} WHERE number = '{sql_escape(number)}';")
         log_lines.append("")
 
         log_file = LOG_DIR / f"update_counter_group_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
@@ -598,7 +599,7 @@ class DesignNumberParserController(Controller):
             )
 
         sql_lines = [
-            f"UPDATE design_number SET id_counter_group = {cg_id} WHERE number = '{number}';"
+            f"UPDATE design_number SET id_counter_group = {cg_id} WHERE number = '{sql_escape(number)}';"
             for _, number, cg_id in valid_rows
         ]
         content = "\n".join(sql_lines)
@@ -654,7 +655,7 @@ class DesignNumberParserController(Controller):
             "",
         ]
         for dn_id, number, is_serial_1c in valid_rows:
-            log_lines.append(f"UPDATE design_number SET is_serial_1c = {'TRUE' if is_serial_1c else 'FALSE'} WHERE number = '{number}';")
+            log_lines.append(f"UPDATE design_number SET is_serial_1c = {'TRUE' if is_serial_1c else 'FALSE'} WHERE number = '{sql_escape(number)}';")
         log_lines.append("")
 
         log_file = LOG_DIR / f"update_is_serial_1c_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
@@ -686,7 +687,7 @@ class DesignNumberParserController(Controller):
             )
 
         sql_lines = [
-            f"UPDATE design_number SET is_serial_1c = {'TRUE' if is_serial_1c else 'FALSE'} WHERE number = '{number}';"
+            f"UPDATE design_number SET is_serial_1c = {'TRUE' if is_serial_1c else 'FALSE'} WHERE number = '{sql_escape(number)}';"
             for _, number, is_serial_1c in valid_rows
         ]
         content = "\n".join(sql_lines)

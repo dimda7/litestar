@@ -17,6 +17,7 @@ from litestar.response import Template, Response, Redirect
 
 from models import TrainType, DesignNumber, Models, Train, Location, Actives, MileageTrain, CounterActive
 from schemas import GenerateSQLRequest
+from sql_utils import sql_escape
 
 PARSER_DATA_DIR = Path(__file__).parent.parent / "parser_data"
 PARSER_DATA_DIR.mkdir(exist_ok=True)
@@ -313,14 +314,14 @@ class TrainParserController(Controller):
             today = date.today()
             sql_lines: list[str] = []
 
-            sql_lines.append(f"INSERT INTO grom.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{train_name}', true, false);")
+            sql_lines.append(f"INSERT INTO grom.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{sql_escape(train_name)}', true, false);")
             sql_lines.append(f"INSERT INTO grom.mileage_train (id_train, milage, mileage_average, date, date_average) VALUES ({id_train}, 0, 0, '{now}', '{today}');")
 
             for vr in valid_rows:
                 sn = vr["serial_number"]
-                sn_val = f"'{sn}'" if sn and sn != "none" else "NULL"
-                parent_val = f"'{vr['id_actives_parent']}'" if vr["id_actives_parent"] else "NULL"
-                root_val = f"'{vr['root_number']}'" if vr["root_number"] else "NULL"
+                sn_val = f"'{sql_escape(sn)}'" if sn and sn != "none" else "NULL"
+                parent_val = f"'{sql_escape(str(vr['id_actives_parent']))}'" if vr["id_actives_parent"] else "NULL"
+                root_val = f"'{sql_escape(str(vr['root_number']))}'" if vr["root_number"] else "NULL"
                 car_num_val = str(vr["car_number"]) if vr["car_number"] is not None else "NULL"
                 cp_val = str(vr["car_place_id"]) if vr["car_place_id"] is not None else "NULL"
                 ut_val = str(vr["id_unit_type"]) if vr["id_unit_type"] is not None else "NULL"
@@ -332,8 +333,8 @@ class TrainParserController(Controller):
                 sql_lines.append(
                     f"INSERT INTO grom.actives (id, active_number, id_unit_type, id_design_number, id_location, "
                     f"serial_number, lcn, id_actves_parent, id_actives_root) "
-                    f"VALUES ({id_actives}, '{vr['active_number']}', {ut_val}, {vr['id_design_number']}, "
-                    f"{id_location}, {sn_val}, '{vr['lcn_new']}', {parent_val}, {root_val});"
+                    f"VALUES ({id_actives}, '{sql_escape(vr['active_number'])}', {ut_val}, {vr['id_design_number']}, "
+                    f"{id_location}, {sn_val}, '{sql_escape(vr['lcn_new'])}', {parent_val}, {root_val});"
                 )
 
                 if vr["is_root"]:

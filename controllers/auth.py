@@ -1,4 +1,3 @@
-import secrets
 import time
 
 import bcrypt
@@ -13,8 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import User
 from schemas import LoginRequest
-
-SESSION_SECRET = secrets.token_bytes(32)
 
 
 class AuthController(Controller):

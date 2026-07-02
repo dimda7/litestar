@@ -13,7 +13,7 @@ from advanced_alchemy.extensions.litestar.plugins import SQLAlchemyPlugin
 from advanced_alchemy.extensions.litestar.plugins.init.config.asyncio import SQLAlchemyAsyncConfig
 
 from config import settings
-from controllers.auth import AuthController, SESSION_SECRET
+from controllers.auth import AuthController
 from controllers.parser import ParserController
 from controllers.train_parser import TrainParserController
 from controllers.design_number_parser import DesignNumberParserController
@@ -27,7 +27,7 @@ db_config = SQLAlchemyAsyncConfig(
     metadata=Base.metadata,
 )
 
-session_config = CookieBackendConfig(secret=SESSION_SECRET)
+session_config = CookieBackendConfig(secret=settings.session_secret)
 
 
 class HomeController(Controller):

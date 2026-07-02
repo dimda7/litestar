@@ -20,6 +20,7 @@ from schemas import (
     GenerateSQLRequest, DeleteRowsRequest, SelectSheetRequest,
     GenerateSQLResponse, ExecuteSQLResponse,
 )
+from sql_utils import sql_escape
 
 PARSER_DATA_DIR = Path(__file__).parent.parent / "parser_data"
 PARSER_DATA_DIR.mkdir(exist_ok=True)
@@ -357,7 +358,7 @@ class ParserController(Controller):
             isdefault_val = "TRUE" if is_default else "FALSE"
             sql = (
                 f"INSERT INTO models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
-                f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{lcn}', {isdefault_val});"
+                f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{sql_escape(lcn)}', {isdefault_val});"
             )
             sql_lines.append(sql)
 
@@ -426,7 +427,7 @@ class ParserController(Controller):
             isdefault_val = "TRUE" if is_default else "FALSE"
             log_lines.append(
                 f"INSERT INTO grom.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
-                f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{lcn}', {isdefault_val});"
+                f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{sql_escape(lcn)}', {isdefault_val});"
             )
         log_lines.append("")
 
