@@ -252,12 +252,16 @@ class ParserController(Controller):
                 result = await db_session.execute(
                     select(CarPlace.id).where(CarPlace.name == position)
                 )
-                r = result.scalar_one_or_none()
-                if r is not None:
-                    car_place_id = r
-                else:
+                matches = result.scalars().all()
+                if len(matches) == 1:
+                    car_place_id = matches[0]
+                elif len(matches) == 0:
                     errors.append({"row": row_num, "field": "position",
                                    "message": f"car_place не найден: '{position}'"})
+                else:
+                    errors.append({"row": row_num, "field": "position",
+                                   "message": (f"car_place неоднозначен: найдено {len(matches)} записей "
+                                               f"с именем '{position}' (id: {matches})")})
 
             design_number_id: int | None = None
             if itemnum:
@@ -324,7 +328,14 @@ class ParserController(Controller):
         затем возвращает SQL-код для скачивания в виде .sql файла.
         """
         rows: list[dict] = json.loads(data.rows)
-        errors, valid_rows = await self._validate_and_build_rows(db_session, rows)
+        try:
+            errors, valid_rows = await self._validate_and_build_rows(db_session, rows)
+        except Exception as e:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
 
         if errors:
             return Response(
@@ -362,7 +373,14 @@ class ParserController(Controller):
         При ошибке вся транзакция откатывается. Логирует результат в log/.
         """
         rows: list[dict] = json.loads(data.rows)
-        errors, valid_rows = await self._validate_and_build_rows(db_session, rows)
+        try:
+            errors, valid_rows = await self._validate_and_build_rows(db_session, rows)
+        except Exception as e:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
 
         if errors:
             return Response(
