@@ -86,8 +86,26 @@
 - [x] `parser.py`: `generate-sql` и `execute-sql` обёрнуты в try/except вокруг `_validate_and_build_rows` — любая будущая неожиданная ошибка БД вернётся как JSON `{"status": "error", ...}`, а не улетит в общий HTML-обработчик 500 (паттерн уже был в `execute_sql`/`execute_delete` и в `train_parser.py`, теперь единообразно везде)
 - Не исправлено (требует решения на уровне данных, не кода): почему `car_place.name` не уникален в БД — 443 дублирующихся имени всего, это существующая проблема данных, а не баг парсера
 
+## Фаза 7: CSRF-защита — ВЫПОЛНЕНА
+- Подключён `CSRFConfig` (`litestar.config.csrf`) в `app.py` — до этого формы и AJAX-запросы (`/auth/login`, `/parser/execute-sql`, `/parser/delete-rows`, `/train-parser/execute`, `/design-number-parser/update-*` и др.) были уязвимы к CSRF: авторизованная сессия давала возможность чужому сайту отправить запрос от имени залогиненного пользователя
+- Секрет переиспользован из `settings.session_secret` (`.hex()`) — новая переменная в `.env` не потребовалась; используется для HMAC-подписи токена, а не для шифрования сессии (другое криптографическое назначение, но тот же случайный секрет)
+- `templates/base.html`: токен рендерится в `<meta name="csrf-token">` + добавлен JS-хелпер `appendCsrfToken(formData)`, доступный во всех шаблонах, унаследованных от `base.html`
+- `templates/login.html` не наследует `base.html` (свой `<head>`) — токен добавлен туда отдельным скрытым полем `_csrf_token`
+- Обычные `<form method="post">` (`parser.html`, `train_parser.html`, `design_number_parser.html` — upload и select-sheet) получили скрытое поле `<input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">`
+- AJAX-запросы через `fetch()` с `FormData` (generate-sql, execute-sql, delete-rows, execute-delete и аналогичные в design-number-parser/train-parser) — токен добавляется через `appendCsrfToken()` перед отправкой
+- Проверено вживую через `curl`: GET `/auth/login` ставит куку `csrftoken` и рендерит совпадающий токен в форме; POST без токена → `403 Forbidden`; POST с валидным токеном — доходит до контроллера
+- Попутно удалён неиспользуемый `.venv/` (126MB, неполный набор зависимостей — отсутствовал `jinja2`). Рабочий интерпретатор — `venv/`, PyCharm использует отдельно настроенный SDK "Python 3.10 (litestar) (3)", `.iml` лишь исключает обе папки из индексации
+
+## Фаза 8: Логирование по модулям с ротацией — ВЫПОЛНЕНА
+- Создан `logging_config.py` с `configure_logging(level)` на базе `logging.config.dictConfig`
+- Для каждого логгера из `MODULE_LOGGERS` (`app`, `parser`, `train_parser`, `design_number_parser` — имена уже использовались через `logging.getLogger(...)` в контроллерах, но раньше писали только в консоль через общий `basicConfig`) настроен свой `RotatingFileHandler`: `log/<module>.log`, ротация при 5MB, 5 бэкапов, плюс дублирование в консоль (`propagate=False`, чтобы сообщения не удваивались через root)
+- `app.py`: `logging.basicConfig(...)` заменён на `configure_logging(level=settings.log_level)`
+- `config.py`: добавлено поле `log_level` (читается из `.env` как `LOG_LEVEL`, по умолчанию `INFO`) — по правилу «не хардкодить» из `AGENTS.md`
+- `.env.example`: добавлена переменная `LOG_LEVEL` с комментарием
+- Не тронуто: отдельные per-операционные аудит-файлы (`log/insert_models_*.log`, `log/update_counter_group_*.log` и т.п.) — это не логи через модуль `logging`, а ручная запись SQL-аудита каждой операции execute-sql/execute/update прямо в контроллерах (`open(log_file, "a")`); осталось как есть, т.к. это другая сущность (аудит конкретной операции с уникальным именем файла, а не поточный лог модуля)
+- Проверено вживую: `logging.getLogger("parser").info(...)` и аналоги для трёх других логгеров пишутся и в консоль, и в свой `log/<module>.log`
+
 ## Следующие шаги
-1. Настроить логирование по каждому модулю (handler на файл, ротация) — сейчас есть только базовый `basicConfig` в консоль
-2. Покрыть тестами валидацию (FK/UNIQUE-проверки) в контроллерах парсинга
-3. Возможно, добавить вызов `cleanup_old_files()` в `train_parser.py` (`/upload`), как это уже сделано в `parser.py` и `design_number_parser.py` — сейчас его JSON-файлы в `parser_data/` не удаляются автоматически
-4. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
+1. Покрыть тестами валидацию (FK/UNIQUE-проверки) в контроллерах парсинга
+2. Возможно, добавить вызов `cleanup_old_files()` в `train_parser.py` (`/upload`), как это уже сделано в `parser.py` и `design_number_parser.py` — сейчас его JSON-файлы в `parser_data/` не удаляются автоматически
+3. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются

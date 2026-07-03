@@ -15,6 +15,7 @@ from advanced_alchemy.extensions.litestar.plugins import SQLAlchemyPlugin
 from advanced_alchemy.extensions.litestar.plugins.init.config.asyncio import SQLAlchemyAsyncConfig
 
 from config import settings
+from logging_config import configure_logging
 from controllers.auth import AuthController
 from controllers.parser import ParserController
 from controllers.train_parser import TrainParserController
@@ -24,7 +25,7 @@ from controllers.settings import SettingsController
 from middleware import AuthMiddleware
 from models import Base
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+configure_logging(level=settings.log_level)
 
 db_config = SQLAlchemyAsyncConfig(
     connection_string=settings.db_url,
