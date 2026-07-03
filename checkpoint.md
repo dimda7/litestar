@@ -105,7 +105,16 @@
 - Не тронуто: отдельные per-операционные аудит-файлы (`log/insert_models_*.log`, `log/update_counter_group_*.log` и т.п.) — это не логи через модуль `logging`, а ручная запись SQL-аудита каждой операции execute-sql/execute/update прямо в контроллерах (`open(log_file, "a")`); осталось как есть, т.к. это другая сущность (аудит конкретной операции с уникальным именем файла, а не поточный лог модуля)
 - Проверено вживую: `logging.getLogger("parser").info(...)` и аналоги для трёх других логгеров пишутся и в консоль, и в свой `log/<module>.log`
 
+## Фаза 9: Тесты FK/UNIQUE-валидации парсинга — ВЫПОЛНЕНА
+- Добавлены `pytest`, `pytest-asyncio`, `aiosqlite` в `requirements-dev.txt` (наследует `requirements.txt`); `pytest.ini` — `asyncio_mode = auto`, `pythonpath = .`
+- `tests/conftest.py`: фикстура `db_session` — in-memory SQLite вместо реального Postgres. Все модели (`schema="public"`) и часть контроллеров (`train_parser.py`) обращаются к таблицам как `public.<table>` через сырой SQL — в SQLite это решено через `ATTACH DATABASE ':memory:' AS public` на событии `connect` (со `StaticPool`, чтобы in-memory БД не терялась между «соединениями»). Так и ORM `select()`, и `text("... FROM public.models")` бьют в одни и те же таблицы без расхождения с продакшен-кодом
+- `tests/test_parser_validation.py` (14 тестов) — `ParserController._validate_and_build_rows`: FK не найден (train_type/car_place/design_number), **регрессия на баг с неуникальным `car_place.name`** (MultipleResultsFound), дубликат строки против существующей записи в БД и внутри пачки, оба UNIQUE-ограничения (`lcn+car_place` и `car_place+train_type+design_number` при `is_default=true`) — конфликт с БД и конфликт внутри пачки, отдельно проверено что не-default строки эти ограничения не проверяют, fallback `lsn`→`lcn`
+- `tests/test_design_number_parser_validation.py` (15 тестов) — `_validate_counter_group` и `_validate_is_serial_1c`: пустые поля, FK не найден, регистронезависимое сопоставление `counter_group.name`, весь набор допустимых значений `is_serial_1c` (true/false/1/0/да/нет) и невалидное значение
+- `tests/test_train_parser_helpers.py` (11 тестов) — чистые функции разбора LSN (`_lcn_to_model`, `_lcn_to_lcn`, `_lcn_to_prelcn`, `_parse_car_number`), без обращения к БД
+- `tests/test_train_parser_validation.py` (4 теста) — только ветки `_validate_train_rows`, не доходящие до `text("... WHERE lcn::text = :lcn")`: пустые `lsn`/`itemnum`, design_number не найден. **Не покрыто намеренно**: happy-path с реальным разрешением `car_place_id`/`id_actives_parent` — использует Postgres-специфичный оператор `::text`, который SQLite не парсит; для полного покрытия нужен настоящий Postgres в тестах (например, testcontainers — не доступен в этом окружении: `docker` есть, но без прав на сокет)
+- Итого 43 теста, `venv/bin/pytest` — все зелёные
+
 ## Следующие шаги
-1. Покрыть тестами валидацию (FK/UNIQUE-проверки) в контроллерах парсинга
-2. Возможно, добавить вызов `cleanup_old_files()` в `train_parser.py` (`/upload`), как это уже сделано в `parser.py` и `design_number_parser.py` — сейчас его JSON-файлы в `parser_data/` не удаляются автоматически
-3. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
+1. Возможно, добавить вызов `cleanup_old_files()` в `train_parser.py` (`/upload`), как это уже сделано в `parser.py` и `design_number_parser.py` — сейчас его JSON-файлы в `parser_data/` не удаляются автоматически
+2. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
+3. Покрыть happy-path `train_parser._validate_train_rows` (разрешение `car_place_id`/`id_actives_parent`) — нужен реальный Postgres в тестовом окружении (testcontainers или аналог), см. Фазу 9
