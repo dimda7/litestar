@@ -114,7 +114,10 @@
 - `tests/test_train_parser_validation.py` (4 теста) — только ветки `_validate_train_rows`, не доходящие до `text("... WHERE lcn::text = :lcn")`: пустые `lsn`/`itemnum`, design_number не найден. **Не покрыто намеренно**: happy-path с реальным разрешением `car_place_id`/`id_actives_parent` — использует Postgres-специфичный оператор `::text`, который SQLite не парсит; для полного покрытия нужен настоящий Postgres в тестах (например, testcontainers — не доступен в этом окружении: `docker` есть, но без прав на сокет)
 - Итого 43 теста, `venv/bin/pytest` — все зелёные
 
+## Фаза 10: cleanup_old_files() в train_parser.py — ВЫПОЛНЕНА
+- `controllers/train_parser.py`: добавлен импорт `cleanup_old_files as _cleanup_old_files` из `parser_storage` и вызов в начале `try` в `/upload`, тем же паттерном, что уже был в `parser.py` и `design_number_parser.py` — раньше это был единственный из трёх парсеров, где JSON-файлы сессии в `parser_data/` не удалялись автоматически по истечении часа
+
 ## Следующие шаги
-1. Возможно, добавить вызов `cleanup_old_files()` в `train_parser.py` (`/upload`), как это уже сделано в `parser.py` и `design_number_parser.py` — сейчас его JSON-файлы в `parser_data/` не удаляются автоматически
-2. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
-3. Покрыть happy-path `train_parser._validate_train_rows` (разрешение `car_place_id`/`id_actives_parent`) — нужен реальный Postgres в тестовом окружении (testcontainers или аналог), см. Фазу 9
+1. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
+2. Покрыть happy-path `train_parser._validate_train_rows` (разрешение `car_place_id`/`id_actives_parent`) — нужен реальный Postgres в тестовом окружении (testcontainers или аналог), см. Фазу 9
+3. Rate-limiting / защита от брутфорса на `/auth/login` — отмечалось в общем аудите проекта, пока не реализовано

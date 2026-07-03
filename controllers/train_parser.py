@@ -18,7 +18,12 @@ from litestar.response import Template, Response, Redirect
 from models import TrainType, DesignNumber, Models, Train, Location, Actives, MileageTrain, CounterActive
 from schemas import GenerateSQLRequest
 from sql_utils import sql_escape
-from parser_storage import LOG_DIR, load_data as _load_data, save_data as _save_data
+from parser_storage import (
+    LOG_DIR,
+    load_data as _load_data,
+    save_data as _save_data,
+    cleanup_old_files as _cleanup_old_files,
+)
 
 logger = logging.getLogger("train_parser")
 
@@ -202,6 +207,8 @@ class TrainParserController(Controller):
             return Redirect("/train-parser")
 
         try:
+            _cleanup_old_files()
+
             content = await upload_file.read()
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(content)
