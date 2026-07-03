@@ -10,6 +10,7 @@
 
 <div class="card" style="margin-bottom: 24px;">
     <form method="post" action="/train-parser/upload" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <div class="file-upload">
             <label class="file-upload-label">
                 <input type="file" name="file" accept=".xlsx,.xls" onchange="document.getElementById('file-name').textContent = this.files[0]?.name || 'Файл не выбран'">
@@ -214,7 +215,7 @@
         formData.append('rows', JSON.stringify(ALL_ROWS));
         formData.append('train_name', trainName);
         formData.append('train_type_name', trainTypeName);
-        return formData;
+        return appendCsrfToken(formData);
     }
 
     function generateSQL() {

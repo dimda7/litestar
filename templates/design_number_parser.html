@@ -10,6 +10,7 @@
 
 <div class="card" style="margin-bottom: 24px;">
     <form method="post" action="/design-number-parser/upload" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <div class="file-upload">
             <label class="file-upload-label">
                 <input type="file" name="file" accept=".xlsx,.xls" onchange="document.getElementById('file-name').textContent = this.files[0]?.name || 'Файл не выбран'">
@@ -36,6 +37,7 @@
         Файл «{{ pending_filename }}» содержит несколько листов. Выберите нужный:
     </h3>
     <form method="post" action="/design-number-parser/select-sheet">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
             {% for sheet in pending_sheets %}
             <label style="display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: background 0.15s;">
@@ -233,7 +235,7 @@
     function buildFormData() {
         const formData = new FormData();
         formData.append('rows', JSON.stringify(ALL_ROWS));
-        return formData;
+        return appendCsrfToken(formData);
     }
 
     function getEndpoints() {

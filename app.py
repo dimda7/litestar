@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 from litestar import Controller, Litestar, get
+from litestar.config.csrf import CSRFConfig
 from litestar.connection.request import Request
 from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.middleware.session.client_side import CookieBackendConfig
@@ -31,6 +32,11 @@ db_config = SQLAlchemyAsyncConfig(
 )
 
 session_config = CookieBackendConfig(secret=settings.session_secret)
+
+# Отдельный секрет не заводим: settings.session_secret уже хранится в .env как
+# случайная hex-строка и используется здесь для HMAC-подписи CSRF-токена
+# (другое криптографическое назначение, чем шифрование сессионной куки).
+csrf_config = CSRFConfig(secret=settings.session_secret.hex())
 
 
 def not_found_handler(request: Request, exc: Exception) -> Template:
@@ -78,6 +84,7 @@ app = Litestar(
     ],
     plugins=[SQLAlchemyPlugin(config=db_config)],
     middleware=[session_config.middleware, AuthMiddleware],
+    csrf_config=csrf_config,
     exception_handlers={
         404: not_found_handler,
         500: server_error_handler,
