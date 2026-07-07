@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block title %}Выполнить SQL скрипт{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Выполнить SQL скрипт</h1>
+    <p class="page-subtitle">Ручное выполнение SQL-запросов к текущей подключённой БД</p>
+</div>
+
+<div class="card" style="margin-bottom: 24px;">
+    <div class="file-upload" style="margin-bottom: 16px;">
+        <label class="file-upload-label">
+            <input type="file" id="sql-file-input" accept=".sql,.txt" onchange="loadSqlFile(this)">
+            Загрузить SQL файл
+        </label>
+        <span id="sql-file-name" class="file-upload-name">Файл не выбран</span>
+    </div>
+
+    <div style="display: flex; gap: 10px; align-items: stretch;">
+        <button id="run-btn" type="button" onclick="executeSql()" title="Выполнить (Ctrl+Enter)"
+                style="flex-shrink: 0; width: 32px; border: none; border-radius: 8px; background: var(--bg-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center;">
+            <span style="width: 0; height: 0; border-top: 8px solid transparent; border-bottom: 8px solid transparent; border-left: 13px solid #2e7d32; margin-left: 3px;"></span>
+        </button>
+        <textarea id="sql-textarea" spellcheck="false" placeholder="SELECT * FROM public.actives LIMIT 10;"
+                  style="flex: 1; min-height: 240px; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.5; padding: 12px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; background: var(--bg-secondary); color: var(--text-primary);"></textarea>
+    </div>
+    <p style="margin: 10px 0 0; font-size: 12px; color: var(--text-hint);">
+        Несколько запросов через «;» выполняются последовательно в одной транзакции — при ошибке всё откатывается.
+    </p>
+</div>
+
+<div id="sql-results"></div>
+
+<script>
+    function loadSqlFile(input) {
+        const file = input.files[0];
+        if (!file) return;
+        document.getElementById('sql-file-name').textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            document.getElementById('sql-textarea').value = e.target.result;
+        };
+        reader.readAsText(file, 'utf-8');
+    }
+
+    function renderResults(data) {
+        const box = document.getElementById('sql-results');
+        box.innerHTML = '';
+
+        if (data.status === 'error') {
+            const err = document.createElement('div');
+            err.className = 'alert alert-error';
+            err.style.marginBottom = '16px';
+            const prefix = (typeof data.failed_index === 'number') ? ('Ошибка в запросе №' + (data.failed_index + 1) + ': ') : 'Ошибка: ';
+            const strong = document.createElement('strong');
+            strong.textContent = prefix;
+            err.appendChild(strong);
+            err.appendChild(document.createTextNode(data.message || ''));
+            box.appendChild(err);
+        }
+
+        (data.results || []).forEach((r, i) => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.style.marginBottom = '16px';
+
+            const title = document.createElement('div');
+            title.style.cssText = 'font-family: monospace; font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; white-space: pre-wrap; word-break: break-all;';
+            title.textContent = '№' + (i + 1) + ': ' + r.statement;
+            card.appendChild(title);
+
+            if (r.columns) {
+                if (r.rows.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.style.cssText = 'font-size: 13px; color: var(--text-hint);';
+                    empty.textContent = 'Строк не найдено';
+                    card.appendChild(empty);
+                } else {
+                    const wrap = document.createElement('div');
+                    wrap.className = 'table-wrapper';
+                    const table = document.createElement('table');
+
+                    const thead = document.createElement('thead');
+                    const htr = document.createElement('tr');
+                    r.columns.forEach(c => {
+                        const th = document.createElement('th');
+                        th.textContent = c;
+                        htr.appendChild(th);
+                    });
+                    thead.appendChild(htr);
+                    table.appendChild(thead);
+
+                    const tbody = document.createElement('tbody');
+                    r.rows.forEach(row => {
+                        const tr = document.createElement('tr');
+                        row.forEach(v => {
+                            const td = document.createElement('td');
+                            td.textContent = (v === null) ? '—' : v;
+                            tr.appendChild(td);
+                        });
+                        tbody.appendChild(tr);
+                    });
+                    table.appendChild(tbody);
+                    wrap.appendChild(table);
+                    card.appendChild(wrap);
+
+                    const count = document.createElement('div');
+                    count.style.cssText = 'font-size: 12px; color: var(--text-hint); margin-top: 8px;';
+                    count.textContent = 'Строк: ' + r.rows.length;
+                    card.appendChild(count);
+                }
+            } else {
+                const msg = document.createElement('div');
+                msg.style.cssText = 'font-size: 13px; color: #2e7d32;';
+                msg.textContent = 'Выполнено. Затронуто строк: ' + r.rowcount;
+                card.appendChild(msg);
+            }
+
+            box.appendChild(card);
+        });
+    }
+
+    function executeSql() {
+        const sql = document.getElementById('sql-textarea').value.trim();
+        if (!sql) return;
+
+        const formData = new FormData();
+        formData.append('sql', sql);
+        appendCsrfToken(formData);
+
+        const btn = document.getElementById('run-btn');
+        btn.style.opacity = '0.4';
+        btn.style.pointerEvents = 'none';
+
+        fetch('/sql-console/execute', { method: 'POST', body: formData })
+            .then(resp => resp.json())
+            .then(data => renderResults(data))
+            .catch(err => renderResults({ status: 'error', message: 'Ошибка запроса: ' + err }))
+            .finally(() => {
+                btn.style.opacity = '1';
+                btn.style.pointerEvents = 'auto';
+            });
+    }
+
+    document.getElementById('sql-textarea').addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            executeSql();
+        }
+    });
+</script>
+{% endblock %}

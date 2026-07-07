@@ -1,0 +1,110 @@
+import json
+import logging
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+from litestar import Controller, get, post
+from litestar.connection.request import Request
+from litestar.enums import RequestEncodingType
+from litestar.params import Body
+from litestar.response import Response, Template
+
+logger = logging.getLogger("sql_console")
+
+
+def _split_sql_statements(script: str) -> list[str]:
+    """Разбивает скрипт на отдельные операторы по ';' вне строковых литералов.
+
+    Простой посимвольный разбор без поддержки dollar-quoted строк ($$...$$)
+    и экранированных кавычек — достаточно для обычных SELECT/INSERT/UPDATE/DELETE.
+    """
+    statements: list[str] = []
+    current: list[str] = []
+    in_single = False
+    in_double = False
+
+    for ch in script:
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            current.append(ch)
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            current.append(ch)
+        elif ch == ";" and not in_single and not in_double:
+            stmt = "".join(current).strip()
+            if stmt:
+                statements.append(stmt)
+            current = []
+        else:
+            current.append(ch)
+
+    tail = "".join(current).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
+class SqlConsoleController(Controller):
+    path = "/sql-console"
+
+    @get("/")
+    async def index(self, request: Request) -> Template:
+        return Template(
+            template_name="sql_console.html",
+            context={
+                "user_id": request.session.get("user_id"),
+                "fullname": request.session.get("fullname", ""),
+                "active_page": "sql_console",
+            },
+        )
+
+    @post("/execute")
+    async def execute(
+        self,
+        request: Request,
+        db_session: AsyncSession,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        script = str(data.get("sql", "") or "")
+        statements = _split_sql_statements(script)
+
+        if not statements:
+            return Response(
+                content=json.dumps({"status": "error", "message": "Пустой SQL-запрос"}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        results: list[dict] = []
+        try:
+            for stmt in statements:
+                result = await db_session.execute(text(stmt))
+                if result.returns_rows:
+                    columns = list(result.keys())
+                    rows = [
+                        [None if v is None else str(v) for v in row]
+                        for row in result.fetchall()
+                    ]
+                    results.append({"statement": stmt, "columns": columns, "rows": rows})
+                else:
+                    results.append({"statement": stmt, "columns": None, "rows": None, "rowcount": result.rowcount})
+            await db_session.commit()
+        except Exception as e:
+            await db_session.rollback()
+            return Response(
+                content=json.dumps({
+                    "status": "error",
+                    "message": str(e),
+                    "results": results,
+                    "failed_index": len(results),
+                }),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        logger.info("SQL console: executed %d statement(s)", len(statements))
+        return Response(
+            content=json.dumps({"status": "ok", "results": results}),
+            status_code=200,
+            media_type="application/json",
+        )
