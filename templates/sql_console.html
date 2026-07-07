@@ -18,16 +18,28 @@
     </div>
 
     <div style="display: flex; gap: 10px; align-items: stretch;">
-        <button id="run-btn" type="button" onclick="executeSql()" title="Выполнить (Ctrl+Enter)"
-                style="flex-shrink: 0; width: 32px; border: none; border-radius: 8px; background: var(--bg-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center;">
-            <span style="width: 0; height: 0; border-top: 8px solid transparent; border-bottom: 8px solid transparent; border-left: 13px solid #2e7d32; margin-left: 3px;"></span>
-        </button>
+        <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 6px;">
+            <button id="run-btn" type="button" onclick="executeSql()" title="Выполнить (Ctrl+Enter)"
+                    style="width: 32px; height: 32px; border: none; border-radius: 8px; background: var(--bg-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                <span style="width: 0; height: 0; border-top: 8px solid transparent; border-bottom: 8px solid transparent; border-left: 13px solid #2e7d32; margin-left: 3px;"></span>
+            </button>
+            <button id="cancel-btn" type="button" onclick="cancelSql()" title="Прервать запрос" disabled
+                    style="width: 32px; height: 32px; border: none; border-radius: 8px; background: var(--bg-secondary); cursor: not-allowed; opacity: 0.35; display: flex; align-items: center; justify-content: center; transition: opacity 0.15s;">
+                <span style="width: 12px; height: 12px; background: #c62828; border-radius: 2px;"></span>
+            </button>
+        </div>
         <textarea id="sql-textarea" spellcheck="false" placeholder="SELECT * FROM public.actives LIMIT 10;"
                   style="flex: 1; min-height: 240px; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.5; padding: 12px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; background: var(--bg-secondary); color: var(--text-primary);"></textarea>
     </div>
-    <p style="margin: 10px 0 0; font-size: 12px; color: var(--text-hint);">
-        Несколько запросов через «;» выполняются последовательно в одной транзакции — при ошибке всё откатывается.
-    </p>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+        <p style="margin: 0; font-size: 12px; color: var(--text-hint);">
+            Несколько запросов через «;» выполняются последовательно в одной транзакции — при ошибке всё откатывается.
+        </p>
+        <span style="display: flex; align-items: center; gap: 12px; margin-left: 12px;">
+            <span id="cancel-status" style="font-size: 12px; color: var(--text-hint); white-space: nowrap;"></span>
+            <span id="sql-timer" style="font-size: 12px; color: var(--text-secondary); font-family: monospace; white-space: nowrap;"></span>
+        </span>
+    </div>
 </div>
 
 <div id="sql-results"></div>
@@ -121,25 +133,114 @@
         });
     }
 
+    let currentExecutionId = null;
+    let timerStart = null;
+    let timerInterval = null;
+
+    function genExecutionId() {
+        return 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2);
+    }
+
+    function formatElapsed(ms) {
+        return (ms / 1000).toFixed(2) + ' с';
+    }
+
+    function startTimer() {
+        timerStart = performance.now();
+        const timerEl = document.getElementById('sql-timer');
+        timerEl.textContent = 'Выполняется: 0.00 с';
+        timerInterval = setInterval(() => {
+            timerEl.textContent = 'Выполняется: ' + formatElapsed(performance.now() - timerStart);
+        }, 100);
+    }
+
+    function stopTimer(label) {
+        clearInterval(timerInterval);
+        const elapsed = performance.now() - timerStart;
+        document.getElementById('sql-timer').textContent = label + ': ' + formatElapsed(elapsed);
+    }
+
+    function setRunningState(running) {
+        const runBtn = document.getElementById('run-btn');
+        const cancelBtn = document.getElementById('cancel-btn');
+        runBtn.style.opacity = running ? '0.4' : '1';
+        runBtn.style.pointerEvents = running ? 'none' : 'auto';
+        cancelBtn.disabled = !running;
+        cancelBtn.style.opacity = running ? '1' : '0.35';
+        cancelBtn.style.cursor = running ? 'pointer' : 'not-allowed';
+    }
+
     function executeSql() {
         const sql = document.getElementById('sql-textarea').value.trim();
         if (!sql) return;
 
+        currentExecutionId = genExecutionId();
+        document.getElementById('cancel-status').textContent = '';
+
         const formData = new FormData();
         formData.append('sql', sql);
+        formData.append('execution_id', currentExecutionId);
         appendCsrfToken(formData);
 
-        const btn = document.getElementById('run-btn');
-        btn.style.opacity = '0.4';
-        btn.style.pointerEvents = 'none';
+        setRunningState(true);
+        startTimer();
 
         fetch('/sql-console/execute', { method: 'POST', body: formData })
             .then(resp => resp.json())
-            .then(data => renderResults(data))
-            .catch(err => renderResults({ status: 'error', message: 'Ошибка запроса: ' + err }))
+            .then(data => {
+                let label = 'Выполнено за';
+                if (data.status === 'error') {
+                    label = (data.message || '').indexOf('прерван') !== -1 ? 'Прервано через' : 'Завершено с ошибкой через';
+                }
+                stopTimer(label);
+                renderResults(data);
+            })
+            .catch(err => {
+                stopTimer('Прервано через');
+                renderResults({ status: 'error', message: 'Ошибка запроса: ' + err });
+            })
             .finally(() => {
-                btn.style.opacity = '1';
-                btn.style.pointerEvents = 'auto';
+                setRunningState(false);
+                currentExecutionId = null;
+            });
+    }
+
+    function cancelSql() {
+        if (!currentExecutionId) return;
+
+        const formData = new FormData();
+        formData.append('execution_id', currentExecutionId);
+        appendCsrfToken(formData);
+
+        const cancelBtn = document.getElementById('cancel-btn');
+        const statusEl = document.getElementById('cancel-status');
+        cancelBtn.disabled = true;
+        cancelBtn.style.opacity = '0.35';
+        cancelBtn.style.cursor = 'not-allowed';
+        statusEl.textContent = 'Отправка сигнала отмены...';
+
+        // Отмена — короткая административная операция (сигнал pg_cancel_backend),
+        // а не сам запрос, поэтому у неё есть собственный таймаут: если сервер
+        // не ответил за разумное время, интерфейс не должен виснуть молча.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+        fetch('/sql-console/cancel', { method: 'POST', body: formData, signal: controller.signal })
+            .then(resp => resp.json())
+            .then(data => {
+                statusEl.textContent = data.message || (data.status === 'ok' ? 'Сигнал отмены отправлен' : 'Не удалось отменить запрос');
+            })
+            .catch(err => {
+                const reason = (err && err.name === 'AbortError') ? 'таймаут запроса на отмену' : err;
+                statusEl.textContent = 'Не удалось отправить сигнал отмены: ' + reason;
+            })
+            .finally(() => {
+                clearTimeout(timeoutId);
+                if (currentExecutionId) {
+                    cancelBtn.disabled = false;
+                    cancelBtn.style.opacity = '1';
+                    cancelBtn.style.cursor = 'pointer';
+                }
             });
     }
 

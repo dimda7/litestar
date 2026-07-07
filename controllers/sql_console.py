@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +10,12 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response, Template
 
+import db_manager
+
 logger = logging.getLogger("sql_console")
+
+# execution_id -> (профиль БД, backend pid), пока запрос выполняется
+_running_queries: dict[str, tuple[str, int]] = {}
 
 
 def _split_sql_statements(script: str) -> list[str]:
@@ -66,6 +72,7 @@ class SqlConsoleController(Controller):
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
         script = str(data.get("sql", "") or "")
+        execution_id = str(data.get("execution_id", "") or "") or uuid.uuid4().hex
         statements = _split_sql_statements(script)
 
         if not statements:
@@ -77,6 +84,9 @@ class SqlConsoleController(Controller):
 
         results: list[dict] = []
         try:
+            pid_result = await db_session.execute(text("SELECT pg_backend_pid()"))
+            _running_queries[execution_id] = (db_manager.get_active_profile(), pid_result.scalar())
+
             for stmt in statements:
                 result = await db_session.execute(text(stmt))
                 if result.returns_rows:
@@ -91,20 +101,63 @@ class SqlConsoleController(Controller):
             await db_session.commit()
         except Exception as e:
             await db_session.rollback()
+            message = "Запрос прерван пользователем" if "QueryCanceledError" in str(e) else str(e)
             return Response(
                 content=json.dumps({
                     "status": "error",
-                    "message": str(e),
+                    "message": message,
                     "results": results,
                     "failed_index": len(results),
                 }),
                 status_code=200,
                 media_type="application/json",
             )
+        finally:
+            _running_queries.pop(execution_id, None)
 
         logger.info("SQL console: executed %d statement(s)", len(statements))
         return Response(
             content=json.dumps({"status": "ok", "results": results}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    @post("/cancel")
+    async def cancel(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        execution_id = str(data.get("execution_id", "") or "")
+        entry = _running_queries.get(execution_id)
+
+        if not entry:
+            return Response(
+                content=json.dumps({"status": "error", "message": "Запрос не найден или уже завершён"}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        profile, pid = entry
+        try:
+            cancelled = await db_manager.cancel_backend(profile, pid)
+        except TimeoutError:
+            return Response(
+                content=json.dumps({"status": "error", "message": "Таймаут: не удалось получить соединение для отправки сигнала отмены"}),
+                status_code=200,
+                media_type="application/json",
+            )
+        except Exception as e:
+            return Response(
+                content=json.dumps({"status": "error", "message": f"Не удалось отправить сигнал отмены: {e}"}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        message = "Сигнал отмены отправлен" if cancelled else "Запрос уже завершился"
+        logger.info("SQL console: cancel requested for execution_id=%s (pid=%s) -> %s", execution_id, pid, message)
+        return Response(
+            content=json.dumps({"status": "ok", "message": message}),
             status_code=200,
             media_type="application/json",
         )
