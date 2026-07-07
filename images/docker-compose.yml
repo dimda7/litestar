@@ -1,0 +1,26 @@
+# Запуск из корня репозитория:
+#   docker compose -f images/docker-compose.yml up -d --build
+#
+# Требует существующий ../.env (см. .env.example в корне репо) — без него
+# config.py упадёт при старте (DB_HOST/SESSION_SECRET и т.д. обязательны).
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: images/Dockerfile
+    image: litestar-grom:latest
+    env_file:
+      - ../.env
+    ports:
+      # Внутри контейнера приложение слушает ${SERVER_PORT:-8011} (см. Dockerfile CMD).
+      # Если меняете SERVER_PORT в .env — поправьте и правую часть здесь.
+      - "8011:8011"
+    volumes:
+      - parser_data:/app/parser_data
+      - app_log:/app/log
+    restart: unless-stopped
+
+volumes:
+  parser_data:
+  app_log:

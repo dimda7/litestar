@@ -117,6 +117,14 @@
 ## Фаза 10: cleanup_old_files() в train_parser.py — ВЫПОЛНЕНА
 - `controllers/train_parser.py`: добавлен импорт `cleanup_old_files as _cleanup_old_files` из `parser_storage` и вызов в начале `try` в `/upload`, тем же паттерном, что уже был в `parser.py` и `design_number_parser.py` — раньше это был единственный из трёх парсеров, где JSON-файлы сессии в `parser_data/` не удалялись автоматически по истечении часа
 
+## Фаза 11: Реальная отмена SQL-запроса в SQL-консоли — ВЫПОЛНЕНА
+- Баг: на странице «Выполнить SQL скрипт» кнопка отмены (красный квадрат) не прерывала запрос — таймер шёл до конца, данные всё равно возвращались
+- Причина: `DB_PORT=6432` — это pgbouncer. Старая реализация (`db_manager.cancel_backend`) слала `SELECT pg_cancel_backend(pid)` через **новое** соединение из того же пула. Пока единственное серверное соединение pgbouncer занято долгим запросом, новый SQL-запрос на отмену встаёт в очередь и выполняется только после того, как исходный запрос сам закончится — то есть отмена приходит слишком поздно и ничего не даёт
+- Исправлено (`controllers/sql_console.py`): выполнение statements обёрнуто в `asyncio.Task` (`_running_tasks: dict[str, asyncio.Task]`), `/sql-console/cancel` вызывает `task.cancel()` вместо отдельного SQL-запроса. asyncpg (проверено, v0.31.0, `Connection._cancel`) при получении `CancelledError` во время ожидания ответа сервера сам открывает отдельный сырой TCP-сокет и шлёт нативный Postgres `CancelRequest` (backend_pid + secret) — это pgbouncer обрабатывает напрямую, без резервирования слота из пула
+- Удалена мёртвая функция `db_manager.cancel_backend()` и связанный `import asyncio` (последний потребитель — старый код в `sql_console.py`)
+- Проверено вживую через `litestar.testing.TestClient` (сессия подставлена напрямую через `set_session_data`, минуя логин): `select pg_sleep(3), 1 from generate_series(1,10)` (10 строк × 3с = 30с суммарно) + отмена через ~1.5с → `execute` вернул `{"status": "error", "message": "Запрос прерван пользователем"}` за ~1.52с вместо ожидания все 30с
+- 43/43 теста зелёные (regressions не внесены)
+
 ## Следующие шаги
 1. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
 2. Покрыть happy-path `train_parser._validate_train_rows` (разрешение `car_place_id`/`id_actives_parent`) — нужен реальный Postgres в тестовом окружении (testcontainers или аналог), см. Фазу 9

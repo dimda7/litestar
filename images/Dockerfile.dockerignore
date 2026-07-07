@@ -1,0 +1,23 @@
+# Действует на build context, указанный в docker-compose.yml (context: .., т.е. корень
+# репозитория). Имя файла соответствует конвенции Docker: "<Dockerfile>.dockerignore"
+# в корне контекста — так .dockerignore можно держать внутри images/, а не в корне репо.
+.git
+.gitignore
+.idea
+venv
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.log
+log
+parser_data
+design_number_data
+tests
+.pytest_cache
+pytest.ini
+requirements-dev.txt
+.env
+.env.example
+images
+*.docx

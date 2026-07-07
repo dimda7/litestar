@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 
@@ -61,24 +60,6 @@ async def test_connection(profile: str) -> tuple[bool, str]:
         return False, str(e)
     finally:
         await engine.dispose()
-
-
-async def cancel_backend(profile: str, pid: int) -> bool:
-    """Отправляет pg_cancel_backend(pid) через отдельное соединение к тому же профилю.
-
-    Прерывает текущий выполняющийся запрос на стороне Postgres (аналог Ctrl+C в psql),
-    а не просто обрывает HTTP-соединение — сама СУБД получает сигнал отмены.
-    Обёрнуто таймаутом: если пул соединений исчерпан (например, upstream pgbouncer
-    занят долгим запросом, который мы как раз пытаемся отменить), запрос на отмену
-    не должен виснуть бесконечно — лучше вернуть понятную ошибку.
-    """
-    async def _cancel() -> bool:
-        session_maker = _get_session_maker(profile)
-        async with session_maker() as session:
-            result = await session.execute(text("SELECT pg_cancel_backend(:pid)"), {"pid": pid})
-            return bool(result.scalar())
-
-    return await asyncio.wait_for(_cancel(), timeout=POOL_TIMEOUT_SECONDS)
 
 
 async def provide_db_session() -> AsyncGenerator[AsyncSession, None]:
