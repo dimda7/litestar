@@ -20,6 +20,7 @@ from controllers.auth import AuthController
 from controllers.parser import ParserController
 from controllers.train_parser import TrainParserController
 from controllers.design_number_parser import DesignNumberParserController
+from controllers.actives_parser import ActivesParserController
 from controllers.users import UsersController
 from controllers.settings import SettingsController
 from middleware import AuthMiddleware
@@ -73,7 +74,7 @@ class HomeController(Controller):
 base_dir = Path(__file__).parent
 
 app = Litestar(
-    route_handlers=[HomeController, UsersController, AuthController, ParserController, TrainParserController, DesignNumberParserController, SettingsController],
+    route_handlers=[HomeController, UsersController, AuthController, ParserController, TrainParserController, DesignNumberParserController, ActivesParserController, SettingsController],
     template_config=TemplateConfig(
         engine=JinjaTemplateEngine(directory=base_dir / "templates"),
     ),

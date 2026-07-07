@@ -11,3 +11,6 @@ log/
 dist/
 build/
 .pytest_cache/
+
+# Claude Code memory (optional: track or not)
+# .claude/memory/
