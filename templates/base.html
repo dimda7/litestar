@@ -98,6 +98,12 @@
         {% if user_id %}
         <div style="display: flex; justify-content: flex-end; align-items: center; gap: 16px; margin-bottom: 16px;">
             <span id="datetime" style="color: var(--text-secondary); font-size: 14px;"></span>
+            <div title="Текущее подключение к БД" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--bg-card); border-radius: var(--radius-sm); box-shadow: var(--shadow);">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--accent)">
+                    <path d="M12 3C7.58 3 4 4.79 4 7s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4zM4 9v3c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4zm0 5v3c0 2.21 3.58 4 8 4s8-1.79 8-4v-3c0 2.21-3.58 4-8 4s-8-1.79-8-4z"/>
+                </svg>
+                <span style="color: var(--text-primary); font-size: 14px; font-weight: 500;">{{ current_db_label() }}</span>
+            </div>
             <div style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--bg-card); border-radius: var(--radius-sm); box-shadow: var(--shadow);">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--accent)">
                     <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>

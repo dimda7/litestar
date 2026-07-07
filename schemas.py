@@ -87,3 +87,10 @@ class DesignNumberSelectSheetRequest(msgspec.Struct):
 
     sheet_name: str
     """Имя листа Excel."""
+
+
+class DBProfileRequest(msgspec.Struct):
+    """Запрос на проверку/переключение подключения к БД."""
+
+    profile: str
+    """Имя профиля БД (например, 'grom-tk' или 'grom-prod')."""

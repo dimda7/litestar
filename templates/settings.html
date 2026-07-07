@@ -8,6 +8,39 @@
     <p class="page-subtitle">Управление внешним видом и параметрами приложения</p>
 </div>
 
+<div class="card" style="max-width: 600px; margin-bottom: 24px;">
+    <h3 style="margin-bottom: 8px; font-size: 16px; font-weight: 500;">Подключение к базе данных</h3>
+    <p style="margin: 0 0 20px; font-size: 13px; color: var(--text-secondary);">
+        Текущее подключение: <strong id="active-db-label" style="color: var(--text-primary);">{{ active_db_profile }}</strong>
+    </p>
+
+    <div id="db-test-result" style="display: none; margin-bottom: 16px; padding: 10px 14px; border-radius: 8px; font-size: 13px;"></div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
+        {% for p in db_profiles %}
+        <label style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
+            <input type="radio" name="db_profile" value="{{ p.name }}" {{ 'checked' if p.name == active_db_profile }} style="accent-color: var(--accent);">
+            <div>
+                <div style="font-size: 14px; font-weight: 500;">
+                    {{ p.label }}
+                    {% if p.name == active_db_profile %}<span style="font-size: 11px; font-weight: 400; color: #2e7d32;">— подключено</span>{% endif %}
+                </div>
+                <div style="font-size: 12px; color: var(--text-hint);">{{ p.host }}:{{ p.port }} / {{ p.dbname }}</div>
+            </div>
+        </label>
+        {% endfor %}
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+        <button type="button" onclick="testDbConnection()" class="btn" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border);">
+            Проверить подключение
+        </button>
+        <button type="button" onclick="connectDb()" class="btn btn-primary">
+            Подключиться
+        </button>
+    </div>
+</div>
+
 <div class="card" style="max-width: 600px;">
     <h3 style="margin-bottom: 24px; font-size: 16px; font-weight: 500;">Тема оформления</h3>
 
@@ -77,5 +110,51 @@
         document.documentElement.setAttribute('data-theme', saved);
         updateThemeButtons(saved);
     })();
+
+    function getSelectedProfile() {
+        const checked = document.querySelector('input[name="db_profile"]:checked');
+        return checked ? checked.value : null;
+    }
+
+    function showDbResult(ok, message) {
+        const box = document.getElementById('db-test-result');
+        box.style.display = 'block';
+        box.style.background = ok ? '#e8f5e9' : '#ffebee';
+        box.style.color = ok ? '#2e7d32' : '#c62828';
+        box.textContent = message;
+    }
+
+    function testDbConnection() {
+        const profile = getSelectedProfile();
+        if (!profile) return;
+
+        const formData = new FormData();
+        formData.append('profile', profile);
+        appendCsrfToken(formData);
+
+        fetch('/settings/db/test-connection', { method: 'POST', body: formData })
+            .then(resp => resp.json())
+            .then(data => showDbResult(data.status === 'ok', data.message))
+            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
+    }
+
+    function connectDb() {
+        const profile = getSelectedProfile();
+        if (!profile) return;
+
+        const formData = new FormData();
+        formData.append('profile', profile);
+        appendCsrfToken(formData);
+
+        fetch('/settings/db/connect', { method: 'POST', body: formData })
+            .then(resp => resp.json())
+            .then(data => {
+                showDbResult(data.status === 'ok', data.message);
+                if (data.status === 'ok') {
+                    setTimeout(() => location.reload(), 600);
+                }
+            })
+            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
+    }
 </script>
 {% endblock %}

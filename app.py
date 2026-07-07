@@ -5,15 +5,14 @@ from litestar import Controller, Litestar, get
 from litestar.config.csrf import CSRFConfig
 from litestar.connection.request import Request
 from litestar.contrib.jinja import JinjaTemplateEngine
+from litestar.di import Provide
 from litestar.middleware.session.client_side import CookieBackendConfig
 from litestar.openapi.config import OpenAPIConfig
 from litestar.response import Template
 from litestar.static_files import StaticFilesConfig
 from litestar.template.config import TemplateConfig
 
-from advanced_alchemy.extensions.litestar.plugins import SQLAlchemyPlugin
-from advanced_alchemy.extensions.litestar.plugins.init.config.asyncio import SQLAlchemyAsyncConfig
-
+import db_manager
 from config import settings
 from logging_config import configure_logging
 from controllers.auth import AuthController
@@ -24,14 +23,8 @@ from controllers.actives_parser import ActivesParserController
 from controllers.users import UsersController
 from controllers.settings import SettingsController
 from middleware import AuthMiddleware
-from models import Base
 
 configure_logging(level=settings.log_level)
-
-db_config = SQLAlchemyAsyncConfig(
-    connection_string=settings.db_url,
-    metadata=Base.metadata,
-)
 
 session_config = CookieBackendConfig(secret=settings.session_secret)
 
@@ -73,10 +66,13 @@ class HomeController(Controller):
 
 base_dir = Path(__file__).parent
 
+jinja_engine = JinjaTemplateEngine(directory=base_dir / "templates")
+jinja_engine.register_template_callable("current_db_label", lambda context: db_manager.get_active_profile())
+
 app = Litestar(
     route_handlers=[HomeController, UsersController, AuthController, ParserController, TrainParserController, DesignNumberParserController, ActivesParserController, SettingsController],
     template_config=TemplateConfig(
-        engine=JinjaTemplateEngine(directory=base_dir / "templates"),
+        engine=jinja_engine,
     ),
     static_files_config=[
         StaticFilesConfig(
@@ -84,13 +80,14 @@ app = Litestar(
             directories=[base_dir / "static"],
         ),
     ],
-    plugins=[SQLAlchemyPlugin(config=db_config)],
+    dependencies={"db_session": Provide(db_manager.provide_db_session)},
     middleware=[session_config.middleware, AuthMiddleware],
     csrf_config=csrf_config,
     exception_handlers={
         404: not_found_handler,
         500: server_error_handler,
     },
+    on_shutdown=[db_manager.dispose_all],
     openapi_config=OpenAPIConfig(
         title="Grom API",
         version="1.0.0",
