@@ -244,7 +244,7 @@ class TrainParserController(Controller):
 
     @staticmethod
     def _build_sql_body(
-        id_train: int, id_type_train: int, train_name: str, valid_rows: list[dict],
+        id_train: int, id_type_train: int, train_name: str, valid_rows: list[dict], id_train_series: int,
     ) -> list[str]:
         """Строит тело SQL-скрипта вставки поезда (без BEGIN/COMMIT).
 
@@ -314,6 +314,10 @@ class TrainParserController(Controller):
             f"WHERE nlevel(act.lcn) = 1 AND loc.id_train = t.id AND t.id = {id_train};"
         )
 
+        sql_lines.append(
+            f"UPDATE public.train SET id_train_series = {id_train_series} WHERE id = {id_train};"
+        )
+
         return sql_lines
 
     @post("/generate-sql")
@@ -346,13 +350,22 @@ class TrainParserController(Controller):
 
             rows: list[dict] = stored["rows"]
 
+            # Серия берётся из train_type.id_train_series — сама она у нас на
+            # странице не выбирается, только "Тип поезда" (train_type.name).
             result = await db_session.execute(
-                select(TrainType.id).where(TrainType.name == train_type_name)
+                select(TrainType.id, TrainType.id_train_series).where(TrainType.name == train_type_name)
             )
-            id_type_train = result.scalar_one_or_none()
-            if id_type_train is None:
+            type_row = result.first()
+            if type_row is None:
                 return Response(
                     content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "train_type", "message": f"Тип поезда '{train_type_name}' не найден"}]}),
+                    status_code=200,
+                    media_type="application/json",
+                )
+            id_type_train, id_train_series = type_row
+            if id_train_series is None:
+                return Response(
+                    content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "train_type", "message": f"У типа поезда '{train_type_name}' не задана серия (id_train_series)"}]}),
                     status_code=200,
                     media_type="application/json",
                 )
@@ -377,7 +390,7 @@ class TrainParserController(Controller):
             # выполняться и привяжутся не к тому train.id. BEGIN/COMMIT делает
             # весь файл одной атомарной операцией: либо всё, либо ничего.
             sql_lines = ["BEGIN;"]
-            sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows))
+            sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series))
             sql_lines.append("COMMIT;")
 
             content = "\n".join(sql_lines)
@@ -422,13 +435,22 @@ class TrainParserController(Controller):
 
         rows: list[dict] = stored["rows"]
 
+        # Серия берётся из train_type.id_train_series — сама она у нас на
+        # странице не выбирается, только "Тип поезда" (train_type.name).
         result = await db_session.execute(
-            select(TrainType.id).where(TrainType.name == train_type_name)
+            select(TrainType.id, TrainType.id_train_series).where(TrainType.name == train_type_name)
         )
-        id_type_train = result.scalar_one_or_none()
-        if id_type_train is None:
+        type_row = result.first()
+        if type_row is None:
             return Response(
                 content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "train_type", "message": f"Тип поезда '{train_type_name}' не найден"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+        id_type_train, id_train_series = type_row
+        if id_train_series is None:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "train_type", "message": f"У типа поезда '{train_type_name}' не задана серия (id_train_series)"}]}),
                 status_code=200,
                 media_type="application/json",
             )
@@ -459,7 +481,7 @@ class TrainParserController(Controller):
         # через «сырое» соединение: DO $$ ... $$ с несколькими операторами
         # внутри нельзя выполнить через обычный execute() с параметрами
         # (asyncpg не готовит несколько команд в одном prepared statement).
-        sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows))
+        sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series))
 
         try:
             # ВАЖНО: db_session.rollback() ниже откатывает и этот «сырой» вызов

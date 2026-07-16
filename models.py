@@ -30,6 +30,7 @@ class TrainType(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_train_series: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class CarPlace(Base):
