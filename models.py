@@ -130,6 +130,40 @@ class Actives(Base):
     id_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class CounterType(Base):
+    __tablename__ = "counter_type"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    type: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class Ptoir(Base):
+    __tablename__ = "ptoir"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    number_ptoir: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_main_ptoir: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_ptoir_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date_activation: Mapped[str | None] = mapped_column(DateTime, nullable=True)
+    interval: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+    bdi: Mapped[str | None] = mapped_column(String, nullable=True, default="GREY")
+
+
+class PtoirLevelWarning(Base):
+    __tablename__ = "ptoir_level_warning"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    level: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_ptoir: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_counter_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    zero_point_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class MileageTrain(Base):
     __tablename__ = "mileage_train"
     __table_args__ = {"schema": "public"}

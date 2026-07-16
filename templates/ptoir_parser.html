@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+
+{% block title %}Парсинг ПТОиР{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Парсинг ПТОиР</h1>
+    <p class="page-subtitle">Загрузка Excel-файла для запуска планового технического обслуживания и ремонта</p>
+</div>
+
+<div class="card" style="margin-bottom: 24px;">
+    <form method="post" action="/ptoir-parser/upload" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div class="file-upload">
+            <label class="file-upload-label">
+                <input type="file" name="file" accept=".xlsx,.xls" onchange="document.getElementById('file-name').textContent = this.files[0]?.name || 'Файл не выбран'">
+                Выбрать файл
+            </label>
+            <span id="file-name" class="file-upload-name">Файл не выбран</span>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top: 16px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+            Загрузить
+        </button>
+    </form>
+</div>
+
+{% if error %}
+<div class="alert alert-error">
+    {{ error }}
+</div>
+{% endif %}
+
+{% if pending_sheets %}
+<div class="card" style="margin-bottom: 24px;">
+    <h3 style="margin-bottom: 12px; font-size: 16px; font-weight: 500;">
+        Файл «{{ pending_filename }}» содержит несколько листов. Выберите нужный:
+    </h3>
+    <form method="post" action="/ptoir-parser/select-sheet">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+            {% for sheet in pending_sheets %}
+            <label style="display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: background 0.15s;">
+                <input type="radio" name="sheet_name" value="{{ sheet }}" {{ 'checked' if loop.first }} style="accent-color: var(--accent);">
+                <span style="font-size: 14px;">{{ sheet }}</span>
+            </label>
+            {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-primary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+            Загрузить выбранный лист
+        </button>
+    </form>
+</div>
+{% endif %}
+
+{% if filename %}
+<div class="card" style="margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+    <span style="font-size: 14px; color: var(--text-secondary);">
+        Файл: <strong style="color: var(--text-primary);">{{ filename }}</strong> — записей: {{ total }}
+    </span>
+    <div style="display: flex; gap: 10px;">
+        <button type="button" onclick="showModal()" class="btn btn-primary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            Запустить ПТОиР
+        </button>
+    </div>
+</div>
+{% endif %}
+
+{% if rows %}
+<div id="error-box" class="alert alert-error" style="display: none;">
+    <p style="font-weight: 500; margin-bottom: 8px;">Ошибки валидации:</p>
+    <ul id="error-list" style="margin: 0; padding-left: 20px;"></ul>
+</div>
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <label for="per_page" style="font-size: 14px; color: var(--text-secondary);">На странице:</label>
+            <select id="per_page" onchange="changePerPage(this.value)" class="form-input" style="width: auto; padding: 8px 12px;">
+                {% for n in [10, 25, 50, 100] %}
+                <option value="{{ n }}" {{ 'selected' if per_page == n }}>{{ n }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <span style="font-size: 14px; color: var(--text-secondary);">
+            Стр. {{ page }} из {{ total_pages }}
+        </span>
+    </div>
+
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 50px;">#</th>
+                    {% for h in headers %}
+                    <th>{{ h }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody id="data-tbody">
+                {% for row in rows %}
+                <tr data-row-num="{{ (page - 1) * per_page + loop.index }}">
+                    <td style="color: var(--text-hint);">{{ (page - 1) * per_page + loop.index }}</td>
+                    {% for h in headers %}
+                    <td>{{ row[h] or '—' }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="pagination">
+        {% if page > 1 %}
+        <a class="page-btn" href="?page=1&per_page={{ per_page }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.41 16.59L13.82 12l4.59-4.59L17 6l-6 6 6 6 1.41-1.41z"/></svg>
+        </a>
+        <a class="page-btn" href="?page={{ page - 1 }}&per_page={{ per_page }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+        </a>
+        {% endif %}
+
+        {% set start = [1, page - 2] | max %}
+        {% set end = [total_pages, page + 2] | min %}
+        {% for p in range(start, end + 1) %}
+        <a class="page-btn {{ 'active' if p == page }}" href="?page={{ p }}&per_page={{ per_page }}">{{ p }}</a>
+        {% endfor %}
+
+        {% if page < total_pages %}
+        <a class="page-btn" href="?page={{ page + 1 }}&per_page={{ per_page }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+        </a>
+        <a class="page-btn" href="?page={{ total_pages }}&per_page={{ per_page }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M5.59 7.41L10.18 12l-4.59 4.59L7 18l6-6-6-6 1.41-1.41z"/></svg>
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<div id="action-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
+        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Запуск ПТОиР</h3>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Обновить дату активации, интервал и точку отсчёта счётчика в ptoir / ptoir_level_warning</p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button onclick="downloadSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Скачать SQL-файл</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл update_ptoir.sql для ручного запуска</div>
+                </div>
+            </button>
+            <button onclick="executeUpdate()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#2e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Выполнить в базе данных</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное обновление всех строк</div>
+                </div>
+            </button>
+        </div>
+        <button onclick="closeModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
+    </div>
+</div>
+
+<div id="progress-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border-radius: 16px; padding: 32px 40px; min-width: 340px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.25);">
+        <div class="spinner" style="margin: 0 auto 20px;"></div>
+        <div id="progress-text" style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 14px;">Выполняется...</div>
+        <div style="background: var(--border); border-radius: 999px; height: 8px; overflow: hidden;">
+            <div id="progress-bar-fill" style="background: var(--accent); height: 100%; width: 0%; transition: width 0.2s;"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: var(--text-secondary);">
+            <span id="progress-counts"></span>
+            <span id="progress-percent">0%</span>
+        </div>
+        <div style="font-size: 12px; color: var(--text-hint); margin-top: 12px;">Не закрывайте страницу</div>
+    </div>
+</div>
+
+<script>
+    const ALL_ROWS = {{ all_rows | tojson }};
+
+    function changePerPage(val) {
+        const url = new URL(window.location);
+        url.searchParams.set('per_page', val);
+        url.searchParams.set('page', '1');
+        window.location = url;
+    }
+
+    function showModal() {
+        document.getElementById('action-modal').style.display = 'flex';
+    }
+
+    function closeModal() {
+        document.getElementById('action-modal').style.display = 'none';
+    }
+
+    document.getElementById('action-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeModal();
+    });
+
+    function handleErrors(data) {
+        const box = document.getElementById('error-box');
+        const list = document.getElementById('error-list');
+        list.innerHTML = '';
+        data.errors.forEach(e => {
+            const li = document.createElement('li');
+            li.textContent = 'Строка ' + e.row + ': ' + e.message;
+            list.appendChild(li);
+            const tr = document.querySelector('[data-row-num="' + e.row + '"]');
+            if (tr) tr.classList.add('error-row');
+        });
+        box.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function buildFormData() {
+        const formData = new FormData();
+        formData.append('rows', JSON.stringify(ALL_ROWS));
+        return appendCsrfToken(formData);
+    }
+
+    let progressPollTimer = null;
+
+    function showProgress() {
+        document.getElementById('progress-text').textContent = 'Проверка данных...';
+        document.getElementById('progress-bar-fill').style.width = '0%';
+        document.getElementById('progress-percent').textContent = '0%';
+        document.getElementById('progress-counts').textContent = '';
+        document.getElementById('progress-overlay').style.display = 'flex';
+    }
+
+    function updateProgress(state) {
+        const total = state.total || 0;
+        const processed = state.processed || 0;
+        const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+        document.getElementById('progress-bar-fill').style.width = pct + '%';
+        document.getElementById('progress-percent').textContent = pct + '%';
+        document.getElementById('progress-counts').textContent = processed + ' из ' + total;
+        document.getElementById('progress-text').textContent =
+            state.phase === 'executing' ? 'Запись в базу данных...' : 'Проверка данных...';
+    }
+
+    function hideProgress() {
+        if (progressPollTimer) {
+            clearInterval(progressPollTimer);
+            progressPollTimer = null;
+        }
+        document.getElementById('progress-overlay').style.display = 'none';
+    }
+
+    function pollProgress(taskId, onFinished) {
+        progressPollTimer = setInterval(() => {
+            fetch('/ptoir-parser/progress/' + taskId)
+                .then(resp => resp.json())
+                .then(state => {
+                    if (state.status === 'running') {
+                        updateProgress(state);
+                        return;
+                    }
+                    clearInterval(progressPollTimer);
+                    progressPollTimer = null;
+                    onFinished(state);
+                })
+                .catch(err => {
+                    clearInterval(progressPollTimer);
+                    progressPollTimer = null;
+                    hideProgress();
+                    alert('Ошибка получения прогресса: ' + err);
+                });
+        }, 400);
+    }
+
+    function downloadSQL() {
+        closeModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showProgress();
+
+        fetch('/ptoir-parser/generate-sql/start', { method: 'POST', body: buildFormData() })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    const blob = new Blob([data.sql], { type: 'text/sql' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'update_ptoir.sql';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+    }
+
+    function executeUpdate() {
+        closeModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+
+        if (!confirm('Выполнить обновление всех строк в базе данных?')) return;
+
+        showProgress();
+
+        fetch('/ptoir-parser/execute-sql/start', { method: 'POST', body: buildFormData() })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    alert(data.message);
+                    location.reload();
+                }
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+    }
+</script>
+{% endif %}
+{% endblock %}

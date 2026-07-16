@@ -68,6 +68,11 @@ async def provide_db_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+def get_session_maker() -> async_sessionmaker[AsyncSession]:
+    """Для фоновых задач вне DI (например, длительный парсинг с отчётом о прогрессе)."""
+    return _get_session_maker(_active_profile)
+
+
 async def dispose_all() -> None:
     for engine in _engines.values():
         await engine.dispose()

@@ -3,7 +3,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from models import Base, CarPlace, CounterGroup, DesignNumber, TrainType
+from models import Actives, Base, CarPlace, CounterGroup, CounterType, DesignNumber, Ptoir, PtoirLevelWarning, TrainType
 
 
 @pytest_asyncio.fixture
@@ -62,6 +62,34 @@ async def make_design_number(db_session: AsyncSession, number: str = "DN-001", *
 
 async def make_counter_group(db_session: AsyncSession, name: str = "Группа 1") -> int:
     obj = CounterGroup(name=name)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_counter_type(db_session: AsyncSession, type_name: str = "Пробег") -> int:
+    obj = CounterType(type=type_name)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_active(db_session: AsyncSession, active_number: str = "SPV000001") -> int:
+    obj = Actives(active_number=active_number)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_ptoir(db_session: AsyncSession, number_ptoir: str = "ТО0001", id_active: int | None = None) -> int:
+    obj = Ptoir(number_ptoir=number_ptoir, id_active=id_active)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_ptoir_level_warning(db_session: AsyncSession, id_ptoir: int, id_counter_type: int) -> int:
+    obj = PtoirLevelWarning(id_ptoir=id_ptoir, id_counter_type=id_counter_type)
     db_session.add(obj)
     await db_session.flush()
     return obj.id
