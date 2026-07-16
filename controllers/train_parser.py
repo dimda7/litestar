@@ -6,7 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import openpyxl
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
@@ -15,7 +15,7 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
-from models import TrainType, DesignNumber, Models, Train, MileageTrain, CounterActive
+from models import TrainType, DesignNumber, Models, MileageTrain, CounterActive
 from schemas import GenerateSQLRequest
 from sql_utils import sql_escape
 from parser_storage import (
@@ -242,6 +242,80 @@ class TrainParserController(Controller):
             request.session["train_parser_error"] = f"Ошибка чтения файла: {e}"
             return Redirect("/train-parser")
 
+    @staticmethod
+    def _build_sql_body(
+        id_train: int, id_type_train: int, train_name: str, valid_rows: list[dict],
+    ) -> list[str]:
+        """Строит тело SQL-скрипта вставки поезда (без BEGIN/COMMIT).
+
+        Общий для «Скачать SQL-файл» (оборачивается в BEGIN;...COMMIT; и
+        отдаётся как файл) и «Выполнить в базе данных» (выполняется как один
+        multi-statement запрос в рамках уже открытой сессии) — оба пути
+        строят один и тот же SQL, чтобы не расходиться в поведении.
+        """
+        now = datetime.utcnow().replace(microsecond=0)
+        today = date.today()
+        sql_lines: list[str] = []
+
+        sql_lines.append(f"INSERT INTO public.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{sql_escape(train_name)}', true, false);")
+        sql_lines.append(f"INSERT INTO public.mileage_train (id_train, milage, mileage_average, date, date_average) VALUES ({id_train}, 0, 0, '{now}', '{today}');")
+
+        # id_location/id_actives не считаются заранее как max(id)+1 — этот
+        # снимок мог устареть к моменту выполнения и вызывать конфликт PK.
+        # Вместо этого id получают из sequence прямо в скрипте. Один
+        # nextval() на переменную раздувал DECLARE до тысяч строк (id1..idN)
+        # — вместо этого одним запросом набираем массив id сразу на все
+        # строки и обращаемся к нему по индексу (loc_ids[i]).
+        body_lines: list[str] = []
+
+        for idx, vr in enumerate(valid_rows, start=1):
+            loc_ref = f"loc_ids[{idx}]"
+            act_ref = f"act_ids[{idx}]"
+
+            sn = vr["serial_number"]
+            sn_val = f"'{sql_escape(sn)}'" if sn and sn != "none" else "NULL"
+            parent_val = f"'{sql_escape(str(vr['id_actives_parent']))}'" if vr["id_actives_parent"] else "NULL"
+            root_val = f"'{sql_escape(str(vr['root_number']))}'" if vr["root_number"] else "NULL"
+            car_num_val = str(vr["car_number"]) if vr["car_number"] is not None else "NULL"
+            cp_val = str(vr["car_place_id"]) if vr["car_place_id"] is not None else "NULL"
+            ut_val = str(vr["id_unit_type"]) if vr["id_unit_type"] is not None else "NULL"
+
+            body_lines.append(
+                f"    INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
+                f"VALUES ({loc_ref}, 2, {id_train}, {car_num_val}, {cp_val});"
+            )
+            body_lines.append(
+                f"    INSERT INTO public.actives (id, active_number, id_unit_type, id_design_number, id_location, "
+                f"serial_number, lcn, id_actves_parent, id_actives_root) "
+                f"VALUES ({act_ref}, '{sql_escape(vr['active_number'])}', {ut_val}, {vr['id_design_number']}, "
+                f"{loc_ref}, {sn_val}, '{sql_escape(vr['lcn_new'])}', {parent_val}, {root_val});"
+            )
+
+            if vr["is_root"]:
+                body_lines.append(f"    UPDATE public.counter_active SET is_train = true WHERE id_active = {act_ref};")
+
+        sql_lines.append("DO $$")
+        sql_lines.append("DECLARE")
+        sql_lines.append(
+            f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
+            f"FROM generate_series(1, {len(valid_rows)}));"
+        )
+        sql_lines.append(
+            f"    act_ids bigint[] := ARRAY(SELECT nextval('public.actives_id_seq') "
+            f"FROM generate_series(1, {len(valid_rows)}));"
+        )
+        sql_lines.append("BEGIN")
+        sql_lines.extend(body_lines)
+        sql_lines.append("END $$;")
+
+        sql_lines.append(
+            f"UPDATE public.train AS t SET active = act.id "
+            f"FROM public.location AS loc LEFT JOIN public.actives act ON act.id_location = loc.id "
+            f"WHERE nlevel(act.lcn) = 1 AND loc.id_train = t.id AND t.id = {id_train};"
+        )
+
+        return sql_lines
+
     @post("/generate-sql")
     async def generate_sql(
         self,
@@ -283,8 +357,10 @@ class TrainParserController(Controller):
                     media_type="application/json",
                 )
 
-            max_train = (await db_session.execute(select(func.max(Train.id)))).scalar() or 0
-            id_train = max_train + 1
+            # id_train резервируется сразу через nextval — а не max(id)+1 — чтобы
+            # к моменту реального запуска скачанного файла значение не могло
+            # оказаться занятым другим поездом, созданным за это время.
+            id_train = (await db_session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
 
             errors, valid_rows = await self._validate_train_rows(db_session, rows, id_type_train, id_train)
 
@@ -295,68 +371,14 @@ class TrainParserController(Controller):
                     media_type="application/json",
                 )
 
-            now = datetime.utcnow().replace(microsecond=0)
-            today = date.today()
-            sql_lines: list[str] = []
-
-            sql_lines.append(f"INSERT INTO public.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{sql_escape(train_name)}', true, false);")
-            sql_lines.append(f"INSERT INTO public.mileage_train (id_train, milage, mileage_average, date, date_average) VALUES ({id_train}, 0, 0, '{now}', '{today}');")
-
-            # id_location/id_actives больше не считаются заранее как max(id)+1 —
-            # этот снимок мог устареть к моменту реального запуска SQL-файла и
-            # вызывать конфликт PK. Вместо этого id получают из sequence прямо
-            # в скрипте. Один nextval() на переменную раздувал DECLARE до тысяч
-            # строк (id1..idN) — вместо этого одним запросом набираем массив id
-            # сразу на все строки и обращаемся к нему по индексу (loc_ids[i]).
-            body_lines: list[str] = []
-
-            for idx, vr in enumerate(valid_rows, start=1):
-                loc_ref = f"loc_ids[{idx}]"
-                act_ref = f"act_ids[{idx}]"
-
-                sn = vr["serial_number"]
-                sn_val = f"'{sql_escape(sn)}'" if sn and sn != "none" else "NULL"
-                parent_val = f"'{sql_escape(str(vr['id_actives_parent']))}'" if vr["id_actives_parent"] else "NULL"
-                root_val = f"'{sql_escape(str(vr['root_number']))}'" if vr["root_number"] else "NULL"
-                car_num_val = str(vr["car_number"]) if vr["car_number"] is not None else "NULL"
-                cp_val = str(vr["car_place_id"]) if vr["car_place_id"] is not None else "NULL"
-                ut_val = str(vr["id_unit_type"]) if vr["id_unit_type"] is not None else "NULL"
-
-                body_lines.append(
-                    f"    INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
-                    f"VALUES ({loc_ref}, 2, {id_train}, {car_num_val}, {cp_val});"
-                )
-                body_lines.append(
-                    f"    INSERT INTO public.actives (id, active_number, id_unit_type, id_design_number, id_location, "
-                    f"serial_number, lcn, id_actves_parent, id_actives_root) "
-                    f"VALUES ({act_ref}, '{sql_escape(vr['active_number'])}', {ut_val}, {vr['id_design_number']}, "
-                    f"{loc_ref}, {sn_val}, '{sql_escape(vr['lcn_new'])}', {parent_val}, {root_val});"
-                )
-
-                if vr["is_root"]:
-                    body_lines.append(f"    UPDATE public.counter_active SET is_train = true WHERE id_active = {act_ref};")
-
-            sql_lines.append("DO $$")
-            sql_lines.append("DECLARE")
-            sql_lines.append(
-                f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
-                f"FROM generate_series(1, {len(valid_rows)}));"
-            )
-            sql_lines.append(
-                f"    act_ids bigint[] := ARRAY(SELECT nextval('public.actives_id_seq') "
-                f"FROM generate_series(1, {len(valid_rows)}));"
-            )
-            sql_lines.append("BEGIN")
-            sql_lines.extend(body_lines)
-            sql_lines.append("END $$;")
-
-            sql_lines.append(f"SELECT setval('public.train_id_seq', {id_train});")
-
-            sql_lines.append(
-                f"UPDATE public.train AS t SET active = act.id "
-                f"FROM public.location AS loc LEFT JOIN public.actives act ON act.id_location = loc.id "
-                f"WHERE nlevel(act.lcn) = 1 AND loc.id_train = t.id AND t.id = {id_train};"
-            )
+            # Без явной транзакции каждая строка автокоммитится отдельно — при
+            # ошибке где-то в середине (например, psql без ON_ERROR_STOP) часть
+            # данных уже вставится, а остальные — нет, или (хуже) продолжат
+            # выполняться и привяжутся не к тому train.id. BEGIN/COMMIT делает
+            # весь файл одной атомарной операцией: либо всё, либо ничего.
+            sql_lines = ["BEGIN;"]
+            sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows))
+            sql_lines.append("COMMIT;")
 
             content = "\n".join(sql_lines)
             return Response(
@@ -411,8 +433,10 @@ class TrainParserController(Controller):
                 media_type="application/json",
             )
 
-        max_train = (await db_session.execute(select(func.max(Train.id)))).scalar() or 0
-        id_train = max_train + 1
+        # Как и в generate_sql — резервируем id_train через nextval, а не
+        # max(id)+1, чтобы не столкнуться с чужим поездом, вставленным
+        # конкурентно между вычислением id и его использованием ниже.
+        id_train = (await db_session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
 
         errors, valid_rows = await self._validate_train_rows(db_session, rows, id_type_train, id_train)
 
@@ -430,78 +454,23 @@ class TrainParserController(Controller):
                 media_type="application/json",
             )
 
+        # Тот же SQL, что и в generate_sql (без BEGIN/COMMIT — транзакцией
+        # управляет сама сессия), выполняется одним multi-statement запросом
+        # через «сырое» соединение: DO $$ ... $$ с несколькими операторами
+        # внутри нельзя выполнить через обычный execute() с параметрами
+        # (asyncpg не готовит несколько команд в одном prepared statement).
+        sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows))
+
         try:
-            await db_session.execute(
-                text(
-                    "INSERT INTO public.train (id, id_train_type, name, is_active, is_delete) "
-                    "VALUES (:id, :tt, :name, true, false)"
-                ),
-                {"id": id_train, "tt": id_type_train, "name": train_name},
-            )
-
-            now = datetime.utcnow().replace(microsecond=0)
-            today = date.today()
-            await db_session.execute(
-                text(
-                    "INSERT INTO public.mileage_train (id_train, milage, mileage_average, date, date_average) "
-                    "VALUES (:id_train, 0, 0, :date, :date_average)"
-                ),
-                {"id_train": id_train, "date": now, "date_average": today},
-            )
-
-            for vr in valid_rows:
-                sn = vr["serial_number"]
-                sn_val = sn if sn and sn != "none" else None
-
-                # id не указывается явно — берётся из nextval(location_id_seq) по
-                # умолчанию колонки, чтобы не полагаться на устаревающий max(id)+1.
-                location_result = await db_session.execute(
-                    text(
-                        "INSERT INTO public.location (id_type_location, id_train, car_number, id_car_place) "
-                        "VALUES (2, :id_train, :car_number, :id_car_place) RETURNING id"
-                    ),
-                    {"id_train": id_train, "car_number": vr["car_number"], "id_car_place": vr["car_place_id"]},
-                )
-                id_location = location_result.scalar_one()
-
-                # аналогично location — id берётся из nextval(actives_id_seq) по
-                # умолчанию колонки, а не из устаревающего max(id)+1.
-                actives_result = await db_session.execute(
-                    text(
-                        "INSERT INTO public.actives (active_number, id_unit_type, id_design_number, id_location, "
-                        "serial_number, lcn, id_actves_parent, id_actives_root) "
-                        "VALUES (:active_number, :id_unit_type, :id_design_number, :id_location, "
-                        ":serial_number, :lcn, :parent, :root) RETURNING id"
-                    ),
-                    {
-                        "active_number": vr["active_number"],
-                        "id_unit_type": vr["id_unit_type"],
-                        "id_design_number": vr["id_design_number"],
-                        "id_location": id_location,
-                        "serial_number": sn_val,
-                        "lcn": vr["lcn_new"],
-                        "parent": vr["id_actives_parent"],
-                        "root": vr["root_number"],
-                    },
-                )
-                id_actives = actives_result.scalar_one()
-
-                if vr["is_root"]:
-                    await db_session.execute(
-                        text("UPDATE public.counter_active SET is_train = true WHERE id_active = :id"),
-                        {"id": id_actives},
-                    )
-
-            await db_session.execute(text(f"SELECT setval('public.train_id_seq', {id_train})"))
-
-            await db_session.execute(
-                text(
-                    "UPDATE public.train AS t SET active = act.id "
-                    "FROM public.location AS loc LEFT JOIN public.actives act ON act.id_location = loc.id "
-                    "WHERE nlevel(act.lcn) = 1 AND loc.id_train = t.id AND t.id = :id_train"
-                ),
-                {"id_train": id_train},
-            )
+            # ВАЖНО: db_session.rollback() ниже откатывает и этот «сырой» вызов
+            # только потому, что сессия уже открыла реальную транзакцию на
+            # соединении раньше (select TrainType.id, nextval(), запросы внутри
+            # _validate_train_rows). Если когда-нибудь этот блок станет первым
+            # обращением к БД в запросе — транзакция не будет открыта и rollback
+            # ничего не отменит. Не убирайте обращения к db_session до этой точки.
+            conn = await db_session.connection()
+            raw_conn = await conn.get_raw_connection()
+            await raw_conn.driver_connection.execute(sql_body)
 
             await db_session.commit()
 
@@ -518,7 +487,6 @@ class TrainParserController(Controller):
             f"=== Train Parser Execute: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
             f"Train: {train_name} (id={id_train}, type={train_type_name})",
             f"Rows processed: {len(valid_rows)}",
-            f"Next location_id: {id_location}, next actives_id: {id_actives}",
             "",
         ]
         log_file = LOG_DIR / f"train_parser_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
