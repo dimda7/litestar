@@ -318,6 +318,9 @@ class TrainParserController(Controller):
             f"UPDATE public.train SET id_train_series = {id_train_series} WHERE id = {id_train};"
         )
 
+        sql_lines.append("SELECT nextval('public.location_id_seq');")
+        sql_lines.append("SELECT nextval('public.actives_id_seq');")
+
         return sql_lines
 
     @post("/generate-sql")
