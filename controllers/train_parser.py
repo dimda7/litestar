@@ -15,7 +15,7 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
-from models import TrainType, DesignNumber, Models, Train, Location, Actives, MileageTrain, CounterActive
+from models import TrainType, DesignNumber, Models, Train, MileageTrain, CounterActive
 from schemas import GenerateSQLRequest
 from sql_utils import sql_escape
 from parser_storage import (
@@ -284,12 +284,7 @@ class TrainParserController(Controller):
                 )
 
             max_train = (await db_session.execute(select(func.max(Train.id)))).scalar() or 0
-            max_location = (await db_session.execute(select(func.max(Location.id)))).scalar() or 0
-            max_actives = (await db_session.execute(select(func.max(Actives.id)))).scalar() or 0
-
             id_train = max_train + 1
-            id_location = max_location + 1
-            id_actives = max_actives + 1
 
             errors, valid_rows = await self._validate_train_rows(db_session, rows, id_type_train, id_train)
 
@@ -307,7 +302,18 @@ class TrainParserController(Controller):
             sql_lines.append(f"INSERT INTO public.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{sql_escape(train_name)}', true, false);")
             sql_lines.append(f"INSERT INTO public.mileage_train (id_train, milage, mileage_average, date, date_average) VALUES ({id_train}, 0, 0, '{now}', '{today}');")
 
-            for vr in valid_rows:
+            # id_location/id_actives больше не считаются заранее как max(id)+1 —
+            # этот снимок мог устареть к моменту реального запуска SQL-файла и
+            # вызывать конфликт PK. Вместо этого id получают из sequence прямо
+            # в скрипте. Один nextval() на переменную раздувал DECLARE до тысяч
+            # строк (id1..idN) — вместо этого одним запросом набираем массив id
+            # сразу на все строки и обращаемся к нему по индексу (loc_ids[i]).
+            body_lines: list[str] = []
+
+            for idx, vr in enumerate(valid_rows, start=1):
+                loc_ref = f"loc_ids[{idx}]"
+                act_ref = f"act_ids[{idx}]"
+
                 sn = vr["serial_number"]
                 sn_val = f"'{sql_escape(sn)}'" if sn and sn != "none" else "NULL"
                 parent_val = f"'{sql_escape(str(vr['id_actives_parent']))}'" if vr["id_actives_parent"] else "NULL"
@@ -316,25 +322,34 @@ class TrainParserController(Controller):
                 cp_val = str(vr["car_place_id"]) if vr["car_place_id"] is not None else "NULL"
                 ut_val = str(vr["id_unit_type"]) if vr["id_unit_type"] is not None else "NULL"
 
-                sql_lines.append(
-                    f"INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
-                    f"VALUES ({id_location}, 2, {id_train}, {car_num_val}, {cp_val});"
+                body_lines.append(
+                    f"    INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
+                    f"VALUES ({loc_ref}, 2, {id_train}, {car_num_val}, {cp_val});"
                 )
-                sql_lines.append(
-                    f"INSERT INTO public.actives (id, active_number, id_unit_type, id_design_number, id_location, "
+                body_lines.append(
+                    f"    INSERT INTO public.actives (id, active_number, id_unit_type, id_design_number, id_location, "
                     f"serial_number, lcn, id_actves_parent, id_actives_root) "
-                    f"VALUES ({id_actives}, '{sql_escape(vr['active_number'])}', {ut_val}, {vr['id_design_number']}, "
-                    f"{id_location}, {sn_val}, '{sql_escape(vr['lcn_new'])}', {parent_val}, {root_val});"
+                    f"VALUES ({act_ref}, '{sql_escape(vr['active_number'])}', {ut_val}, {vr['id_design_number']}, "
+                    f"{loc_ref}, {sn_val}, '{sql_escape(vr['lcn_new'])}', {parent_val}, {root_val});"
                 )
 
                 if vr["is_root"]:
-                    sql_lines.append(f"UPDATE public.counter_active SET is_train = true WHERE id_active = {id_actives};")
+                    body_lines.append(f"    UPDATE public.counter_active SET is_train = true WHERE id_active = {act_ref};")
 
-                id_location += 1
-                id_actives += 1
+            sql_lines.append("DO $$")
+            sql_lines.append("DECLARE")
+            sql_lines.append(
+                f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
+                f"FROM generate_series(1, {len(valid_rows)}));"
+            )
+            sql_lines.append(
+                f"    act_ids bigint[] := ARRAY(SELECT nextval('public.actives_id_seq') "
+                f"FROM generate_series(1, {len(valid_rows)}));"
+            )
+            sql_lines.append("BEGIN")
+            sql_lines.extend(body_lines)
+            sql_lines.append("END $$;")
 
-            sql_lines.append(f"SELECT setval('public.actives_id_seq', {id_actives});")
-            sql_lines.append(f"SELECT setval('public.location_id_seq', {id_location});")
             sql_lines.append(f"SELECT setval('public.train_id_seq', {id_train});")
 
             content = "\n".join(sql_lines)
@@ -391,12 +406,7 @@ class TrainParserController(Controller):
             )
 
         max_train = (await db_session.execute(select(func.max(Train.id)))).scalar() or 0
-        max_location = (await db_session.execute(select(func.max(Location.id)))).scalar() or 0
-        max_actives = (await db_session.execute(select(func.max(Actives.id)))).scalar() or 0
-
         id_train = max_train + 1
-        id_location = max_location + 1
-        id_actives = max_actives + 1
 
         errors, valid_rows = await self._validate_train_rows(db_session, rows, id_type_train, id_train)
 
@@ -437,23 +447,27 @@ class TrainParserController(Controller):
                 sn = vr["serial_number"]
                 sn_val = sn if sn and sn != "none" else None
 
-                await db_session.execute(
+                # id не указывается явно — берётся из nextval(location_id_seq) по
+                # умолчанию колонки, чтобы не полагаться на устаревающий max(id)+1.
+                location_result = await db_session.execute(
                     text(
-                        "INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
-                        "VALUES (:id, 2, :id_train, :car_number, :id_car_place)"
+                        "INSERT INTO public.location (id_type_location, id_train, car_number, id_car_place) "
+                        "VALUES (2, :id_train, :car_number, :id_car_place) RETURNING id"
                     ),
-                    {"id": id_location, "id_train": id_train, "car_number": vr["car_number"], "id_car_place": vr["car_place_id"]},
+                    {"id_train": id_train, "car_number": vr["car_number"], "id_car_place": vr["car_place_id"]},
                 )
+                id_location = location_result.scalar_one()
 
-                await db_session.execute(
+                # аналогично location — id берётся из nextval(actives_id_seq) по
+                # умолчанию колонки, а не из устаревающего max(id)+1.
+                actives_result = await db_session.execute(
                     text(
-                        "INSERT INTO public.actives (id, active_number, id_unit_type, id_design_number, id_location, "
+                        "INSERT INTO public.actives (active_number, id_unit_type, id_design_number, id_location, "
                         "serial_number, lcn, id_actves_parent, id_actives_root) "
-                        "VALUES (:id, :active_number, :id_unit_type, :id_design_number, :id_location, "
-                        ":serial_number, :lcn, :parent, :root)"
+                        "VALUES (:active_number, :id_unit_type, :id_design_number, :id_location, "
+                        ":serial_number, :lcn, :parent, :root) RETURNING id"
                     ),
                     {
-                        "id": id_actives,
                         "active_number": vr["active_number"],
                         "id_unit_type": vr["id_unit_type"],
                         "id_design_number": vr["id_design_number"],
@@ -464,6 +478,7 @@ class TrainParserController(Controller):
                         "root": vr["root_number"],
                     },
                 )
+                id_actives = actives_result.scalar_one()
 
                 if vr["is_root"]:
                     await db_session.execute(
@@ -471,11 +486,6 @@ class TrainParserController(Controller):
                         {"id": id_actives},
                     )
 
-                id_location += 1
-                id_actives += 1
-
-            await db_session.execute(text(f"SELECT setval('public.actives_id_seq', {id_actives})"))
-            await db_session.execute(text(f"SELECT setval('public.location_id_seq', {id_location})"))
             await db_session.execute(text(f"SELECT setval('public.train_id_seq', {id_train})"))
 
             await db_session.commit()

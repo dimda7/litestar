@@ -148,7 +148,7 @@
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                 <div>
                     <div style="font-weight: 500;">Скачать SQL-файл</div>
-                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл train_insert.sql для ручного запуска</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл train_insert_&lt;название поезда&gt;.sql для ручного запуска</div>
                 </div>
             </button>
             <button onclick="executeInsert()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
@@ -218,6 +218,12 @@
         return appendCsrfToken(formData);
     }
 
+    function sqlFileName() {
+        const trainName = document.getElementById('train-name').value.trim();
+        const safeName = trainName.replace(/[^\p{L}\p{N}_-]+/gu, '_');
+        return 'train_insert_' + safeName + '.sql';
+    }
+
     function generateSQL() {
         closeActionModal();
         const formData = buildFormData();
@@ -235,7 +241,7 @@
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = 'train_insert.sql';
+                    a.download = sqlFileName();
                     a.click();
                     URL.revokeObjectURL(url);
                 }
