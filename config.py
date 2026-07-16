@@ -45,6 +45,14 @@ class Settings:
             password=environ["DB_PASSWORD_PROD"],
             dbname=environ["DB_NAME_PROD"],
         ),
+        "grom-my": DBProfile(
+            label="grom-my",
+            host=environ["DB_HOST_MY"],
+            port=int(environ["DB_PORT_MY"]),
+            user=environ["DB_USER_MY"],
+            password=environ["DB_PASSWORD_MY"],
+            dbname=environ["DB_NAME_MY"],
+        ),
     })
     server_port: int = field(default_factory=lambda: int(environ.get("SERVER_PORT", "8011")))
     session_secret: bytes = field(default_factory=lambda: bytes.fromhex(environ["SESSION_SECRET"]))

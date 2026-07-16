@@ -352,6 +352,12 @@ class TrainParserController(Controller):
 
             sql_lines.append(f"SELECT setval('public.train_id_seq', {id_train});")
 
+            sql_lines.append(
+                f"UPDATE public.train AS t SET active = act.id "
+                f"FROM public.location AS loc LEFT JOIN public.actives act ON act.id_location = loc.id "
+                f"WHERE nlevel(act.lcn) = 1 AND loc.id_train = t.id AND t.id = {id_train};"
+            )
+
             content = "\n".join(sql_lines)
             return Response(
                 content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
@@ -487,6 +493,15 @@ class TrainParserController(Controller):
                     )
 
             await db_session.execute(text(f"SELECT setval('public.train_id_seq', {id_train})"))
+
+            await db_session.execute(
+                text(
+                    "UPDATE public.train AS t SET active = act.id "
+                    "FROM public.location AS loc LEFT JOIN public.actives act ON act.id_location = loc.id "
+                    "WHERE nlevel(act.lcn) = 1 AND loc.id_train = t.id AND t.id = :id_train"
+                ),
+                {"id_train": id_train},
+            )
 
             await db_session.commit()
 
