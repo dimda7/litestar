@@ -15,7 +15,7 @@ class JiraController(Controller):
     @get("/attachments")
     async def list_attachments(self, issue: str) -> Response:
         try:
-            attachments = await jira_client.list_attachments(issue)
+            result = await jira_client.get_issue(issue)
         except ValueError as e:
             return Response(
                 content=json.dumps({"status": "error", "message": str(e)}),
@@ -31,7 +31,11 @@ class JiraController(Controller):
             )
 
         return Response(
-            content=json.dumps({"status": "ok", "attachments": attachments}),
+            content=json.dumps({
+                "status": "ok",
+                "attachments": result["attachments"],
+                "description": result["description"],
+            }),
             status_code=200,
             media_type="application/json",
         )
