@@ -163,6 +163,21 @@
     </div>
 </div>
 
+<div id="progress-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border-radius: 16px; padding: 32px 40px; min-width: 340px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.25);">
+        <div class="spinner" style="margin: 0 auto 20px;"></div>
+        <div id="progress-text" style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 14px;">Выполняется...</div>
+        <div style="background: var(--border); border-radius: 999px; height: 8px; overflow: hidden;">
+            <div id="progress-bar-fill" style="background: var(--accent); height: 100%; width: 0%; transition: width 0.2s;"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: var(--text-secondary);">
+            <span id="progress-counts"></span>
+            <span id="progress-percent">0%</span>
+        </div>
+        <div style="font-size: 12px; color: var(--text-hint); margin-top: 12px;">Не закрывайте страницу</div>
+    </div>
+</div>
+
 <script>
     const ALL_ROWS = {{ all_rows | tojson }};
 
@@ -224,16 +239,69 @@
         return 'train_insert_' + safeName + '.sql';
     }
 
+    let progressPollTimer = null;
+
+    function showProgress() {
+        document.getElementById('progress-text').textContent = 'Проверка данных...';
+        document.getElementById('progress-bar-fill').style.width = '0%';
+        document.getElementById('progress-percent').textContent = '0%';
+        document.getElementById('progress-counts').textContent = '';
+        document.getElementById('progress-overlay').style.display = 'flex';
+    }
+
+    function updateProgress(state) {
+        const total = state.total || 0;
+        const processed = state.processed || 0;
+        const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+        document.getElementById('progress-bar-fill').style.width = pct + '%';
+        document.getElementById('progress-percent').textContent = pct + '%';
+        document.getElementById('progress-counts').textContent = processed + ' из ' + total;
+        document.getElementById('progress-text').textContent =
+            state.phase === 'executing' ? 'Запись в базу данных...' : 'Проверка данных...';
+    }
+
+    function hideProgress() {
+        if (progressPollTimer) {
+            clearInterval(progressPollTimer);
+            progressPollTimer = null;
+        }
+        document.getElementById('progress-overlay').style.display = 'none';
+    }
+
+    function pollProgress(taskId, onFinished) {
+        progressPollTimer = setInterval(() => {
+            fetch('/train-parser/progress/' + taskId)
+                .then(resp => resp.json())
+                .then(state => {
+                    if (state.status === 'running') {
+                        updateProgress(state);
+                        return;
+                    }
+                    clearInterval(progressPollTimer);
+                    progressPollTimer = null;
+                    onFinished(state);
+                })
+                .catch(err => {
+                    clearInterval(progressPollTimer);
+                    progressPollTimer = null;
+                    hideProgress();
+                    alert('Ошибка получения прогресса: ' + err);
+                });
+        }, 400);
+    }
+
     function generateSQL() {
         closeActionModal();
         const formData = buildFormData();
         if (!formData) return;
 
         document.getElementById('error-box').style.display = 'none';
+        showProgress();
 
-        fetch('/train-parser/generate-sql', { method: 'POST', body: formData })
+        fetch('/train-parser/generate-sql/start', { method: 'POST', body: formData })
             .then(resp => resp.json())
-            .then(data => {
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
                 if (data.status === 'error' || !data.sql) {
                     handleErrors(data);
                 } else {
@@ -245,8 +313,8 @@
                     a.click();
                     URL.revokeObjectURL(url);
                 }
-            })
-            .catch(err => alert('Ошибка запроса: ' + err));
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
     }
 
     function executeInsert() {
@@ -257,18 +325,20 @@
         if (!confirm('Вставить все данные поезда в базу данных?')) return;
 
         document.getElementById('error-box').style.display = 'none';
+        showProgress();
 
-        fetch('/train-parser/execute', { method: 'POST', body: formData })
+        fetch('/train-parser/execute/start', { method: 'POST', body: formData })
             .then(resp => resp.json())
-            .then(data => {
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
                 if (data.status === 'error' || data.status === 'partial') {
                     handleErrors(data);
                 } else {
                     alert(data.message);
                     location.reload();
                 }
-            })
-            .catch(err => alert('Ошибка запроса: ' + err));
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
     }
 </script>
 {% endif %}

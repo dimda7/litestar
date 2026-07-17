@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 import tempfile
+import time
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -11,12 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
 from litestar.datastructures import UploadFile
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
+from db_manager import get_session_maker
 from models import TrainType, DesignNumber, Models, MileageTrain, CounterActive
-from schemas import GenerateSQLRequest
 from sql_utils import sql_escape
 from parser_storage import (
     LOG_DIR,
@@ -26,6 +26,22 @@ from parser_storage import (
 )
 
 logger = logging.getLogger("train_parser")
+
+# Валидация построчно дёргает несколько запросов к БД, на больших файлах
+# (тысячи строк) это идёт секундами — прогресс отдаётся через отдельный
+# опрос, чтобы не держать один HTTP-запрос открытым всё это время.
+PROGRESS_TTL_SECONDS = 15 * 60
+_progress: dict[str, dict] = {}
+# asyncio хранит только слабую ссылку на fire-and-forget задачи — без явного
+# хранения задача может быть собрана GC до завершения.
+_tasks: dict[str, asyncio.Task] = {}
+
+
+def _cleanup_progress() -> None:
+    cutoff = time.time() - PROGRESS_TTL_SECONDS
+    stale = [tid for tid, state in _progress.items() if state["created_at"] < cutoff]
+    for tid in stale:
+        _progress.pop(tid, None)
 
 
 def _lcn_to_model(lsn: str, id_train_type: int) -> str:
@@ -68,6 +84,7 @@ class TrainParserController(Controller):
 
     async def _validate_train_rows(
         self, db_session: AsyncSession, rows: list[dict], id_type_train: int, id_train: int,
+        progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
         errors: list[dict] = []
         valid_rows: list[dict] = []
@@ -79,8 +96,13 @@ class TrainParserController(Controller):
             if lsn and active_number:
                 key_actives[lsn] = active_number
 
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
         for idx, el in enumerate(rows):
             row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
             active_number = str(el.get("Актив", "") or "").strip()
             serial_number = str(el.get("Сер", "") or "").strip()
             itemnum = str(el.get("itemnum", "") or "").strip()
@@ -243,6 +265,22 @@ class TrainParserController(Controller):
             return Redirect("/train-parser")
 
     @staticmethod
+    async def _resolve_type_and_series(
+        db_session: AsyncSession, train_type_name: str,
+    ) -> tuple[int | None, int | None, str | None]:
+        """Резолвит id_type_train и его серию (train_type.id_train_series). Возвращает (id_type_train, id_train_series, ошибка)."""
+        result = await db_session.execute(
+            select(TrainType.id, TrainType.id_train_series).where(TrainType.name == train_type_name)
+        )
+        type_row = result.first()
+        if type_row is None:
+            return None, None, f"Тип поезда '{train_type_name}' не найден"
+        id_type_train, id_train_series = type_row
+        if id_train_series is None:
+            return None, None, f"У типа поезда '{train_type_name}' не задана серия (id_train_series)"
+        return id_type_train, id_train_series, None
+
+    @staticmethod
     def _build_sql_body(
         id_train: int, id_type_train: int, train_name: str, valid_rows: list[dict], id_train_series: int,
     ) -> list[str]:
@@ -323,99 +361,9 @@ class TrainParserController(Controller):
 
         return sql_lines
 
-    @post("/generate-sql")
-    async def generate_sql(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-    ) -> Response:
-        """Генерация SQL-файла для вставки данных поезда."""
-        try:
-            form = await request.form()
-            train_name = str(form.get("train_name", "")).strip()
-            train_type_name = str(form.get("train_type_name", "")).strip()
-
-            if not train_name or not train_type_name:
-                return Response(
-                    content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Укажите название поезда и тип поезда"}]}),
-                    status_code=200,
-                    media_type="application/json",
-                )
-
-            session_id = request.session.get("train_parser_session_id", "")
-            stored = _load_data(session_id) if session_id else None
-            if not stored:
-                return Response(
-                    content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
-                    status_code=200,
-                    media_type="application/json",
-                )
-
-            rows: list[dict] = stored["rows"]
-
-            # Серия берётся из train_type.id_train_series — сама она у нас на
-            # странице не выбирается, только "Тип поезда" (train_type.name).
-            result = await db_session.execute(
-                select(TrainType.id, TrainType.id_train_series).where(TrainType.name == train_type_name)
-            )
-            type_row = result.first()
-            if type_row is None:
-                return Response(
-                    content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "train_type", "message": f"Тип поезда '{train_type_name}' не найден"}]}),
-                    status_code=200,
-                    media_type="application/json",
-                )
-            id_type_train, id_train_series = type_row
-            if id_train_series is None:
-                return Response(
-                    content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "train_type", "message": f"У типа поезда '{train_type_name}' не задана серия (id_train_series)"}]}),
-                    status_code=200,
-                    media_type="application/json",
-                )
-
-            # id_train резервируется сразу через nextval — а не max(id)+1 — чтобы
-            # к моменту реального запуска скачанного файла значение не могло
-            # оказаться занятым другим поездом, созданным за это время.
-            id_train = (await db_session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
-
-            errors, valid_rows = await self._validate_train_rows(db_session, rows, id_type_train, id_train)
-
-            if errors:
-                return Response(
-                    content=json.dumps({"status": "error", "errors": errors}),
-                    status_code=200,
-                    media_type="application/json",
-                )
-
-            # Без явной транзакции каждая строка автокоммитится отдельно — при
-            # ошибке где-то в середине (например, psql без ON_ERROR_STOP) часть
-            # данных уже вставится, а остальные — нет, или (хуже) продолжат
-            # выполняться и привяжутся не к тому train.id. BEGIN/COMMIT делает
-            # весь файл одной атомарной операцией: либо всё, либо ничего.
-            sql_lines = ["BEGIN;"]
-            sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series))
-            sql_lines.append("COMMIT;")
-
-            content = "\n".join(sql_lines)
-            return Response(
-                content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
-                status_code=200,
-                media_type="application/json",
-            )
-        except Exception as e:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка: {e}"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
-
-    @post("/execute")
-    async def execute(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-    ) -> Response:
-        """Атомарная вставка данных поезда в БД (train, mileage, location, actives, counter_active)."""
+    @post("/generate-sql/start")
+    async def generate_sql_start(self, request: Request) -> Response:
+        """Запускает фоновую генерацию SQL-файла, возвращает task_id для опроса прогресса."""
         form = await request.form()
         train_name = str(form.get("train_name", "")).strip()
         train_type_name = str(form.get("train_type_name", "")).strip()
@@ -438,74 +386,153 @@ class TrainParserController(Controller):
 
         rows: list[dict] = stored["rows"]
 
-        # Серия берётся из train_type.id_train_series — сама она у нас на
-        # странице не выбирается, только "Тип поезда" (train_type.name).
-        result = await db_session.execute(
-            select(TrainType.id, TrainType.id_train_series).where(TrainType.name == train_type_name)
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_generate(task_id, train_name, train_type_name, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
         )
-        type_row = result.first()
-        if type_row is None:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "train_type", "message": f"Тип поезда '{train_type_name}' не найден"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
-        id_type_train, id_train_series = type_row
-        if id_train_series is None:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "train_type", "message": f"У типа поезда '{train_type_name}' не задана серия (id_train_series)"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
 
-        # Как и в generate_sql — резервируем id_train через nextval, а не
-        # max(id)+1, чтобы не столкнуться с чужим поездом, вставленным
-        # конкурентно между вычислением id и его использованием ниже.
-        id_train = (await db_session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
+    async def _run_generate(self, task_id: str, train_name: str, train_type_name: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                id_type_train, id_train_series, series_error = await self._resolve_type_and_series(session, train_type_name)
+                if series_error:
+                    progress.update(status="error", errors=[{"row": 0, "field": "train_type", "message": series_error}])
+                    return
 
-        errors, valid_rows = await self._validate_train_rows(db_session, rows, id_type_train, id_train)
+                # id_train резервируется сразу через nextval — а не max(id)+1 — чтобы
+                # к моменту реального запуска скачанного файла значение не могло
+                # оказаться занятым другим поездом, созданным за это время.
+                id_train = (await session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
+
+                errors, valid_rows = await self._validate_train_rows(session, rows, id_type_train, id_train, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
+            return
 
         if errors:
+            progress.update(status="error", errors=errors)
+            return
+
+        # Без явной транзакции каждая строка автокоммитится отдельно — при
+        # ошибке где-то в середине (например, psql без ON_ERROR_STOP) часть
+        # данных уже вставится, а остальные — нет, или (хуже) продолжат
+        # выполняться и привяжутся не к тому train.id. BEGIN/COMMIT делает
+        # весь файл одной атомарной операцией: либо всё, либо ничего.
+        sql_lines = ["BEGIN;"]
+        sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series))
+        sql_lines.append("COMMIT;")
+
+        progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
+
+    @post("/execute/start")
+    async def execute_start(self, request: Request) -> Response:
+        """Запускает фоновую атомарную вставку поезда в БД, возвращает task_id для опроса прогресса."""
+        form = await request.form()
+        train_name = str(form.get("train_name", "")).strip()
+        train_type_name = str(form.get("train_type_name", "")).strip()
+
+        if not train_name or not train_type_name:
             return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Укажите название поезда и тип поезда"}]}),
                 status_code=200,
                 media_type="application/json",
             )
 
-        if not valid_rows:
+        session_id = request.session.get("train_parser_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для вставки"}]}),
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
                 status_code=200,
                 media_type="application/json",
             )
 
-        # Тот же SQL, что и в generate_sql (без BEGIN/COMMIT — транзакцией
-        # управляет сама сессия), выполняется одним multi-statement запросом
-        # через «сырое» соединение: DO $$ ... $$ с несколькими операторами
-        # внутри нельзя выполнить через обычный execute() с параметрами
-        # (asyncpg не готовит несколько команд в одном prepared statement).
-        sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series))
+        rows: list[dict] = stored["rows"]
 
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_execute(task_id, train_name, train_type_name, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_execute(self, task_id: str, train_name: str, train_type_name: str, rows: list[dict]) -> None:
+        """Атомарная вставка данных поезда в БД (train, mileage, location, actives, counter_active)."""
+        progress = _progress[task_id]
         try:
-            # ВАЖНО: db_session.rollback() ниже откатывает и этот «сырой» вызов
-            # только потому, что сессия уже открыла реальную транзакцию на
-            # соединении раньше (select TrainType.id, nextval(), запросы внутри
-            # _validate_train_rows). Если когда-нибудь этот блок станет первым
-            # обращением к БД в запросе — транзакция не будет открыта и rollback
-            # ничего не отменит. Не убирайте обращения к db_session до этой точки.
-            conn = await db_session.connection()
-            raw_conn = await conn.get_raw_connection()
-            await raw_conn.driver_connection.execute(sql_body)
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                id_type_train, id_train_series, series_error = await self._resolve_type_and_series(session, train_type_name)
+                if series_error:
+                    progress.update(status="error", errors=[{"row": 0, "field": "train_type", "message": series_error}])
+                    return
 
-            await db_session.commit()
+                # Как и в generate_sql — резервируем id_train через nextval, а не
+                # max(id)+1, чтобы не столкнуться с чужим поездом, вставленным
+                # конкурентно между вычислением id и его использованием ниже.
+                id_train = (await session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
 
+                errors, valid_rows = await self._validate_train_rows(session, rows, id_type_train, id_train, progress=progress)
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для вставки"}])
+                    return
+
+                # DO $$ ... $$ выполняется одним запросом целиком — прогресс
+                # внутри него не отследить, поэтому фаза "executing" просто
+                # показывает, что идёт запись, без пошагового процента.
+                progress.update(processed=0, total=1, phase="executing")
+
+                # Тот же SQL, что и в generate_sql (без BEGIN/COMMIT — транзакцией
+                # управляет сама сессия), выполняется одним multi-statement запросом
+                # через «сырое» соединение: DO $$ ... $$ с несколькими операторами
+                # внутри нельзя выполнить через обычный execute() с параметрами
+                # (asyncpg не готовит несколько команд в одном prepared statement).
+                sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series))
+
+                try:
+                    # ВАЖНО: session.rollback() ниже откатывает и этот «сырой» вызов
+                    # только потому, что сессия уже открыла реальную транзакцию на
+                    # соединении раньше (select TrainType.id, nextval(), запросы внутри
+                    # _validate_train_rows). Если когда-нибудь этот блок станет первым
+                    # обращением к БД — транзакция не будет открыта и rollback
+                    # ничего не отменит. Не убирайте обращения к session до этой точки.
+                    conn = await session.connection()
+                    raw_conn = await conn.get_raw_connection()
+                    await raw_conn.driver_connection.execute(sql_body)
+
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+
+                progress["processed"] = 1
         except Exception as e:
-            await db_session.rollback()
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
 
         now = datetime.now()
         log_lines = [
@@ -519,9 +546,20 @@ class TrainParserController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Train parsed: %s, log saved to %s", train_name, log_file)
 
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Поезд '{train_name}' успешно добавлен (id={id_train})")
+
+    @get("/progress/{task_id:str}")
+    async def get_progress(self, task_id: str) -> Response:
+        state = _progress.get(task_id)
+        if state is None:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Задача не найдена или устарела"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows),
-                                "message": f"Поезд '{train_name}' успешно добавлен (id={id_train})"}),
+            content=json.dumps({k: v for k, v in state.items() if k != "created_at"}),
             status_code=200,
             media_type="application/json",
         )
