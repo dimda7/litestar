@@ -216,7 +216,7 @@ class ActivesParserController(Controller):
         for idx, row in enumerate(rows):
             row_num = idx + 1
             active_number = str(row.get("Актив", "") or "").strip()
-            serial_number = str(row.get("Новый с/н", "") or "").strip()
+            serial_number = str(row.get("Новый с/н") or row.get("Новый Серийный номер") or "").strip()
 
             if not active_number:
                 errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})
