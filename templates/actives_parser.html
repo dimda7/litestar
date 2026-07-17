@@ -19,9 +19,10 @@
             <span id="file-name" class="file-upload-name">Файл не выбран</span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
-            <input type="text" id="jira-issue" class="form-input" placeholder="Задача Jira, напр. GROM-6244" style="max-width: 220px;">
+            <input type="text" id="jira-issue-prefix" class="form-input" value="GROM-" style="max-width: 90px;">
+            <input type="text" id="jira-issue-num" class="form-input" placeholder="6244" style="max-width: 120px;">
             <button type="button" class="btn" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border);"
-                    onclick="jiraFindAttachments('jira-issue', 'file-input', 'file-name', 'jira-attachments')">
+                    onclick="jiraFindAttachments('jira-issue-prefix', 'jira-issue-num', 'file-input', 'file-name', 'jira-attachments')">
                 Найти вложения
             </button>
         </div>

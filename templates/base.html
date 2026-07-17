@@ -16,10 +16,12 @@
             return formData;
         }
 
-        function jiraFindAttachments(issueInputId, fileInputId, fileNameId, listContainerId) {
-            const issue = document.getElementById(issueInputId).value.trim();
+        function jiraFindAttachments(issuePrefixId, issueNumId, fileInputId, fileNameId, listContainerId) {
+            const prefix = document.getElementById(issuePrefixId).value.trim();
+            const num = document.getElementById(issueNumId).value.trim();
+            const issue = prefix + num;
             const container = document.getElementById(listContainerId);
-            if (!issue) {
+            if (!num) {
                 alert('Введите номер задачи Jira');
                 return;
             }
