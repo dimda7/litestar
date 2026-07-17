@@ -12,6 +12,12 @@ _active_profile: str = DEFAULT_DB_PROFILE
 _engines: dict[str, AsyncEngine] = {}
 _session_makers: dict[str, async_sessionmaker[AsyncSession]] = {}
 
+# Ставится в True только после явного выбора БД (страница /auth/db-select или
+# Настройки). Пока False — миддлварь гонит любой запрос на выбор БД, логин
+# по fdw_users иначе физически не по чему проверять (у каждой БД свои
+# пользователи).
+_connection_established: bool = False
+
 # Таймаут ожидания свободного соединения из пула / установления TCP-соединения.
 # Без него зависший пул (например, исчерпанный pgbouncer) блокирует запрос навсегда.
 POOL_TIMEOUT_SECONDS = 10
@@ -34,12 +40,29 @@ def get_active_profile() -> str:
     return _active_profile
 
 
-def set_active_profile(profile: str) -> None:
-    global _active_profile
+def has_active_connection() -> bool:
+    return _connection_established
+
+
+def set_active_profile(profile: str) -> bool:
+    """Делает профиль активным.
+
+    Возвращает True, если активный профиль реально изменился (был другим) —
+    вызывающий код использует это, чтобы решить, сбрасывать ли текущую
+    сессию логина (у разных БД разные пользователи).
+    """
+    global _active_profile, _connection_established
+
     if profile not in settings.db_profiles:
         raise ValueError(f"Неизвестный профиль БД: {profile}")
+
+    changed = profile != _active_profile
+    _get_session_maker(profile)
+
     _active_profile = profile
+    _connection_established = True
     logger.info("Active DB profile switched to %s", profile)
+    return changed
 
 
 async def test_connection(profile: str) -> tuple[bool, str]:

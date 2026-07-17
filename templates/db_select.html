@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>Выбор БД — Litestar App</title>
+</head>
+<body class="login-page">
+    <div class="login-card">
+        <div class="login-logo">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="48" height="48" rx="12" fill="#1976d2"/>
+                <path d="M14 17h20v3H14zm0 6h20v3H14zm0 6h14v3H14z" fill="white"/>
+            </svg>
+        </div>
+        <h1 class="login-title">Подключение к базе данных</h1>
+        <p style="text-align: center; font-size: 13px; color: var(--text-secondary); margin-top: -12px; margin-bottom: 20px;">
+            У каждой БД свои пользователи — выберите подключение перед входом
+        </p>
+
+        {% if error %}
+        <div class="alert alert-error">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        <form method="post" action="/auth/db-select">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+
+            <div class="form-group">
+                <label class="form-label">База данных</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    {% for p in db_profiles %}
+                    <label style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
+                        <input type="radio" name="profile" value="{{ p.name }}" {{ 'checked' if loop.first }} style="accent-color: var(--accent);">
+                        <div>
+                            <div style="font-size: 14px; font-weight: 500;">{{ p.label }}</div>
+                            <div style="font-size: 12px; color: var(--text-hint);">{{ p.host }}:{{ p.port }} / {{ p.dbname }}</div>
+                        </div>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
+                Подключиться
+            </button>
+        </form>
+    </div>
+</body>
+</html>

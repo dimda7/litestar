@@ -94,3 +94,10 @@ class DBProfileRequest(msgspec.Struct):
 
     profile: str
     """Имя профиля БД (например, 'grom-tk' или 'grom-prod')."""
+
+
+class DbSelectRequest(msgspec.Struct):
+    """Запрос выбора БД на странице /auth/db-select (перед логином)."""
+
+    profile: str
+    """Имя профиля БД."""

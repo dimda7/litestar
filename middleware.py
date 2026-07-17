@@ -3,9 +3,12 @@ import time
 from litestar.types import ASGIApp, Scope, Receive, Send
 from starlette.responses import RedirectResponse
 
+import db_manager
+
 
 EXCLUDE_PATHS = {"/auth/login", "/auth/logout"}
 EXCLUDE_PREFIXES = ("/static/",)
+DB_SELECT_PATH = "/auth/db-select"
 
 SESSION_TIMEOUT = 3600  # 1 hour in seconds
 
@@ -25,6 +28,17 @@ class AuthMiddleware:
 
         if any(path.startswith(p) for p in EXCLUDE_PREFIXES):
             await self.app(scope, receive, send)
+            return
+
+        if path == DB_SELECT_PATH:
+            await self.app(scope, receive, send)
+            return
+
+        # У каждой БД свои пользователи/пароли — логин физически не по чему
+        # проверять, пока не выбрано конкретное подключение.
+        if not db_manager.has_active_connection():
+            response = RedirectResponse(DB_SELECT_PATH, status_code=303)
+            await response(scope, receive, send)
             return
 
         if path in EXCLUDE_PATHS:

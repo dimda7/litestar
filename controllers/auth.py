@@ -10,12 +10,59 @@ from litestar.response import Template
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import db_manager
+from config import settings
 from models import User
-from schemas import LoginRequest
+from schemas import DbSelectRequest, LoginRequest
 
 
 class AuthController(Controller):
     path = "/auth"
+
+    @get("/db-select")
+    async def db_select_page(self, request: Request) -> Template:
+        """Выбор подключения к БД перед логином — у каждой БД свои пользователи."""
+        profiles = [
+            {"name": name, "label": profile.label, "host": profile.host,
+             "port": profile.port, "dbname": profile.dbname}
+            for name, profile in settings.db_profiles.items()
+        ]
+        return Template(
+            template_name="db_select.html",
+            context={"error": None, "db_profiles": profiles},
+        )
+
+    @post("/db-select")
+    async def db_select(
+        self,
+        request: Request,
+        data: DbSelectRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
+    ) -> Template | Redirect:
+        """Проверяет подключение к выбранной БД и делает её активной."""
+        profiles = [
+            {"name": name, "label": profile.label, "host": profile.host,
+             "port": profile.port, "dbname": profile.dbname}
+            for name, profile in settings.db_profiles.items()
+        ]
+
+        if data.profile not in settings.db_profiles:
+            return Template(
+                template_name="db_select.html",
+                context={"error": "Неизвестный профиль БД", "db_profiles": profiles},
+            )
+
+        ok, message = await db_manager.test_connection(data.profile)
+        if not ok:
+            return Template(
+                template_name="db_select.html",
+                context={"error": message, "db_profiles": profiles},
+            )
+
+        db_manager.set_active_profile(data.profile)
+        # Логин проверяется по fdw_users в только что выбранной БД — старая
+        # сессия (если была от другой БД) для неё не годится.
+        request.clear_session()
+        return Redirect("/auth/login")
 
     @get("/login")
     async def login_page(self, request: Request) -> Template | Redirect:

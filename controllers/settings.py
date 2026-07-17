@@ -60,12 +60,18 @@ class SettingsController(Controller):
                 media_type="application/json",
             )
 
-        db_manager.set_active_profile(data.profile)
+        changed = db_manager.set_active_profile(data.profile)
+
+        if changed:
+            # У другой БД свои пользователи — текущий логин для неё не годится.
+            request.clear_session()
+
         return Response(
             content=json.dumps({
                 "status": "ok",
                 "message": f"Подключено к «{data.profile}»",
                 "active": data.profile,
+                "relogin": changed,
             }),
             status_code=200,
             media_type="application/json",

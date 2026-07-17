@@ -124,15 +124,18 @@
         box.textContent = message;
     }
 
+    function buildDbFormData(profile) {
+        const formData = new FormData();
+        formData.append('profile', profile);
+        appendCsrfToken(formData);
+        return formData;
+    }
+
     function testDbConnection() {
         const profile = getSelectedProfile();
         if (!profile) return;
 
-        const formData = new FormData();
-        formData.append('profile', profile);
-        appendCsrfToken(formData);
-
-        fetch('/settings/db/test-connection', { method: 'POST', body: formData })
+        fetch('/settings/db/test-connection', { method: 'POST', body: buildDbFormData(profile) })
             .then(resp => resp.json())
             .then(data => showDbResult(data.status === 'ok', data.message))
             .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
@@ -142,16 +145,16 @@
         const profile = getSelectedProfile();
         if (!profile) return;
 
-        const formData = new FormData();
-        formData.append('profile', profile);
-        appendCsrfToken(formData);
-
-        fetch('/settings/db/connect', { method: 'POST', body: formData })
+        fetch('/settings/db/connect', { method: 'POST', body: buildDbFormData(profile) })
             .then(resp => resp.json())
             .then(data => {
                 showDbResult(data.status === 'ok', data.message);
                 if (data.status === 'ok') {
-                    setTimeout(() => location.reload(), 600);
+                    if (data.relogin) {
+                        setTimeout(() => { window.location = '/auth/login'; }, 600);
+                    } else {
+                        setTimeout(() => location.reload(), 600);
+                    }
                 }
             })
             .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
