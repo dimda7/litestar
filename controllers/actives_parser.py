@@ -213,6 +213,14 @@ class ActivesParserController(Controller):
         valid_rows: list[tuple[str, str]] = []
         batch_numbers: set[str] = set()
 
+        if rows and "Новый с/н" not in rows[0] and "Новый Серийный номер" not in rows[0]:
+            errors.append({
+                "row": 0,
+                "field": "Новый с/н",
+                "message": "В файле не найдена колонка 'Новый с/н' (или 'Новый Серийный номер')",
+            })
+            return errors, valid_rows
+
         for idx, row in enumerate(rows):
             row_num = idx + 1
             active_number = str(row.get("Актив", "") or "").strip()
