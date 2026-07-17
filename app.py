@@ -21,6 +21,7 @@ from controllers.train_parser import TrainParserController
 from controllers.design_number_parser import DesignNumberParserController
 from controllers.actives_parser import ActivesParserController
 from controllers.ptoir_parser import PtoirParserController
+from controllers.jira import JiraController
 from controllers.sql_console import SqlConsoleController
 from controllers.users import UsersController
 from controllers.settings import SettingsController
@@ -72,7 +73,7 @@ jinja_engine = JinjaTemplateEngine(directory=base_dir / "templates")
 jinja_engine.register_template_callable("current_db_label", lambda context: db_manager.get_active_profile())
 
 app = Litestar(
-    route_handlers=[HomeController, UsersController, AuthController, ParserController, TrainParserController, DesignNumberParserController, ActivesParserController, PtoirParserController, SqlConsoleController, SettingsController],
+    route_handlers=[HomeController, UsersController, AuthController, ParserController, TrainParserController, DesignNumberParserController, ActivesParserController, PtoirParserController, JiraController, SqlConsoleController, SettingsController],
     template_config=TemplateConfig(
         engine=jinja_engine,
     ),

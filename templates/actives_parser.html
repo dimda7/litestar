@@ -13,11 +13,19 @@
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <div class="file-upload">
             <label class="file-upload-label">
-                <input type="file" name="file" accept=".xlsx,.xls" onchange="document.getElementById('file-name').textContent = this.files[0]?.name || 'Файл не выбран'">
+                <input type="file" name="file" id="file-input" accept=".xlsx,.xls" onchange="document.getElementById('file-name').textContent = this.files[0]?.name || 'Файл не выбран'">
                 Выбрать файл
             </label>
             <span id="file-name" class="file-upload-name">Файл не выбран</span>
         </div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+            <input type="text" id="jira-issue" class="form-input" placeholder="Задача Jira, напр. GROM-6244" style="max-width: 220px;">
+            <button type="button" class="btn" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border);"
+                    onclick="jiraFindAttachments('jira-issue', 'file-input', 'file-name', 'jira-attachments')">
+                Найти вложения
+            </button>
+        </div>
+        <div id="jira-attachments" style="display: none; margin-top: 10px; font-size: 13px;"></div>
         <button type="submit" class="btn btn-primary" style="margin-top: 16px;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
             Загрузить
