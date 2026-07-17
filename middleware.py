@@ -24,6 +24,11 @@ class AuthMiddleware:
 
         raw_path = scope.get("raw_path", b"")
         path = raw_path.decode() if isinstance(raw_path, bytes) else scope.get("path", "")
+        # ASGI-транспорт в тестах (и потенциально другие) кладёт в raw_path
+        # путь вместе со строкой запроса, хотя по спеке её там быть не должно —
+        # без явного среза сравнения с EXCLUDE_PATHS/DB_SELECT_PATH ломаются
+        # для любого пути с query-параметрами (например, /jira/attachments?issue=...).
+        path = path.split("?", 1)[0]
         session = scope.get("session", {})
 
         if any(path.startswith(p) for p in EXCLUDE_PREFIXES):
