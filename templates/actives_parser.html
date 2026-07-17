@@ -74,6 +74,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
             Изменить серийные номера
         </button>
+        <button type="button" onclick="showModalDesignNumber()" class="btn btn-primary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            Изменить ТМЦ номера
+        </button>
     </div>
 </div>
 {% endif %}
@@ -173,6 +177,30 @@
     </div>
 </div>
 
+<div id="action-modal-design-number" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
+        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Изменение ТМЦ номера</h3>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Обновить поле id_design_number в actives по значению 'Новая Позиция ТМЦ' из файла (ищется в design_number.number)</p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button onclick="downloadSQLDesignNumber()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Скачать SQL-файл</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл actives_update_design_number.sql для ручного запуска</div>
+                </div>
+            </button>
+            <button onclick="executeUpdateDesignNumber()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#2e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Выполнить в базе данных</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное обновление всех строк</div>
+                </div>
+            </button>
+        </div>
+        <button onclick="closeModalDesignNumber()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
+    </div>
+</div>
+
 <script>
     const ALL_ROWS = {{ all_rows | tojson }};
 
@@ -193,6 +221,18 @@
 
     document.getElementById('action-modal').addEventListener('click', function(e) {
         if (e.target === this) closeModal();
+    });
+
+    function showModalDesignNumber() {
+        document.getElementById('action-modal-design-number').style.display = 'flex';
+    }
+
+    function closeModalDesignNumber() {
+        document.getElementById('action-modal-design-number').style.display = 'none';
+    }
+
+    document.getElementById('action-modal-design-number').addEventListener('click', function(e) {
+        if (e.target === this) closeModalDesignNumber();
     });
 
     function handleErrors(data) {
@@ -247,6 +287,49 @@
         if (!confirm('Выполнить обновление всех строк в базе данных?')) return;
 
         fetch('/actives-parser/update-serial-number', { method: 'POST', body: buildFormData() })
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    alert(data.message);
+                    location.reload();
+                }
+            })
+            .catch(err => alert('Ошибка запроса: ' + err));
+    }
+
+    function downloadSQLDesignNumber() {
+        closeModalDesignNumber();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+
+        fetch('/actives-parser/generate-sql-design-number', { method: 'POST', body: buildFormData() })
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    const blob = new Blob([data.sql], { type: 'text/sql' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'actives_update_design_number.sql';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            })
+            .catch(err => alert('Ошибка запроса: ' + err));
+    }
+
+    function executeUpdateDesignNumber() {
+        closeModalDesignNumber();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+
+        if (!confirm('Выполнить обновление всех строк в базе данных?')) return;
+
+        fetch('/actives-parser/update-design-number', { method: 'POST', body: buildFormData() })
             .then(resp => resp.json())
             .then(data => {
                 if (data.status === 'error') {

@@ -15,7 +15,7 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
-from models import Actives
+from models import Actives, DesignNumber
 from schemas import SelectSheetRequest
 from sql_utils import sql_escape
 from parser_storage import (
@@ -252,6 +252,157 @@ class ActivesParserController(Controller):
             valid_rows.append((active_number, serial_number))
 
         return errors, valid_rows
+
+    async def _validate_design_number(
+        self, db_session: AsyncSession, rows: list[dict]
+    ) -> tuple[list[dict], list[tuple[str, int, str]]]:
+        """Validate rows for actives.id_design_number update.
+        Returns (errors, valid_rows) where valid_rows is [(active_number, design_number_id, design_number), ...]
+        """
+        errors: list[dict] = []
+        valid_rows: list[tuple[str, int, str]] = []
+        batch_numbers: set[str] = set()
+
+        if rows and "Новая Позиция ТМЦ" not in rows[0]:
+            errors.append({
+                "row": 0,
+                "field": "Новая Позиция ТМЦ",
+                "message": "В файле не найдена колонка 'Новая Позиция ТМЦ'",
+            })
+            return errors, valid_rows
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            active_number = str(row.get("Актив", "") or "").strip()
+            design_number = str(row.get("Новая Позиция ТМЦ") or "").strip()
+
+            if not active_number:
+                errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})
+                continue
+
+            if active_number in batch_numbers:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Дубликат внутри файла: '{active_number}'"})
+                continue
+
+            result = await db_session.execute(
+                select(Actives.id).where(Actives.active_number == active_number)
+            )
+            active_id = result.scalar_one_or_none()
+            if active_id is None:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Актив не найден: '{active_number}'"})
+                continue
+
+            if not design_number:
+                errors.append({"row": row_num, "field": "Новая Позиция ТМЦ", "message": "Поле 'Новая Позиция ТМЦ' пустое"})
+                continue
+
+            result = await db_session.execute(
+                select(DesignNumber.id).where(DesignNumber.number == design_number)
+            )
+            design_number_id = result.scalar_one_or_none()
+            if design_number_id is None:
+                errors.append({"row": row_num, "field": "Новая Позиция ТМЦ",
+                                "message": f"Позиция ТМЦ не найдена: '{design_number}'"})
+                continue
+
+            batch_numbers.add(active_number)
+            valid_rows.append((active_number, design_number_id, design_number))
+
+        return errors, valid_rows
+
+    @post("/generate-sql-design-number")
+    async def generate_sql_design_number(
+        self,
+        request: Request,
+        db_session: AsyncSession,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        errors, valid_rows = await self._validate_design_number(db_session, rows)
+
+        if errors:
+            return Response(
+                content=json.dumps({"status": "error", "errors": errors}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        sql_lines = [
+            f"UPDATE public.actives SET id_design_number = {design_number_id} "
+            f"WHERE active_number = '{sql_escape(active_number)}';"
+            for active_number, design_number_id, _ in valid_rows
+        ]
+        content = "\n".join(sql_lines)
+        return Response(
+            content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    @post("/update-design-number")
+    async def update_design_number(
+        self,
+        request: Request,
+        db_session: AsyncSession,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        errors, valid_rows = await self._validate_design_number(db_session, rows)
+
+        if errors:
+            return Response(
+                content=json.dumps({"status": "error", "errors": errors}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        if not valid_rows:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        try:
+            for active_number, design_number_id, _ in valid_rows:
+                await db_session.execute(
+                    text("UPDATE public.actives SET id_design_number = :dn_id WHERE active_number = :an"),
+                    {"dn_id": design_number_id, "an": active_number},
+                )
+            await db_session.commit()
+        except Exception as e:
+            await db_session.rollback()
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Update id_design_number: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Rows updated: {len(valid_rows)}",
+            "",
+        ]
+        for active_number, design_number_id, design_number in valid_rows:
+            log_lines.append(
+                f"UPDATE public.actives SET id_design_number = {design_number_id} "
+                f"WHERE active_number = '{sql_escape(active_number)}'; -- '{sql_escape(design_number)}'"
+            )
+        log_lines.append("")
+
+        log_file = LOG_DIR / f"update_design_number_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Updated id_design_number for %d rows, log: %s", len(valid_rows), log_file)
+
+        return Response(
+            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено id_design_number для {len(valid_rows)} записей"}),
+            status_code=200,
+            media_type="application/json",
+        )
 
     @post("/generate-sql-serial-number")
     async def generate_sql_serial_number(
