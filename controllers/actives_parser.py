@@ -37,6 +37,9 @@ logger = logging.getLogger("actives_parser")
 PREFIX = "actives_parser"
 
 ACTIVE_NUMBER_COUNTER_DESCRIPTION = "Номер следующего актива"
+# active_number должен быть ровно такой длины: буквенный префикс (Тип актива) + цифры
+# счётчика, дополненные нулями слева между префиксом и числом до общей длины.
+ACTIVE_NUMBER_LENGTH = 10
 
 # Как и в train_parser: валидация строк ТМЦ дёргает несколько запросов к БД на
 # строку, на больших файлах это идёт секундами — прогресс отдаётся через
@@ -541,7 +544,7 @@ class ActivesParserController(Controller):
 
     async def _validate_create_actives_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
-    ) -> tuple[list[dict], list[dict], dict[tuple[int, int], int | None], dict[int, int], int]:
+    ) -> tuple[list[dict], list[dict], dict[tuple[int, int], int | None]]:
         """Валидирует строки ТМЦ и строит план создания активов (замена add_active_spcial).
 
         valid_rows — один элемент на каждый создаваемый актив ('Количество' раскрыто построчно).
@@ -550,6 +553,13 @@ class ActivesParserController(Controller):
         на пару и переиспользуется всеми строками файла с той же парой — старый код на peewee
         проверял наличие materials только в живой БД и не видел ещё не выполненные вставки из
         того же файла, поэтому на файлах с повторяющимися (ТМЦ, склад) плодил дубли materials.
+
+        Текущие значения storage.last_lcn и iterator_number_last.number здесь намеренно не
+        читаются для использования в SQL — только для проверки, что счётчик существует.
+        Сами значения читаются и блокируются (FOR UPDATE) внутри DO-блока в момент его
+        выполнения (см. _build_create_actives_sql_body), а не снимаются снапшотом на
+        Python-стороне при валидации — иначе к моменту реального запуска (особенно для
+        скачанного и выполненного позже файла) значение в БД могло уже уйти вперёд.
         """
         storage_repo = StorageRepository(session=db_session)
         storage_place_repo = StoragePlaceRepository(session=db_session)
@@ -560,7 +570,6 @@ class ActivesParserController(Controller):
         errors: list[dict] = []
         valid_rows: list[dict] = []
         materials_plan: dict[tuple[int, int], int | None] = {}
-        storage_last_lcn: dict[int, int] = {}
 
         storage_cache: dict[str, Storage | None] = {}
         storage_place_cache: dict[str, int | None] = {}
@@ -575,8 +584,7 @@ class ActivesParserController(Controller):
                 "row": 0, "field": "*",
                 "message": f"Не найден счётчик '{ACTIVE_NUMBER_COUNTER_DESCRIPTION}' в iterator_number_last",
             })
-            return errors, valid_rows, materials_plan, storage_last_lcn, 0
-        start_active_number = counter_row.number + 1
+            return errors, valid_rows, materials_plan
 
         if progress is not None:
             progress.update(processed=0, total=len(rows), phase="validating")
@@ -610,12 +618,16 @@ class ActivesParserController(Controller):
             if storage is None:
                 errors.append({"row": row_num, "field": "Склад", "message": f"Склад не найден: '{storage_name}'"})
                 continue
-            if storage.id not in storage_last_lcn:
-                storage_last_lcn[storage.id] = storage.last_lcn or 0
-
             type_active = str(row.get("Тип актива") or "").strip()
             if not type_active:
                 errors.append({"row": row_num, "field": "Тип актива", "message": "Поле 'Тип актива' пустое"})
+                continue
+            if len(type_active) >= ACTIVE_NUMBER_LENGTH:
+                errors.append({
+                    "row": row_num, "field": "Тип актива",
+                    "message": (f"'{type_active}' слишком длинный для {ACTIVE_NUMBER_LENGTH}-значного "
+                                f"номера актива (префикс + цифры)"),
+                })
                 continue
 
             special_raw = row.get("Особый учет")
@@ -684,24 +696,30 @@ class ActivesParserController(Controller):
                     "materials_key": materials_key,
                 })
 
-        return errors, valid_rows, materials_plan, storage_last_lcn, start_active_number
+        return errors, valid_rows, materials_plan
 
     @staticmethod
     def _build_create_actives_sql_body(
         valid_rows: list[dict],
         materials_plan: dict[tuple[int, int], int | None],
-        storage_last_lcn: dict[int, int],
-        start_active_number: int,
-    ) -> tuple[list[str], int]:
+    ) -> list[str]:
         """Строит тело SQL-скрипта создания активов из ТМЦ (без BEGIN/COMMIT).
 
-        Общий для «Скачать SQL-файл» и «Выполнить в базе данных» — id для location/actives/
-        materials резервируются через nextval() внутри самого скрипта (как в train_parser),
-        а не вычисляются на Python-стороне — иначе скачанный, но так и не запущенный файл
-        оставлял бы дыры в последовательностях.
+        Общий для «Скачать SQL-файл» и «Выполнить в базе данных». Все счётчики читаются и
+        расходуются внутри самого DO-блока в момент его выполнения, а не на Python-стороне
+        при генерации:
+        - id для location/actives/materials — через nextval() (как в train_parser);
+        - storage.last_lcn и iterator_number_last.number — через
+          `SELECT ... INTO var ... FOR UPDATE`, локальный инкремент переменной и `UPDATE`
+          этой же переменной в БД в конце того же блока (FOR UPDATE держит блокировку строки
+          до конца транзакции, что защищает от гонки при параллельном выполнении).
+        Без этого скачанный, но выполненный позже файл (или два запуска подряд) мог бы разъехаться
+        со значением в БД: id из nextval() всегда уникален сам по себе, а last_lcn/number —
+        обычные integer-колонки, и старый код на peewee вычислял их один раз на Python-стороне.
         """
         total_actives = len(valid_rows)
         new_materials_keys = [key for key, existing_id in materials_plan.items() if existing_id is None]
+        storage_ids = sorted({vr["id_storage"] for vr in valid_rows})
 
         sql_lines: list[str] = ["DO $$", "DECLARE"]
         sql_lines.append(
@@ -717,15 +735,23 @@ class ActivesParserController(Controller):
                 f"    mat_ids bigint[] := ARRAY(SELECT nextval('public.materials_id_seq') "
                 f"FROM generate_series(1, {len(new_materials_keys)}));"
             )
+        sql_lines.append("    active_num bigint;")
+        for storage_id in storage_ids:
+            sql_lines.append(f"    lcn_{storage_id} bigint;")
+
         sql_lines.append("BEGIN")
+        sql_lines.append(
+            f"    SELECT number INTO active_num FROM public.iterator_number_last "
+            f"WHERE description = '{sql_escape(ACTIVE_NUMBER_COUNTER_DESCRIPTION)}' FOR UPDATE;"
+        )
+        for storage_id in storage_ids:
+            sql_lines.append(
+                f"    SELECT last_lcn INTO lcn_{storage_id} FROM public.storage WHERE id = {storage_id} FOR UPDATE;"
+            )
 
         body_lines: list[str] = []
         materials_key_ref: dict[tuple[int, int], str] = {}
         next_mat_idx = 1
-        # last_lcn хранит уже использованные номера, а не "следующий свободный" — старый
-        # код на peewee хранил "следующий свободный" и это давало разрыв в 1 на каждый запуск.
-        lcn_counters = dict(storage_last_lcn)
-        active_number = start_active_number
 
         for i, vr in enumerate(valid_rows, start=1):
             loc_ref = f"loc_ids[{i}]"
@@ -752,34 +778,40 @@ class ActivesParserController(Controller):
                     f"VALUES ({mat_ref}, {vr['id_design_number']}, {loc_ref});"
                 )
 
-            lcn_counters[vr["id_storage"]] = lcn_counters.get(vr["id_storage"], 0) + 1
-            lcn = f"S{vr['id_storage']}.{lcn_counters[vr['id_storage']]}"
-
-            active_num_str = f"{vr['type_active']}{active_number}"
-            active_number += 1
+            lcn_var = f"lcn_{vr['id_storage']}"
+            body_lines.append(f"    {lcn_var} := {lcn_var} + 1;")
+            body_lines.append("    active_num := active_num + 1;")
 
             sn_val = f"'{sql_escape(vr['serial_number'])}'" if vr["serial_number"] else "NULL"
             sa_val = f"'{sql_escape(vr['special_account'])}'" if vr["special_account"] else "NULL"
+            # Номер актива фиксированной длины ACTIVE_NUMBER_LENGTH: буквенный префикс +
+            # цифры счётчика, дополненные нулями слева до нужной ширины (валидация выше
+            # гарантирует len(type_active) < ACTIVE_NUMBER_LENGTH, так что ширина > 0).
+            number_width = ACTIVE_NUMBER_LENGTH - len(vr["type_active"])
+            active_number_expr = (
+                f"'{sql_escape(vr['type_active'])}' || lpad(active_num::text, {number_width}, '0')"
+            )
+            lcn_expr = f"('S{vr['id_storage']}.' || {lcn_var})::ltree"
 
             body_lines.append(
                 f"    INSERT INTO public.actives (id, active_number, id_design_number, id_location, "
                 f"serial_number, lcn, id_materials, special_account) "
-                f"VALUES ({act_ref}, '{sql_escape(active_num_str)}', {vr['id_design_number']}, {loc_ref}, "
-                f"{sn_val}, '{lcn}', {mat_ref}, {sa_val});"
+                f"VALUES ({act_ref}, {active_number_expr}, {vr['id_design_number']}, {loc_ref}, "
+                f"{sn_val}, {lcn_expr}, {mat_ref}, {sa_val});"
             )
 
         sql_lines.extend(body_lines)
-        sql_lines.append("END $$;")
 
-        for storage_id, last_val in lcn_counters.items():
-            sql_lines.append(f"UPDATE public.storage SET last_lcn = {last_val} WHERE id = {storage_id};")
-
+        for storage_id in storage_ids:
+            sql_lines.append(f"    UPDATE public.storage SET last_lcn = lcn_{storage_id} WHERE id = {storage_id};")
         sql_lines.append(
-            f"UPDATE public.iterator_number_last SET number = {active_number - 1} "
+            f"    UPDATE public.iterator_number_last SET number = active_num "
             f"WHERE description = '{sql_escape(ACTIVE_NUMBER_COUNTER_DESCRIPTION)}';"
         )
 
-        return sql_lines, active_number - 1
+        sql_lines.append("END $$;")
+
+        return sql_lines
 
     @post("/create-actives/generate-sql/start")
     async def create_actives_generate_sql_start(self, request: Request) -> Response:
@@ -814,7 +846,7 @@ class ActivesParserController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                errors, valid_rows, materials_plan, storage_last_lcn, start_active_number = \
+                errors, valid_rows, materials_plan = \
                     await self._validate_create_actives_rows(session, rows, progress=progress)
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
@@ -827,7 +859,7 @@ class ActivesParserController(Controller):
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
             return
 
-        sql_lines, _ = self._build_create_actives_sql_body(valid_rows, materials_plan, storage_last_lcn, start_active_number)
+        sql_lines = self._build_create_actives_sql_body(valid_rows, materials_plan)
         full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
         progress.update(status="done", sql=full_sql, count=len(valid_rows))
 
@@ -865,7 +897,7 @@ class ActivesParserController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                errors, valid_rows, materials_plan, storage_last_lcn, start_active_number = \
+                errors, valid_rows, materials_plan = \
                     await self._validate_create_actives_rows(session, rows, progress=progress)
 
                 if errors:
@@ -877,7 +909,7 @@ class ActivesParserController(Controller):
 
                 progress.update(processed=0, total=1, phase="executing")
 
-                sql_lines, _ = self._build_create_actives_sql_body(valid_rows, materials_plan, storage_last_lcn, start_active_number)
+                sql_lines = self._build_create_actives_sql_body(valid_rows, materials_plan)
                 sql_body = "\n".join(sql_lines)
 
                 try:
