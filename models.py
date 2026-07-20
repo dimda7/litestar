@@ -215,17 +215,6 @@ class Consignment(Base):
     on_balance: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
-class Materials(Base):
-    __tablename__ = "materials"
-    __table_args__ = {"schema": "public"}
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    id_design_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    id_amount_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    id_location: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-
 class IteratorNumberLast(Base):
     __tablename__ = "iterator_number_last"
     __table_args__ = {"schema": "public"}
