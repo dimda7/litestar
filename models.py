@@ -177,6 +177,64 @@ class MileageTrain(Base):
     date_average: Mapped[str] = mapped_column(Date, nullable=False)
 
 
+class Storage(Base):
+    __tablename__ = "storage"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_depot: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_lcn: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+    is_delete: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    id_1c: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class StoragePlace(Base):
+    __tablename__ = "storage_place"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+    is_delete: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+
+
+class Consignment(Base):
+    __tablename__ = "consignment"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    code: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+    is_delete: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_malfunctioned: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    on_balance: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
+class Materials(Base):
+    __tablename__ = "materials"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id_design_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_amount_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_location: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class IteratorNumberLast(Base):
+    __tablename__ = "iterator_number_last"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class CounterActive(Base):
     __tablename__ = "counter_active"
     __table_args__ = {"schema": "public"}
