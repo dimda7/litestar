@@ -724,14 +724,16 @@ class ActivesParserController(Controller):
             act_ref = f"act_ids[{i}]"
             sp_val = str(vr["id_storage_place"]) if vr["id_storage_place"] is not None else "NULL"
 
+            # Инкременты не трогают строку location, но переставлены перед обоими INSERT,
+            # чтобы location и actives всегда шли соседними строками одной парой.
+            lcn_var = f"lcn_{vr['id_storage']}"
+            body_lines.append(f"    {lcn_var} := {lcn_var} + 1;")
+            body_lines.append("    active_num := active_num + 1;")
+
             body_lines.append(
                 f"    INSERT INTO public.location (id, id_type_location, id_storage, id_storage_place, id_consignment) "
                 f"VALUES ({loc_ref}, 1, {vr['id_storage']}, {sp_val}, {vr['id_consignment']});"
             )
-
-            lcn_var = f"lcn_{vr['id_storage']}"
-            body_lines.append(f"    {lcn_var} := {lcn_var} + 1;")
-            body_lines.append("    active_num := active_num + 1;")
 
             sn_val = f"'{sql_escape(vr['serial_number'])}'" if vr["serial_number"] else "NULL"
             sa_val = f"'{sql_escape(vr['special_account'])}'" if vr["special_account"] else "NULL"
