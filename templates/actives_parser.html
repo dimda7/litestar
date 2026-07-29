@@ -236,7 +236,7 @@
 <div id="recount-mileage-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
         <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Пересчёт пробега</h3>
-        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Пересчитать mileage_start по истории перемещений (до 13.05.2022) и счётчик пробега counter_active через function_get_mileage для активов из файла (колонка 'Актив')</p>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Пересчитать mileage_start по истории перемещений (до 13.05.2022) и счётчик пробега counter_active через function_get_mileage для активов из файла (колонка 'Актив'). Необязательная колонка 'milage_const' перед пересчётом записывается в mileage_start (создаёт запись, если её нет)</p>
         <div style="display: flex; flex-direction: column; gap: 12px;">
             <button onclick="downloadRecountMileageSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>

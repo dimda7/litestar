@@ -148,8 +148,10 @@ async def test_recount_mileage_total_from_relocate_history(db_session):
 
 def test_recount_mileage_sql_body_order_and_trains():
     valid_rows = [
-        {"row_num": 1, "active_number": "UL0000001", "id_active": 10, "total": 25, "is_train": False},
-        {"row_num": 2, "active_number": "ES0000001", "id_active": 20, "total": -5, "is_train": True},
+        {"row_num": 1, "active_number": "UL0000001", "id_active": 10, "total": 25, "is_train": False,
+         "milage_const": None, "insert_mileage_start": False},
+        {"row_num": 2, "active_number": "ES0000001", "id_active": 20, "total": -5, "is_train": True,
+         "milage_const": None, "insert_mileage_start": False},
     ]
     lines = ActivesParserController._build_recount_mileage_sql_body(valid_rows)
 
@@ -161,3 +163,88 @@ def test_recount_mileage_sql_body_order_and_trains():
     assert "UPDATE public.counter_active" in lines[2]
     assert "function_get_mileage" in lines[2]
     assert "id_active = 10" in lines[2]
+
+
+async def test_recount_mileage_const_column_update_and_insert(db_session):
+    await make_recount_active(db_session, "UL0000001")
+    # актива без mileage_start с заданным milage_const — не ошибка, будет INSERT
+    await make_recount_active(db_session, "UL0000002", with_mileage_start=False)
+
+    rows = [
+        {"Актив": "UL0000001", "milage_const": 500},
+        {"Актив": "UL0000002", "milage_const": "700.0"},
+    ]
+    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+
+    assert errors == []
+    assert valid_rows[0]["milage_const"] == 500
+    assert valid_rows[0]["insert_mileage_start"] is False
+    assert valid_rows[1]["milage_const"] == 700
+    assert valid_rows[1]["insert_mileage_start"] is True
+
+
+async def test_recount_mileage_const_zero_and_empty_ignored(db_session):
+    await make_recount_active(db_session, "UL0000001")
+    await make_recount_active(db_session, "UL0000002")
+
+    rows = [
+        {"Актив": "UL0000001", "milage_const": 0},
+        {"Актив": "UL0000002", "milage_const": None},
+    ]
+    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+
+    assert errors == []
+    assert all(vr["milage_const"] is None for vr in valid_rows)
+
+
+async def test_recount_mileage_const_header_with_nbsp_and_e_spelling(db_session):
+    # реальный файл: заголовок 'mileage_const\xa0' — через 'e' и с неразрывным пробелом
+    await make_recount_active(db_session, "UL0000001")
+
+    rows = [{"Актив": "UL0000001", "mileage_const\xa0": 295544}]
+    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+
+    assert errors == []
+    assert valid_rows[0]["milage_const"] == 295544
+
+
+async def test_recount_mileage_const_invalid_value(db_session):
+    await make_recount_active(db_session, "UL0000001")
+
+    rows = [{"Актив": "UL0000001", "milage_const": "abc"}]
+    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+
+    assert valid_rows == []
+    assert "Некорректное значение milage_const" in errors[0]["message"]
+
+
+async def test_recount_mileage_const_missing_mileage_start_without_const(db_session):
+    # без milage_const отсутствие mileage_start остаётся ошибкой
+    await make_recount_active(db_session, "UL0000001", with_mileage_start=False)
+
+    rows = [{"Актив": "UL0000001", "milage_const": ""}]
+    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+
+    assert valid_rows == []
+    assert "mileage_start не найдена" in errors[0]["message"]
+
+
+def test_recount_mileage_sql_body_const_first():
+    valid_rows = [
+        {"row_num": 1, "active_number": "UL0000001", "id_active": 10, "total": 25, "is_train": False,
+         "milage_const": 500, "insert_mileage_start": False},
+        {"row_num": 2, "active_number": "UL0000002", "id_active": 20, "total": 0, "is_train": False,
+         "milage_const": 700, "insert_mileage_start": True},
+    ]
+    lines = ActivesParserController._build_recount_mileage_sql_body(valid_rows)
+
+    assert len(lines) == 6
+    # блок milage_const идёт первым: UPDATE для существующей записи, INSERT для новой
+    assert "SET milage_const = 500" in lines[0] and "WHERE id_active = 10" in lines[0]
+    assert lines[1].startswith("INSERT INTO public.mileage_start")
+    assert "VALUES (20, 700, 700, true)" in lines[1]
+    # затем пересчёт milage и счётчиков
+    assert "SET milage = COALESCE(milage_const, 0) + (25)" in lines[2]
+    assert "SET milage = COALESCE(milage_const, 0) + (0)" in lines[3]
+    assert "UPDATE public.counter_active" in lines[4]
+    assert "UPDATE public.counter_active" in lines[5]

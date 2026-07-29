@@ -623,6 +623,14 @@ class ActivesParserController(Controller):
         на склад — вычитают. Сами значения milage_const и counter_active.value здесь не
         вычисляются — они читаются/считаются в БД в момент выполнения SQL
         (см. _build_recount_mileage_sql_body).
+
+        Необязательная колонка 'milage_const' (замена update_milage_start_const): непустое
+        ненулевое значение перед пересчётом записывается в mileage_start.milage_const;
+        для актива без записи mileage_start она создаётся (INSERT) — тогда отсутствие
+        записи не считается ошибкой. Значение 0 игнорируется, как в старом скрипте.
+        Заголовок колонки сопоставляется без учёта регистра и краевых пробелов (в реальных
+        файлах встречается 'mileage_const\\xa0'), допустимы оба написания —
+        milage_const и mileage_const.
         """
         actives_repo = ActivesRepository(session=db_session)
         mileage_start_repo = MileageStartRepository(session=db_session)
@@ -635,6 +643,11 @@ class ActivesParserController(Controller):
         if rows and "Актив" not in rows[0]:
             errors.append({"row": 0, "field": "Актив", "message": "В файле не найдена колонка 'Актив'"})
             return errors, valid_rows
+        const_column: str | None = next(
+            (k for k in (rows[0] if rows else {})
+             if str(k).strip().lower() in ("milage_const", "mileage_const")),
+            None,
+        )
 
         if progress is not None:
             progress.update(processed=0, total=len(rows), phase="validating")
@@ -664,14 +677,29 @@ class ActivesParserController(Controller):
                 continue
             is_train = active.id_unit_type == 1
 
+            milage_const: int | None = None
+            if const_column is not None:
+                const_raw = row.get(const_column)
+                if const_raw is not None and str(const_raw).strip() != "":
+                    try:
+                        milage_const = int(float(const_raw))
+                    except (TypeError, ValueError):
+                        errors.append({"row": row_num, "field": "milage_const",
+                                        "message": f"Некорректное значение milage_const: '{const_raw}'"})
+                        continue
+                    if milage_const == 0:
+                        milage_const = None
+
             mileage_start_rows = await mileage_start_repo.get_many(MileageStart.id_active == active.id)
-            if not mileage_start_rows:
-                errors.append({"row": row_num, "field": "Актив",
-                                "message": f"Запись mileage_start не найдена для актива '{active_number}'"})
-                continue
             if len(mileage_start_rows) > 1:
                 errors.append({"row": row_num, "field": "Актив",
                                 "message": f"Несколько записей mileage_start для актива '{active_number}' — неоднозначно"})
+                continue
+            # Без milage_const запись mileage_start обязана существовать; с ним она
+            # будет создана в SQL (INSERT), поэтому отсутствие — не ошибка.
+            if not mileage_start_rows and milage_const is None:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Запись mileage_start не найдена для актива '{active_number}'"})
                 continue
 
             if not is_train:
@@ -731,6 +759,8 @@ class ActivesParserController(Controller):
                 "id_active": active.id,
                 "total": total,
                 "is_train": is_train,
+                "milage_const": milage_const,
+                "insert_mileage_start": not mileage_start_rows,
             })
 
         return errors, valid_rows
@@ -739,14 +769,29 @@ class ActivesParserController(Controller):
     def _build_recount_mileage_sql_body(valid_rows: list[dict]) -> list[str]:
         """Строит SQL пересчёта пробега (без BEGIN/COMMIT), общий для скачивания и выполнения.
 
-        Сначала все UPDATE mileage_start, затем все UPDATE counter_active: пересчёт
-        счётчика через function_get_mileage() читает mileage_start.milage, поэтому
-        в одной транзакции он видит уже обновлённые значения. milage_const читается
-        БД в момент выполнения, а не подставляется константой при генерации —
-        скачанный и выполненный позже файл не разойдётся с БД. Для поездов
-        (id_unit_type=1) счётчик не пересчитывается (как в старом скрипте).
+        Порядок обязателен: сначала запись milage_const из файла (UPDATE, либо INSERT
+        для активов без mileage_start), затем UPDATE mileage_start.milage — он читает
+        milage_const в момент выполнения и должен видеть уже новое значение, затем
+        UPDATE counter_active: пересчёт счётчика через function_get_mileage() читает
+        mileage_start.milage. Всё в одной транзакции, поэтому скачанный и выполненный
+        позже файл не разойдётся с БД. Для поездов (id_unit_type=1) счётчик не
+        пересчитывается (как в старом скрипте).
         """
         sql_lines: list[str] = []
+        for vr in valid_rows:
+            if vr["milage_const"] is None:
+                continue
+            if vr["insert_mileage_start"]:
+                sql_lines.append(
+                    f"INSERT INTO public.mileage_start (id_active, milage, milage_const, is_recount) "
+                    f"VALUES ({vr['id_active']}, {vr['milage_const']}, {vr['milage_const']}, true); "
+                    f"-- '{sql_escape(vr['active_number'])}'"
+                )
+            else:
+                sql_lines.append(
+                    f"UPDATE public.mileage_start SET milage_const = {vr['milage_const']}, is_recount = true "
+                    f"WHERE id_active = {vr['id_active']}; -- '{sql_escape(vr['active_number'])}'"
+                )
         for vr in valid_rows:
             sql_lines.append(
                 f"UPDATE public.mileage_start SET milage = COALESCE(milage_const, 0) + ({vr['total']}), "
