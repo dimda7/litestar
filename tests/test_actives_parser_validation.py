@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from controllers.actives_parser import ActivesParserController
-from models import Actives, CounterActive, Location, MileageStart, MileageTrain, Relocate
+from models import Actives, Consignment, CounterActive, Location, MileageStart, MileageTrain, Relocate, Storage
 from tests.conftest import make_active, make_design_number
 
 controller = ActivesParserController(owner=None)
@@ -248,3 +248,96 @@ def test_recount_mileage_sql_body_const_first():
     assert "SET milage = COALESCE(milage_const, 0) + (0)" in lines[3]
     assert "UPDATE public.counter_active" in lines[4]
     assert "UPDATE public.counter_active" in lines[5]
+
+
+async def make_named_actives_refs(db_session) -> None:
+    db_session.add_all([
+        Storage(name="Основной склад, МСК"),
+        Consignment(name="ЧСП Исправные"),
+    ])
+    await db_session.flush()
+    await make_design_number(db_session, "DU0012929")
+
+
+NAMED_ROW = {"Актив": "SPD452390", "ТМЦ": "DU0012929",
+             "Положение": "Основной склад, МСК", "Партия": "ЧСП Исправные"}
+
+
+async def test_create_named_actives_columns_missing(db_session):
+    errors, valid_rows = await controller._validate_create_named_actives(
+        db_session, [{"Актив": "SPD452390", "Другое": "x"}])
+
+    assert valid_rows == []
+    assert len(errors) == 1
+    assert "не найдены колонки" in errors[0]["message"]
+    assert "ТМЦ" in errors[0]["message"]
+
+
+async def test_create_named_actives_happy_path(db_session):
+    await make_named_actives_refs(db_session)
+
+    errors, valid_rows = await controller._validate_create_named_actives(db_session, [dict(NAMED_ROW)])
+
+    assert errors == []
+    assert len(valid_rows) == 1
+    vr = valid_rows[0]
+    assert vr["active_number"] == "SPD452390"
+    assert all(vr[k] for k in ("id_design_number", "id_storage", "id_consignment"))
+
+
+async def test_create_named_actives_already_exists(db_session):
+    await make_named_actives_refs(db_session)
+    await make_active(db_session, "SPD452390")
+
+    errors, valid_rows = await controller._validate_create_named_actives(db_session, [dict(NAMED_ROW)])
+
+    assert valid_rows == []
+    assert "уже существует" in errors[0]["message"]
+
+
+async def test_create_named_actives_duplicate_in_file(db_session):
+    await make_named_actives_refs(db_session)
+
+    errors, valid_rows = await controller._validate_create_named_actives(
+        db_session, [dict(NAMED_ROW), dict(NAMED_ROW)])
+
+    assert len(valid_rows) == 1
+    assert "Дубликат внутри файла" in errors[0]["message"]
+
+
+async def test_create_named_actives_refs_not_found(db_session):
+    await make_named_actives_refs(db_session)
+
+    rows = [
+        dict(NAMED_ROW, **{"ТМЦ": "NOPE"}),
+        dict(NAMED_ROW, **{"Актив": "SPD452391", "Положение": "Нет такого"}),
+        dict(NAMED_ROW, **{"Актив": "SPD452392", "Партия": "Нет такой"}),
+    ]
+    errors, valid_rows = await controller._validate_create_named_actives(db_session, rows)
+
+    assert valid_rows == []
+    messages = " | ".join(e["message"] for e in errors)
+    assert "ТМЦ не найдена" in messages
+    assert "Склад не найден" in messages
+    assert "Партия не найдена" in messages
+
+
+def test_create_named_actives_sql_body():
+    valid_rows = [
+        {"row_num": 1, "active_number": "SPD452390", "id_design_number": 7,
+         "id_storage": 3, "id_consignment": 4},
+        {"row_num": 2, "active_number": "SPD452391", "id_design_number": 8,
+         "id_storage": 3, "id_consignment": 4},
+    ]
+    lines = ActivesParserController._build_create_named_actives_sql_body(valid_rows)
+    sql = "\n".join(lines)
+
+    assert sql.startswith("DO $$")
+    assert sql.count("INSERT INTO public.location") == 2
+    assert sql.count("INSERT INTO public.actives") == 2
+    assert "'SPD452390'" in sql and "'SPD452391'" in sql
+    # lcn выдаётся из storage.last_lcn с блокировкой и возвращается обратно
+    assert "SELECT last_lcn INTO lcn_3 FROM public.storage WHERE id = 3 FOR UPDATE;" in sql
+    assert "UPDATE public.storage SET last_lcn = lcn_3 WHERE id = 3;" in sql
+    # счётчик номеров активов не используется — номера заданы в файле
+    assert "iterator_number_last" not in sql

@@ -1167,6 +1167,296 @@ class ActivesParserController(Controller):
 
         return sql_lines
 
+    async def _validate_create_named_actives(
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    ) -> tuple[list[dict], list[dict]]:
+        """Валидирует строки создания именных активов (номер актива задан в файле).
+
+        В отличие от создания активов из ТМЦ здесь не нужен счётчик
+        iterator_number_last: active_number берётся из колонки 'Актив' и не должен
+        существовать в БД. Каждая строка — один актив со своей записью location;
+        lcn по-прежнему выдаётся из storage.last_lcn в момент выполнения SQL.
+        """
+        actives_repo = ActivesRepository(session=db_session)
+        storage_repo = StorageRepository(session=db_session)
+        consignment_repo = ConsignmentRepository(session=db_session)
+        design_number_repo = DesignNumberRepository(session=db_session)
+
+        errors: list[dict] = []
+        valid_rows: list[dict] = []
+        batch_numbers: set[str] = set()
+
+        required_columns = ("Актив", "ТМЦ", "Положение", "Партия")
+        if rows:
+            missing = [c for c in required_columns if c not in rows[0]]
+            if missing:
+                errors.append({
+                    "row": 0, "field": ", ".join(missing),
+                    "message": f"В файле не найдены колонки: {', '.join(missing)}",
+                })
+                return errors, valid_rows
+
+        storage_cache: dict[str, int | None] = {}
+        consignment_cache: dict[str, int | None] = {}
+        design_number_cache: dict[str, int | None] = {}
+
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
+
+            active_number = str(row.get("Актив") or "").strip()
+            if not active_number:
+                errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})
+                continue
+
+            if active_number in batch_numbers:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Дубликат внутри файла: '{active_number}'"})
+                continue
+
+            existing = await actives_repo.get_one_or_none(Actives.active_number == active_number)
+            if existing is not None:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Актив уже существует: '{active_number}'"})
+                continue
+
+            design_number = str(row.get("ТМЦ") or "").strip()
+            if not design_number:
+                errors.append({"row": row_num, "field": "ТМЦ", "message": "Поле 'ТМЦ' пустое"})
+                continue
+            if design_number not in design_number_cache:
+                dn = await design_number_repo.get_one_or_none(DesignNumber.number == design_number)
+                design_number_cache[design_number] = dn.id if dn else None
+            id_design_number = design_number_cache[design_number]
+            if id_design_number is None:
+                errors.append({"row": row_num, "field": "ТМЦ", "message": f"ТМЦ не найдена: '{design_number}'"})
+                continue
+
+            storage_name = str(row.get("Положение") or "").strip()
+            if not storage_name:
+                errors.append({"row": row_num, "field": "Положение", "message": "Поле 'Положение' пустое"})
+                continue
+            if storage_name not in storage_cache:
+                storage = await storage_repo.get_one_or_none(Storage.name == storage_name)
+                storage_cache[storage_name] = storage.id if storage else None
+            id_storage = storage_cache[storage_name]
+            if id_storage is None:
+                errors.append({"row": row_num, "field": "Положение", "message": f"Склад не найден: '{storage_name}'"})
+                continue
+
+            consignment_name = str(row.get("Партия") or "").strip()
+            if not consignment_name:
+                errors.append({"row": row_num, "field": "Партия", "message": "Поле 'Партия' пустое"})
+                continue
+            if consignment_name not in consignment_cache:
+                c = await consignment_repo.get_one_or_none(Consignment.name == consignment_name)
+                consignment_cache[consignment_name] = c.id if c else None
+            id_consignment = consignment_cache[consignment_name]
+            if id_consignment is None:
+                errors.append({"row": row_num, "field": "Партия", "message": f"Партия не найдена: '{consignment_name}'"})
+                continue
+
+            batch_numbers.add(active_number)
+            valid_rows.append({
+                "row_num": row_num,
+                "active_number": active_number,
+                "id_design_number": id_design_number,
+                "id_storage": id_storage,
+                "id_consignment": id_consignment,
+            })
+
+        return errors, valid_rows
+
+    @staticmethod
+    def _build_create_named_actives_sql_body(valid_rows: list[dict]) -> list[str]:
+        """Строит тело SQL создания именных активов (без BEGIN/COMMIT).
+
+        Как в _build_create_actives_sql_body: id для location/actives — через nextval(),
+        storage.last_lcn читается и блокируется FOR UPDATE внутри DO-блока в момент
+        выполнения. Отличие — active_number подставляется литералом из файла, счётчик
+        iterator_number_last не используется.
+        """
+        total_actives = len(valid_rows)
+        storage_ids = sorted({vr["id_storage"] for vr in valid_rows})
+
+        sql_lines: list[str] = ["DO $$", "DECLARE"]
+        sql_lines.append(
+            f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
+            f"FROM generate_series(1, {total_actives}));"
+        )
+        sql_lines.append(
+            f"    act_ids bigint[] := ARRAY(SELECT nextval('public.actives_id_seq') "
+            f"FROM generate_series(1, {total_actives}));"
+        )
+        for storage_id in storage_ids:
+            sql_lines.append(f"    lcn_{storage_id} bigint;")
+
+        sql_lines.append("BEGIN")
+        for storage_id in storage_ids:
+            sql_lines.append(
+                f"    SELECT last_lcn INTO lcn_{storage_id} FROM public.storage WHERE id = {storage_id} FOR UPDATE;"
+            )
+
+        for i, vr in enumerate(valid_rows, start=1):
+            loc_ref = f"loc_ids[{i}]"
+            act_ref = f"act_ids[{i}]"
+            lcn_var = f"lcn_{vr['id_storage']}"
+            sql_lines.append(f"    {lcn_var} := {lcn_var} + 1;")
+            sql_lines.append(
+                f"    INSERT INTO public.location (id, id_type_location, id_storage, id_consignment) "
+                f"VALUES ({loc_ref}, 1, {vr['id_storage']}, {vr['id_consignment']});"
+            )
+            sql_lines.append(
+                f"    INSERT INTO public.actives (id, active_number, id_design_number, id_location, lcn) "
+                f"VALUES ({act_ref}, '{sql_escape(vr['active_number'])}', {vr['id_design_number']}, {loc_ref}, "
+                f"('S{vr['id_storage']}.' || {lcn_var})::ltree);"
+            )
+
+        for storage_id in storage_ids:
+            sql_lines.append(f"    UPDATE public.storage SET last_lcn = lcn_{storage_id} WHERE id = {storage_id};")
+
+        sql_lines.append("END $$;")
+
+        return sql_lines
+
+    @post("/create-named-actives/generate-sql/start")
+    async def create_named_actives_generate_sql_start(self, request: Request) -> Response:
+        """Запускает фоновую генерацию SQL-файла создания именных активов, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_create_named_actives_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_create_named_actives_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_create_named_actives(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+        if not valid_rows:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+            return
+
+        sql_lines = self._build_create_named_actives_sql_body(valid_rows)
+        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
+        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+
+    @post("/create-named-actives/execute/start")
+    async def create_named_actives_execute_start(self, request: Request) -> Response:
+        """Запускает фоновое атомарное создание именных активов, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_create_named_actives_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_create_named_actives_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        valid_rows: list[dict] = []
+        sql_lines: list[str] = []
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_create_named_actives(session, rows, progress=progress)
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+                    return
+
+                progress.update(processed=0, total=1, phase="executing")
+
+                sql_lines = self._build_create_named_actives_sql_body(valid_rows)
+                sql_body = "\n".join(sql_lines)
+
+                try:
+                    # ВАЖНО: как и в create-actives — session.rollback() ниже откатывает и этот
+                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
+                    # (запросы репозиториев внутри _validate_create_named_actives). Не убирайте
+                    # обращения к session до этой точки.
+                    conn = await session.connection()
+                    raw_conn = await conn.get_raw_connection()
+                    await raw_conn.driver_connection.execute(sql_body)
+
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+
+                progress["processed"] = 1
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Create Named Actives: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Actives created: {len(valid_rows)}",
+            "",
+            *sql_lines,
+            "",
+        ]
+        log_file = LOG_DIR / f"create_named_actives_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Created %d named actives, log: %s", len(valid_rows), log_file)
+
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Успешно создано именных активов: {len(valid_rows)}")
+
     @post("/create-actives/generate-sql/start")
     async def create_actives_generate_sql_start(self, request: Request) -> Response:
         """Запускает фоновую генерацию SQL-файла создания активов из ТМЦ, возвращает task_id."""
