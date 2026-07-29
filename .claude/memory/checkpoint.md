@@ -125,6 +125,21 @@
 - Проверено вживую через `litestar.testing.TestClient` (сессия подставлена напрямую через `set_session_data`, минуя логин): `select pg_sleep(3), 1 from generate_series(1,10)` (10 строк × 3с = 30с суммарно) + отмена через ~1.5с → `execute` вернул `{"status": "error", "message": "Запрос прерван пользователем"}` за ~1.52с вместо ожидания все 30с
 - 43/43 теста зелёные (regressions не внесены)
 
+## Фаза 12: Парсинг активов — новая колонка ТМЦ, прогресс, пересчёт пробега — ВЫПОЛНЕНА
+- [x] «Изменение ТМЦ номера»: колонка `Новый ТМЦ номер` принимается как альтернатива `Новая Позиция ТМЦ` (`_validate_design_number`, паттерн как у `Новый с/н`/`Новый Серийный номер`); старые файлы работают как раньше
+- [x] «Изменение ТМЦ номера» переведено на фоновые задачи с прогрессом (как create-actives/ПТОиР): `/design-number/generate-sql/start` и `/design-number/execute/start` вместо старых `/generate-sql-design-number` и `/update-design-number`; строки берутся из серверного хранилища сессии (`parser_data/`), а не пересылаются из браузера
+- [x] Эндпоинт прогресса стал общим для всех флоу страницы: `/actives-parser/progress/{task_id}` (бывший `/create-actives/progress/...`)
+- [x] Новая кнопка «Пересчитать пробег» (файл с колонкой `Актив`) — замена peewee-функций `update_milage_start` + `recount_counter` + `update_milage_start_const` через advanced_alchemy:
+  - добавлены ORM-модели `Relocate`, `MileageStart` (структура снята с реальной БД; у `mileage_start.id` есть sequence-default)
+  - `_validate_recount_mileage`: поправка total по истории relocate до отсечки 13.05.2022 (`MILEAGE_RECOUNT_CUTOFF`, +3ч `MILEAGE_TZ_SHIFT`): склад→поезд прибавляет `SUM(mileage_train.mileage_average)` за период от перемещения до отсечки, поезд→склад вычитает; поезд→поезд и склад→склад игнорируются
+  - порядок SQL обязателен (одна транзакция): 1) `milage_const` из файла (UPDATE, либо INSERT при отсутствии записи mileage_start), 2) `milage = COALESCE(milage_const, 0) + (total)` — читает milage_const в момент выполнения, 3) `counter_active.value` через `function_get_mileage(id_active, date::date)` прямо в UPDATE — считается Postgres'ом после обновления mileage_start; скачанный .sql-файл не расходится с БД
+  - необязательная колонка `milage_const`: заголовок матчится без регистра/краевых пробелов (включая `\xa0`), оба написания milage_const/mileage_const — реальный файл содержал `mileage_const\xa0`, из-за точного сравнения const-блок молча пропускался (исправлено); 0 и пустые значения игнорируются как в старом скрипте; при отсутствии записи mileage_start с заданным const — INSERT, без const — ошибка валидации
+  - поезда (`id_unit_type=1`): mileage_start обновляется, счётчик не трогается (как раньше); «Актив не найден», дубликаты, >1 записи mileage_start/счётчика — ошибки валидации с номером строки (раньше молчаливый print)
+  - эквивалентность старой логике проверена эмпирически: дословный peewee-алгоритм (со строковыми сравнениями дат) выполнен на реальной БД — 18/18 totals совпали с новой реализацией
+- [x] Тесты: новый `tests/test_actives_parser_validation.py` (17 тестов: обе колонки ТМЦ, все ветки recount-валидации, порядок SQL-блоков, заголовок с `\xa0`), итого 68 тестов зелёные
+- [x] Живые smoke через `litestar.testing.TestClient` (сессия через `set_session_data`, CSRF из куки `csrftoken` заголовком `x-csrftoken`, БД-профиль через `db_manager.set_active_profile`) — генерация SQL на реальной БД `grom-tk`, запись только в откатываемых транзакциях
+- Коммиты: c005398 (recount mileage + прогресс + новая колонка), a2197a9 (milage_const)
+
 ## Следующие шаги
 1. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
 2. Покрыть happy-path `train_parser._validate_train_rows` (разрешение `car_place_id`/`id_actives_parent`) — нужен реальный Postgres в тестовом окружении (testcontainers или аналог), см. Фазу 9
