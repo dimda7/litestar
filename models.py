@@ -235,6 +235,59 @@ class Relocate(Base):
     id_user: Mapped[int | None] = mapped_column(Integer, nullable=True)
     id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_root_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class Orders(Base):
+    __tablename__ = "orders"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_ptoir: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class OrderToActives(Base):
+    __tablename__ = "order_to_actives"
+    __table_args__ = {"schema": "public"}
+
+    id_order: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id_active: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class ActiveAdditionalField(Base):
+    __tablename__ = "active_additional_field"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class ActivesToMainPtoir(Base):
+    __tablename__ = "actives_to_main_ptoir"
+    __table_args__ = {"schema": "public"}
+
+    id_main_ptoir: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id_actives: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class MaterialsToActives(Base):
+    __tablename__ = "materials_to_actives"
+    __table_args__ = {"schema": "public"}
+
+    id_materials: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id_actives: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class MileageHistoryActives(Base):
+    __tablename__ = "mileage_history_actives"
+    __table_args__ = {"schema": "public"}
+
+    id_mileage: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id_actives: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
 class MileageStart(Base):

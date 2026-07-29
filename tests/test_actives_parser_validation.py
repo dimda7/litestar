@@ -341,3 +341,135 @@ def test_create_named_actives_sql_body():
     assert "UPDATE public.storage SET last_lcn = lcn_3 WHERE id = 3;" in sql
     # счётчик номеров активов не используется — номера заданы в файле
     assert "iterator_number_last" not in sql
+
+
+async def test_recount_mileage_active_number_column_name(db_session):
+    await make_recount_active(db_session, "UL0000001")
+
+    rows = [{"active_number": "UL0000001"}]
+    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+
+    assert errors == []
+    assert valid_rows[0]["active_number"] == "UL0000001"
+
+
+async def test_delete_actives_column_missing(db_session):
+    errors, valid_rows = await controller._validate_delete_actives(db_session, [{"Другое": "x"}])
+
+    assert valid_rows == []
+    assert "не найдена колонка 'Актив'" in errors[0]["message"]
+
+
+async def test_delete_actives_not_found_and_duplicate(db_session):
+    await make_active(db_session, "SPD1077356")
+
+    rows = [{"Актив": "SPD1077356"}, {"Актив": "SPD1077356"}, {"Актив": "NOPE"}]
+    errors, valid_rows = await controller._validate_delete_actives(db_session, rows)
+
+    assert len(valid_rows) == 1
+    messages = " | ".join(e["message"] for e in errors)
+    assert "Дубликат внутри файла" in messages
+    assert "Актив не найден" in messages
+
+
+async def make_order_dependency_tables(db_session) -> None:
+    """Создаёт в SQLite минимальные версии таблиц-зависимостей заказов.
+
+    Продовые таблицы из ORDERS_DEPENDENCY_CHECKS не нужны как ORM-модели —
+    валидация ходит в них сырыми SELECT'ами, поэтому для тестов достаточно
+    таблиц из одной колонки. Таблицы, уже описанные в models.py (relocate,
+    order_to_actives), пропускаются.
+    """
+    from sqlalchemy import text as sql_text
+    from controllers.actives_parser import ORDERS_DEPENDENCY_CHECKS
+    from models import Base
+    existing = set(Base.metadata.tables)
+    columns: dict[str, set[str]] = {}
+    for tbl, col in ORDERS_DEPENDENCY_CHECKS:
+        if f"public.{tbl}" not in existing:
+            columns.setdefault(tbl, set()).add(col)
+    for tbl, cols in columns.items():
+        await db_session.execute(sql_text(
+            f"CREATE TABLE IF NOT EXISTS public.{tbl} ({', '.join(f'{c} integer' for c in sorted(cols))})"
+        ))
+
+
+async def test_delete_actives_blocked_by_dependencies(db_session):
+    from models import Orders, Ptoir
+    await make_order_dependency_tables(db_session)
+    ok_id = await make_active(db_session, "SPD1077356")
+    blocked_relocate = await make_active(db_session, "SPD1077357")
+    db_session.add_all([
+        Relocate(id_active=blocked_relocate, date=datetime(2023, 1, 1)),
+        # счётчик (создаётся триггером у каждого актива), ПТОиР и пустой заказ
+        # на этот ПТОиР удаление НЕ блокируют
+        CounterActive(id_active=ok_id, id_counter_type=3, date=datetime(2023, 1, 1), value=0),
+    ])
+    ptoir_ok = Ptoir(number_ptoir="ТО1", id_active=ok_id)
+    db_session.add(ptoir_ok)
+    await db_session.flush()
+    db_session.add(Orders(order_number="З-1", id_ptoir=ptoir_ok.id))
+    await db_session.flush()
+
+    rows = [{"Актив": "SPD1077356"}, {"Актив": "SPD1077357"}]
+    errors, valid_rows = await controller._validate_delete_actives(db_session, rows)
+
+    assert [vr["id_active"] for vr in valid_rows] == [ok_id]
+    messages = " | ".join(e["message"] for e in errors)
+    assert "'SPD1077357'" in messages and "relocate" in messages
+
+
+async def test_delete_actives_blocked_by_order_with_dependencies(db_session):
+    from sqlalchemy import text as sql_text
+    from models import Orders
+    await make_order_dependency_tables(db_session)
+    blocked_id = await make_active(db_session, "SPD1077358")
+    order = Orders(order_number="З-2", id_active=blocked_id)
+    db_session.add(order)
+    await db_session.flush()
+    # у заказа есть трудозатраты — актив блокируется
+    await db_session.execute(sql_text(
+        f"INSERT INTO public.labor_costs (id_order) VALUES ({order.id})"))
+
+    errors, valid_rows = await controller._validate_delete_actives(
+        db_session, [{"Актив": "SPD1077358"}])
+
+    assert valid_rows == []
+    assert "заказов актива 'SPD1077358'" in errors[0]["message"]
+    assert "labor_costs" in errors[0]["message"]
+
+
+async def test_delete_actives_active_number_column(db_session):
+    await make_active(db_session, "SPD1077356")
+
+    errors, valid_rows = await controller._validate_delete_actives(
+        db_session, [{"active_number": "SPD1077356"}])
+
+    assert errors == []
+    assert valid_rows[0]["active_number"] == "SPD1077356"
+
+
+def test_delete_actives_sql_body():
+    valid_rows = [
+        {"row_num": 1, "active_number": "SPD1077356", "id_active": 10, "id_location": 100},
+        {"row_num": 2, "active_number": "SPD1077357", "id_active": 20, "id_location": None},
+    ]
+    lines = ActivesParserController._build_delete_actives_sql_body(valid_rows)
+    sql = "\n".join(lines)
+
+    # обрамление: DBA-триггер tr_abort_delete отключается на время транзакции
+    assert lines[0] == "ALTER TABLE public.counter_active DISABLE TRIGGER tr_abort_delete;"
+    assert lines[-1] == "ALTER TABLE public.counter_active ENABLE TRIGGER tr_abort_delete;"
+    # актив с location: orders + ptoir_level_warning + ptoir + counter_active +
+    # mileage_start + actives + location с guard'ом; без location — шесть строк
+    assert len(lines) == 15
+    assert "DELETE FROM public.orders WHERE id_active = 10 OR id_ptoir IN" in lines[1]
+    assert "DELETE FROM public.ptoir_level_warning WHERE id_ptoir IN" in lines[2]
+    assert "DELETE FROM public.ptoir WHERE id_active = 10;" in lines[3]
+    assert "DELETE FROM public.counter_active WHERE id_active = 10;" in lines[4]
+    assert "DELETE FROM public.mileage_start WHERE id_active = 10;" in lines[5]
+    assert "DELETE FROM public.actives WHERE id = 10;" in lines[6]
+    assert "DELETE FROM public.location l WHERE l.id = 100" in lines[7]
+    assert "NOT EXISTS" in lines[7] and "materials" in lines[7] and "relocate" in lines[7]
+    assert sql.count("DELETE FROM public.actives") == 2
+    assert sql.count("DELETE FROM public.location") == 1

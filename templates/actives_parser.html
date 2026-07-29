@@ -90,6 +90,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
             Пересчитать пробег
         </button>
+        <button type="button" onclick="showDeleteActivesModal()" class="btn btn-danger">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            Удалить активы
+        </button>
     </div>
 </div>
 {% endif %}
@@ -237,6 +241,30 @@
     </div>
 </div>
 
+<div id="delete-actives-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
+        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Удаление активов</h3>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Удалить активы из файла (колонка 'Актив') вместе с их location, счётчиками, mileage_start, ПТОиР и пустыми заказами. Наличие перемещений или заказов со связанными данными (трудозатраты, спецификации и т.п.) — ошибка валидации</p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button onclick="generateDeleteActivesSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Скачать SQL-файл</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл delete_actives.sql для ручного запуска</div>
+                </div>
+            </button>
+            <button onclick="executeDeleteActives()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#c62828"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Выполнить в базе данных</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное удаление всех активов из файла</div>
+                </div>
+            </button>
+        </div>
+        <button onclick="closeDeleteActivesModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
+    </div>
+</div>
+
 <div id="create-named-actives-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
         <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Создание именных активов</h3>
@@ -264,7 +292,7 @@
 <div id="recount-mileage-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
         <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Пересчёт пробега</h3>
-        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Пересчитать mileage_start по истории перемещений (до 13.05.2022) и счётчик пробега counter_active через function_get_mileage для активов из файла (колонка 'Актив'). Необязательная колонка 'milage_const' перед пересчётом записывается в mileage_start (создаёт запись, если её нет)</p>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Пересчитать mileage_start по истории перемещений (до 13.05.2022) и счётчик пробега counter_active через function_get_mileage для активов из файла (колонка 'Актив' или 'active_number'). Необязательная колонка 'milage_const' перед пересчётом записывается в mileage_start (создаёт запись, если её нет)</p>
         <div style="display: flex; flex-direction: column; gap: 12px;">
             <button onclick="downloadRecountMileageSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
@@ -301,8 +329,6 @@
 </div>
 
 <script>
-    const ALL_ROWS = {{ all_rows | tojson }};
-
     function changePerPage(val) {
         const url = new URL(window.location);
         url.searchParams.set('per_page', val);
@@ -349,21 +375,17 @@
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    function buildFormData() {
-        const formData = new FormData();
-        formData.append('rows', JSON.stringify(ALL_ROWS));
-        return appendCsrfToken(formData);
-    }
-
     function downloadSQL() {
         closeModal();
         document.getElementById('error-box').style.display = 'none';
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showCreateActivesProgress();
 
-        fetch('/actives-parser/generate-sql-serial-number', { method: 'POST', body: buildFormData() })
+        fetch('/actives-parser/serial-number/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
             .then(resp => resp.json())
-            .then(data => {
-                if (data.status === 'error') {
+            .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
+                hideCreateActivesProgress();
+                if (data.status === 'error' || !data.sql) {
                     handleErrors(data);
                 } else {
                     const blob = new Blob([data.sql], { type: 'text/sql' });
@@ -374,8 +396,8 @@
                     a.click();
                     URL.revokeObjectURL(url);
                 }
-            })
-            .catch(err => alert('Ошибка запроса: ' + err));
+            }))
+            .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
     }
 
     function executeUpdate() {
@@ -385,17 +407,20 @@
 
         if (!confirm('Выполнить обновление всех строк в базе данных?')) return;
 
-        fetch('/actives-parser/update-serial-number', { method: 'POST', body: buildFormData() })
+        showCreateActivesProgress();
+
+        fetch('/actives-parser/serial-number/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
             .then(resp => resp.json())
-            .then(data => {
+            .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
+                hideCreateActivesProgress();
                 if (data.status === 'error') {
                     handleErrors(data);
                 } else {
                     alert(data.message);
                     location.reload();
                 }
-            })
-            .catch(err => alert('Ошибка запроса: ' + err));
+            }))
+            .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
     }
 
     function downloadSQLDesignNumber() {
@@ -529,6 +554,66 @@
                     a.download = 'create_actives.sql';
                     a.click();
                     URL.revokeObjectURL(url);
+                }
+            }))
+            .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
+    }
+
+    function showDeleteActivesModal() {
+        document.getElementById('delete-actives-modal').style.display = 'flex';
+    }
+
+    function closeDeleteActivesModal() {
+        document.getElementById('delete-actives-modal').style.display = 'none';
+    }
+
+    document.getElementById('delete-actives-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeDeleteActivesModal();
+    });
+
+    function generateDeleteActivesSQL() {
+        closeDeleteActivesModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showCreateActivesProgress();
+
+        fetch('/actives-parser/delete-actives/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
+                hideCreateActivesProgress();
+                if (data.status === 'error' || !data.sql) {
+                    handleErrors(data);
+                } else {
+                    const blob = new Blob([data.sql], { type: 'text/sql' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'delete_actives.sql';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            }))
+            .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
+    }
+
+    function executeDeleteActives() {
+        closeDeleteActivesModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+
+        if (!confirm('УДАЛИТЬ все активы из файла из базы данных? Действие необратимо.')) return;
+
+        showCreateActivesProgress();
+
+        fetch('/actives-parser/delete-actives/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
+                hideCreateActivesProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    alert(data.message);
+                    location.reload();
                 }
             }))
             .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });

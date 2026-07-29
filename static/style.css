@@ -236,6 +236,15 @@ body {
     background-color: #1b5e20;
 }
 
+.btn-danger {
+    background-color: #c62828;
+    color: #ffffff;
+}
+
+.btn-danger:hover {
+    background-color: #8e0000;
+}
+
 /* Form Elements */
 .form-group {
     margin-bottom: 20px;

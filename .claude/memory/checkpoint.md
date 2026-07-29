@@ -140,6 +140,31 @@
 - [x] Живые smoke через `litestar.testing.TestClient` (сессия через `set_session_data`, CSRF из куки `csrftoken` заголовком `x-csrftoken`, БД-профиль через `db_manager.set_active_profile`) — генерация SQL на реальной БД `grom-tk`, запись только в откатываемых транзакциях
 - Коммиты: c005398 (recount mileage + прогресс + новая колонка), a2197a9 (milage_const)
 
+## Фаза 13: Парсинг активов — именные активы, прогресс serial_number, колонка active_number — ВЫПОЛНЕНА
+- [x] Новая кнопка «Создать именной актив» (файл: `Актив`, `ТМЦ`, `Положение`, `Партия`) — как «Создать активы из ТМЦ», но active_number задан в файле:
+  - `_validate_create_named_actives`: актив НЕ должен существовать в БД (обратная проверка), дубликаты в файле — ошибка, `ТМЦ`→`design_number.number`, `Положение`→`storage.name`, `Партия`→`consignment.name` (с кэшами); все ошибки по строкам
+  - `_build_create_named_actives_sql_body`: DO-блок как в create-actives (nextval для location/actives, `storage.last_lcn` FOR UPDATE + инкремент + UPDATE в конце), но `active_number` — литерал из файла, `iterator_number_last` не используется; на актив своя запись location (`id_type_location=1`) и `lcn = 'S<storage>.<n>'::ltree`
+  - эндпоинты `/create-named-actives/{generate-sql,execute}/start`, аудит-лог `create_named_actives_*.log`; DO-блок проверен на реальной БД в откатанной транзакции (актив создался с lcn S6.26892, после rollback отсутствует)
+- [x] «Пересчитать пробег»: колонка актива — `Актив` или `active_number` (без регистра/краевых пробелов, тем же механизмом, что milage_const)
+- [x] «Изменить серийные номера» переведено на фоновые задачи с прогрессом: `/serial-number/{generate-sql,execute}/start` вместо `/generate-sql-serial-number` и `/update-serial-number`; `_validate_serial_number` с progress; строки из серверного хранилища сессии — все 5 флоу страницы теперь единообразны
+- [x] Удалён мёртвый код шаблона: `buildFormData()` и `ALL_ROWS` (сериализация всех строк файла в HTML раздувала страницу на больших файлах)
+- [x] Тесты: 75 зелёных (+6 именные активы, +1 колонка active_number)
+- Коммиты: 84952b1 (именные активы); active_number + serial-прогресс — в рабочем дереве на момент записи
+
+## Фаза 14: Парсинг активов — удаление активов — ВЫПОЛНЕНА
+- [x] Кнопка «Удалить активы» (btn-danger, добавлен в style.css) — файл с колонкой `Актив`/`active_number`, флоу с прогрессом как у остальных, эндпоинты `/delete-actives/{generate-sql,execute}/start`, аудит-лог `delete_actives_*.log`, confirm «Действие необратимо»
+- [x] Найденные особенности БД (проверено на grom-tk, applies везде):
+  - триггер `actives_trgger` (AFTER INSERT на actives, plpython) создаёт строку counter_active каждому активу — блокировать удаление по счётчику нельзя, он есть у всех
+  - DELETE из counter_active запрещён DBA-триггером `tr_abort_delete` (dba.fn_abort_delete, безусловный RAISE) — SQL обрамляется `ALTER TABLE counter_active DISABLE/ENABLE TRIGGER tr_abort_delete` в одной транзакции (нужны права владельца; приложение ходит под postgres)
+- [x] Семантика «строгого» удаления (выбор пользователя + 2 итерации расширения):
+  - удаляются вместе с активом: пустые заказы (по id_active и через ПТОиР по orders.id_ptoir; до ptoir из-за FK), ptoir_level_warning + ptoir, counter_active, mileage_start, сам актив, его location (только если на неё не ссылаются другие actives/materials/relocate — NOT EXISTS в момент выполнения)
+  - блокируют (ошибка по строке): relocate (id_active и id_root_active), order_to_actives, active_additional_field, actives_to_main_ptoir, materials_to_actives, mileage_history_actives — список DELETE_ACTIVES_BLOCKERS; заказ со связанными записями хотя бы в одной из 20 таблиц ORDERS_DEPENDENCY_CHECKS (labor_costs, orders_to_specification, material_1c, relocate.id_order и т.д. — снято с information_schema)
+  - проверки батчевые: один запрос на таблицу для всех активов/заказов файла (bindparam expanding для сырых SELECT)
+- [x] Добавлены модели: Orders (id_ptoir), OrderToActives, ActiveAdditionalField, ActivesToMainPtoir, MaterialsToActives, MileageHistoryActives; в Relocate — id_order, id_root_active
+- [x] Тесты: 81 зелёный; для SQLite зависимые таблицы заказов создаются DDL-хелпером `make_order_dependency_tables` из ORDERS_DEPENDENCY_CHECKS
+- [x] Проверено: полный цикл удаления (актив+ПТОиР+пустой заказ) на grom-tk в откатанной транзакции; валидация реального файла (1283 актива) на grom-prod read-only — 0 ошибок
+- Замечено: приложение реально используется с профилем grom-prod (активы файла и их заказы есть только там)
+
 ## Следующие шаги
 1. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
 2. Покрыть happy-path `train_parser._validate_train_rows` (разрешение `car_place_id`/`id_actives_parent`) — нужен реальный Postgres в тестовом окружении (testcontainers или аналог), см. Фазу 9

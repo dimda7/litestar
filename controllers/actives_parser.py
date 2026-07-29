@@ -9,7 +9,7 @@ from pathlib import Path
 
 import openpyxl
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from sqlalchemy import func, select, text
+from sqlalchemy import bindparam, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from litestar import Controller, get, post
@@ -21,8 +21,10 @@ from litestar.response import Template, Response, Redirect
 
 from db_manager import get_session_maker
 from models import (
-    Actives, CounterActive, Consignment, DesignNumber, IteratorNumberLast, Location,
-    MileageStart, MileageTrain, Relocate, Storage, StoragePlace,
+    Actives, ActiveAdditionalField, ActivesToMainPtoir, CounterActive, Consignment,
+    DesignNumber, IteratorNumberLast, Location, MaterialsToActives,
+    MileageHistoryActives, MileageStart, MileageTrain, Orders, OrderToActives,
+    Ptoir, Relocate, Storage, StoragePlace,
 )
 from schemas import SelectSheetRequest
 from sql_utils import sql_escape
@@ -50,6 +52,50 @@ MILEAGE_RECOUNT_CUTOFF = date(2022, 5, 13)
 MILEAGE_TZ_SHIFT = timedelta(hours=3)
 # counter_type счётчика пробега в counter_active
 MILEAGE_COUNTER_TYPE_ID = 3
+
+# Таблицы, ссылающиеся на actives по FK: наличие хотя бы одной связанной записи
+# блокирует удаление актива (строгий DELETE — удаляются только активы без истории).
+# counter_active и mileage_start здесь нет намеренно: строку counter_active создаёт
+# триггер actives_trgger при каждом INSERT актива (счётчик есть у всех активов,
+# блокировка по нему запретила бы удаление вообще), поэтому обе таблицы удаляются
+# вместе с активом. ptoir тоже удаляется вместе с активом (с его ptoir_level_warning),
+# как и «пустые» заказы актива — но заказ со связанными записями хотя бы в одной из
+# ORDERS_DEPENDENCY_CHECKS блокирует удаление (проверяется отдельно).
+DELETE_ACTIVES_BLOCKERS: list[tuple[str, object]] = [
+    ("relocate", Relocate.id_active),
+    ("relocate (root)", Relocate.id_root_active),
+    ("order_to_actives", OrderToActives.id_active),
+    ("active_additional_field", ActiveAdditionalField.id_active),
+    ("actives_to_main_ptoir", ActivesToMainPtoir.id_actives),
+    ("materials_to_actives", MaterialsToActives.id_actives),
+    ("mileage_history_actives", MileageHistoryActives.id_actives),
+]
+
+# Таблицы, ссылающиеся на orders по FK (сняты с information_schema реальной БД):
+# заказ актива удаляется вместе с ним только если во всех этих таблицах пусто —
+# иначе это заказ с реальными рабочими данными, и актив блокируется.
+ORDERS_DEPENDENCY_CHECKS: list[tuple[str, str]] = [
+    ("consumption_rate_order", "id_order"),
+    ("counter_order", "id_order"),
+    ("labor_costs", "id_order"),
+    ("material_1c", "id_order"),
+    ("order_diagnostic", "id"),
+    ("order_status_bin", "id"),
+    ("order_to_actives", "id_order"),
+    ("order_to_attachment", "id_order"),
+    ("order_to_order", "id_parent"),
+    ("order_to_order", "id_child"),
+    ("order_to_order_executor", "id_order"),
+    ("order_used_tools", "id_order"),
+    ("orders_ref_data", "id_order"),
+    ("orders_required_tools", "id_order"),
+    ("orders_to_classifier", "id_order"),
+    ("orders_to_labor_costs", "id_order"),
+    ("orders_to_orders_work_operation", "id_orders"),
+    ("orders_to_specification", "id_order"),
+    ("orders_work_operation", "id_order"),
+    ("relocate", "id_order"),
+]
 
 # Как и в train_parser: валидация строк ТМЦ дёргает несколько запросов к БД на
 # строку, на больших файлах это идёт секундами — прогресс отдаётся через
@@ -272,7 +318,7 @@ class ActivesParserController(Controller):
             return Redirect("/actives-parser")
 
     async def _validate_serial_number(
-        self, db_session: AsyncSession, rows: list[dict]
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[tuple[str, str]]]:
         """Validate rows for actives.serial_number update.
         Returns (errors, valid_rows) where valid_rows is [(active_number, serial_number), ...]
@@ -289,8 +335,13 @@ class ActivesParserController(Controller):
             })
             return errors, valid_rows
 
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
         for idx, row in enumerate(rows):
             row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
             active_number = str(row.get("Актив", "") or "").strip()
             serial_number = str(row.get("Новый с/н") or row.get("Новый Серийный номер") or "").strip()
 
@@ -520,73 +571,119 @@ class ActivesParserController(Controller):
         progress.update(status="done", count=len(valid_rows),
                          message=f"Успешно обновлено id_design_number для {len(valid_rows)} записей")
 
-    @post("/generate-sql-serial-number")
-    async def generate_sql_serial_number(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        errors, valid_rows = await self._validate_serial_number(db_session, rows)
-
-        if errors:
+    @post("/serial-number/generate-sql/start")
+    async def serial_number_generate_sql_start(self, request: Request) -> Response:
+        """Запускает фоновую генерацию SQL-файла обновления serial_number, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
             return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
                 status_code=200,
                 media_type="application/json",
             )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_serial_number_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_serial_number_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_serial_number(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+        if not valid_rows:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+            return
 
         sql_lines = [
             f"UPDATE public.actives SET serial_number = '{sql_escape(serial_number)}' "
             f"WHERE active_number = '{sql_escape(active_number)}';"
             for active_number, serial_number in valid_rows
         ]
-        content = "\n".join(sql_lines)
+        progress.update(status="done", sql="\n".join(sql_lines), count=len(sql_lines))
+
+    @post("/serial-number/execute/start")
+    async def serial_number_execute_start(self, request: Request) -> Response:
+        """Запускает фоновое обновление serial_number в БД, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_serial_number_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
         return Response(
-            content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
+            content=json.dumps({"task_id": task_id}),
             status_code=200,
             media_type="application/json",
         )
 
-    @post("/update-serial-number")
-    async def update_serial_number(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        errors, valid_rows = await self._validate_serial_number(db_session, rows)
-
-        if errors:
-            return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
-                status_code=200,
-                media_type="application/json",
-            )
-
-        if not valid_rows:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
-
+    async def _run_serial_number_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        valid_rows: list[tuple[str, str]] = []
         try:
-            for active_number, serial_number in valid_rows:
-                await db_session.execute(
-                    text("UPDATE public.actives SET serial_number = :sn WHERE active_number = :an"),
-                    {"sn": serial_number, "an": active_number},
-                )
-            await db_session.commit()
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_serial_number(session, rows, progress=progress)
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+                    return
+
+                progress.update(processed=0, total=len(valid_rows), phase="executing")
+
+                try:
+                    for i, (active_number, serial_number) in enumerate(valid_rows, start=1):
+                        await session.execute(
+                            text("UPDATE public.actives SET serial_number = :sn WHERE active_number = :an"),
+                            {"sn": serial_number, "an": active_number},
+                        )
+                        if i % 20 == 0 or i == len(valid_rows):
+                            progress["processed"] = i
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
         except Exception as e:
-            await db_session.rollback()
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
 
         now = datetime.now()
         log_lines = [
@@ -606,11 +703,8 @@ class ActivesParserController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Updated serial_number for %d rows, log: %s", len(valid_rows), log_file)
 
-        return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено serial_number для {len(valid_rows)} записей"}),
-            status_code=200,
-            media_type="application/json",
-        )
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Успешно обновлено serial_number для {len(valid_rows)} записей")
 
     async def _validate_recount_mileage(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
@@ -628,9 +722,10 @@ class ActivesParserController(Controller):
         ненулевое значение перед пересчётом записывается в mileage_start.milage_const;
         для актива без записи mileage_start она создаётся (INSERT) — тогда отсутствие
         записи не считается ошибкой. Значение 0 игнорируется, как в старом скрипте.
-        Заголовок колонки сопоставляется без учёта регистра и краевых пробелов (в реальных
-        файлах встречается 'mileage_const\\xa0'), допустимы оба написания —
-        milage_const и mileage_const.
+        Заголовки колонок сопоставляются без учёта регистра и краевых пробелов (в реальных
+        файлах встречается 'mileage_const\\xa0'), допустимы альтернативные написания:
+        колонка актива — 'Актив' или 'active_number', константа — milage_const или
+        mileage_const.
         """
         actives_repo = ActivesRepository(session=db_session)
         mileage_start_repo = MileageStartRepository(session=db_session)
@@ -640,8 +735,14 @@ class ActivesParserController(Controller):
         valid_rows: list[dict] = []
         batch_numbers: set[str] = set()
 
-        if rows and "Актив" not in rows[0]:
-            errors.append({"row": 0, "field": "Актив", "message": "В файле не найдена колонка 'Актив'"})
+        active_column: str | None = next(
+            (k for k in (rows[0] if rows else {})
+             if str(k).strip().lower() in ("актив", "active_number")),
+            None,
+        )
+        if rows and active_column is None:
+            errors.append({"row": 0, "field": "Актив",
+                            "message": "В файле не найдена колонка 'Актив' (или 'active_number')"})
             return errors, valid_rows
         const_column: str | None = next(
             (k for k in (rows[0] if rows else {})
@@ -660,7 +761,7 @@ class ActivesParserController(Controller):
             if progress is not None:
                 progress["processed"] = row_num
 
-            active_number = str(row.get("Актив", "") or "").strip()
+            active_number = str(row.get(active_column, "") or "").strip()
             if not active_number:
                 errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})
                 continue
@@ -1166,6 +1267,298 @@ class ActivesParserController(Controller):
         sql_lines.append("END $$;")
 
         return sql_lines
+
+    async def _validate_delete_actives(
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    ) -> tuple[list[dict], list[dict]]:
+        """Валидирует строки файла «удалить активы» (строгий DELETE).
+
+        Удаляются только активы без истории: если на актив ссылается хотя бы одна
+        запись из DELETE_ACTIVES_BLOCKERS (ПТОиР, перемещения, заказы и т.д.) —
+        ошибка по строке, актив не удаляется. Проверка блокировок батчами: один запрос
+        на таблицу для всех активов файла, а не по запросу на строку.
+        """
+        actives_repo = ActivesRepository(session=db_session)
+
+        errors: list[dict] = []
+        batch_numbers: set[str] = set()
+        # id_active -> данные строки; после батч-проверки блокировок остаются валидные
+        candidates: dict[int, dict] = {}
+
+        active_column: str | None = next(
+            (k for k in (rows[0] if rows else {})
+             if str(k).strip().lower() in ("актив", "active_number")),
+            None,
+        )
+        if rows and active_column is None:
+            errors.append({"row": 0, "field": "Актив",
+                            "message": "В файле не найдена колонка 'Актив' (или 'active_number')"})
+            return errors, []
+
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
+
+            active_number = str(row.get(active_column, "") or "").strip()
+            if not active_number:
+                errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})
+                continue
+
+            if active_number in batch_numbers:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Дубликат внутри файла: '{active_number}'"})
+                continue
+
+            active = await actives_repo.get_one_or_none(Actives.active_number == active_number)
+            if active is None:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Актив не найден: '{active_number}'"})
+                continue
+
+            batch_numbers.add(active_number)
+            candidates[active.id] = {
+                "row_num": row_num,
+                "active_number": active_number,
+                "id_active": active.id,
+                "id_location": active.id_location,
+            }
+
+        if candidates:
+            ids = list(candidates)
+            for table_name, column in DELETE_ACTIVES_BLOCKERS:
+                blocked_ids = (await db_session.execute(
+                    select(column).where(column.in_(ids)).distinct()
+                )).scalars().all()
+                for blocked_id in blocked_ids:
+                    vr = candidates.pop(blocked_id, None)
+                    if vr is not None:
+                        errors.append({
+                            "row": vr["row_num"], "field": "Актив",
+                            "message": (f"У актива '{vr['active_number']}' есть связанные записи "
+                                        f"в {table_name} — удаление запрещено"),
+                        })
+
+        if candidates:
+            # Заказы актива (напрямую по id_active или через его ПТОиР) удаляются вместе
+            # с ним, но только «пустые»: заказ со связанными записями хотя бы в одной из
+            # ORDERS_DEPENDENCY_CHECKS — это реальная рабочая история, актив блокируется.
+            ids = list(candidates)
+            order_rows = (await db_session.execute(
+                select(Orders.id, Orders.id_active, Ptoir.id_active)
+                .outerjoin(Ptoir, Orders.id_ptoir == Ptoir.id)
+                .where(or_(Orders.id_active.in_(ids), Ptoir.id_active.in_(ids)))
+            )).all()
+            order_owners: dict[int, set[int]] = {}
+            for order_id, direct_active, ptoir_active in order_rows:
+                owners = order_owners.setdefault(order_id, set())
+                for owner in (direct_active, ptoir_active):
+                    if owner in candidates:
+                        owners.add(owner)
+
+            if order_owners:
+                order_ids = list(order_owners)
+                for table_name, column in ORDERS_DEPENDENCY_CHECKS:
+                    stmt = text(
+                        f"SELECT DISTINCT {column} FROM public.{table_name} WHERE {column} IN :ids"
+                    ).bindparams(bindparam("ids", expanding=True))
+                    blocked_orders = (await db_session.execute(stmt, {"ids": order_ids})).scalars().all()
+                    for order_id in blocked_orders:
+                        for owner in order_owners.get(order_id, ()):
+                            vr = candidates.pop(owner, None)
+                            if vr is not None:
+                                errors.append({
+                                    "row": vr["row_num"], "field": "Актив",
+                                    "message": (f"У заказов актива '{vr['active_number']}' есть "
+                                                f"связанные записи в {table_name} — удаление запрещено"),
+                                })
+
+        valid_rows = sorted(candidates.values(), key=lambda vr: vr["row_num"])
+        return errors, valid_rows
+
+    @staticmethod
+    def _build_delete_actives_sql_body(valid_rows: list[dict]) -> list[str]:
+        """Строит SQL удаления активов (без BEGIN/COMMIT), общий для скачивания и выполнения.
+
+        На каждый актив: его «пустые» заказы (напрямую и через ПТОиР — валидация
+        гарантирует отсутствие у них связанных записей), ptoir_level_warning его ПТОиР
+        и сами ptoir, строки counter_active (их создаёт триггер при INSERT актива)
+        и mileage_start (FK нет — иначе осиротеют), сам актив, затем его location —
+        но только если на неё больше никто не ссылается (другие actives, materials,
+        relocate); проверка NOT EXISTS выполняется в момент выполнения SQL, уже после
+        удаления актива. Заказы удаляются до ptoir из-за FK orders.id_ptoir -> ptoir.
+
+        DELETE из counter_active запрещён DBA-триггером tr_abort_delete
+        (dba.fn_abort_delete, безусловный RAISE) — без его временного отключения
+        удалить актив невозможно в принципе: счётчик создаётся у каждого актива
+        автоматически, а FK counter_active->actives блокирует удаление самого актива.
+        Триггер отключается только в рамках этой транзакции (ALTER TABLE берёт
+        ACCESS EXCLUSIVE до конца транзакции) и требует прав владельца таблицы.
+        """
+        sql_lines: list[str] = [
+            "ALTER TABLE public.counter_active DISABLE TRIGGER tr_abort_delete;"
+        ]
+        for vr in valid_rows:
+            comment = f" -- '{sql_escape(vr['active_number'])}'"
+            sql_lines.append(
+                f"DELETE FROM public.orders WHERE id_active = {vr['id_active']} OR id_ptoir IN "
+                f"(SELECT id FROM public.ptoir WHERE id_active = {vr['id_active']});{comment}"
+            )
+            sql_lines.append(
+                f"DELETE FROM public.ptoir_level_warning WHERE id_ptoir IN "
+                f"(SELECT id FROM public.ptoir WHERE id_active = {vr['id_active']});{comment}"
+            )
+            sql_lines.append(f"DELETE FROM public.ptoir WHERE id_active = {vr['id_active']};{comment}")
+            sql_lines.append(f"DELETE FROM public.counter_active WHERE id_active = {vr['id_active']};{comment}")
+            sql_lines.append(f"DELETE FROM public.mileage_start WHERE id_active = {vr['id_active']};{comment}")
+            sql_lines.append(f"DELETE FROM public.actives WHERE id = {vr['id_active']};{comment}")
+            if vr["id_location"] is not None:
+                sql_lines.append(
+                    f"DELETE FROM public.location l WHERE l.id = {vr['id_location']} "
+                    f"AND NOT EXISTS (SELECT 1 FROM public.actives a WHERE a.id_location = l.id) "
+                    f"AND NOT EXISTS (SELECT 1 FROM public.materials m WHERE m.id_location = l.id) "
+                    f"AND NOT EXISTS (SELECT 1 FROM public.relocate r WHERE r.id_location_old = l.id "
+                    f"OR r.id_location_new = l.id);{comment}"
+                )
+        sql_lines.append("ALTER TABLE public.counter_active ENABLE TRIGGER tr_abort_delete;")
+        return sql_lines
+
+    @post("/delete-actives/generate-sql/start")
+    async def delete_actives_generate_sql_start(self, request: Request) -> Response:
+        """Запускает фоновую генерацию SQL-файла удаления активов, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_delete_actives_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_delete_actives_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_delete_actives(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+        if not valid_rows:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для удаления"}])
+            return
+
+        sql_lines = self._build_delete_actives_sql_body(valid_rows)
+        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
+        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+
+    @post("/delete-actives/execute/start")
+    async def delete_actives_execute_start(self, request: Request) -> Response:
+        """Запускает фоновое атомарное удаление активов, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_delete_actives_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_delete_actives_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        valid_rows: list[dict] = []
+        sql_lines: list[str] = []
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_delete_actives(session, rows, progress=progress)
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для удаления"}])
+                    return
+
+                progress.update(processed=0, total=1, phase="executing")
+
+                sql_lines = self._build_delete_actives_sql_body(valid_rows)
+                sql_body = "\n".join(sql_lines)
+
+                try:
+                    # ВАЖНО: как и в create-actives — session.rollback() ниже откатывает и этот
+                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
+                    # (запросы репозиториев внутри _validate_delete_actives). Не убирайте
+                    # обращения к session до этой точки.
+                    conn = await session.connection()
+                    raw_conn = await conn.get_raw_connection()
+                    await raw_conn.driver_connection.execute(sql_body)
+
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+
+                progress["processed"] = 1
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Delete Actives: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Actives deleted: {len(valid_rows)}",
+            "",
+            *sql_lines,
+            "",
+        ]
+        log_file = LOG_DIR / f"delete_actives_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Deleted %d actives, log: %s", len(valid_rows), log_file)
+
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Успешно удалено активов: {len(valid_rows)}")
 
     async def _validate_create_named_actives(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
