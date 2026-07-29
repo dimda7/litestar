@@ -4,13 +4,14 @@ import logging
 import tempfile
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import openpyxl
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from litestar import Controller, get, post
 from litestar.connection.request import Request
 from litestar.datastructures import UploadFile
@@ -20,7 +21,8 @@ from litestar.response import Template, Response, Redirect
 
 from db_manager import get_session_maker
 from models import (
-    Actives, DesignNumber, Storage, StoragePlace, Consignment, IteratorNumberLast,
+    Actives, CounterActive, Consignment, DesignNumber, IteratorNumberLast, Location,
+    MileageStart, MileageTrain, Relocate, Storage, StoragePlace,
 )
 from schemas import SelectSheetRequest
 from sql_utils import sql_escape
@@ -39,6 +41,15 @@ ACTIVE_NUMBER_COUNTER_DESCRIPTION = "Номер следующего актив�
 # active_number должен быть ровно такой длины: буквенный префикс (Тип актива) + цифры
 # счётчика, дополненные нулями слева между префиксом и числом до общей длины.
 ACTIVE_NUMBER_LENGTH = 10
+
+# Дата исторической миграции учёта пробега: перемещения актива до неё влияют на
+# пересчитываемый mileage_start.milage, пробег поездов суммируется до неё включительно.
+MILEAGE_RECOUNT_CUTOFF = date(2022, 5, 13)
+# relocate.date хранится без таймзоны (UTC); для сравнения с датой отсечки
+# приводится к московскому времени, как в старом peewee-скрипте.
+MILEAGE_TZ_SHIFT = timedelta(hours=3)
+# counter_type счётчика пробега в counter_active
+MILEAGE_COUNTER_TYPE_ID = 3
 
 # Как и в train_parser: валидация строк ТМЦ дёргает несколько запросов к БД на
 # строку, на больших файлах это идёт секундами — прогресс отдаётся через
@@ -73,6 +84,18 @@ class DesignNumberRepository(SQLAlchemyAsyncRepository[DesignNumber]):
 
 class IteratorNumberLastRepository(SQLAlchemyAsyncRepository[IteratorNumberLast]):
     model_type = IteratorNumberLast
+
+
+class ActivesRepository(SQLAlchemyAsyncRepository[Actives]):
+    model_type = Actives
+
+
+class MileageStartRepository(SQLAlchemyAsyncRepository[MileageStart]):
+    model_type = MileageStart
+
+
+class CounterActiveRepository(SQLAlchemyAsyncRepository[CounterActive]):
+    model_type = CounterActive
 
 
 class ActivesParserController(Controller):
@@ -299,7 +322,7 @@ class ActivesParserController(Controller):
         return errors, valid_rows
 
     async def _validate_design_number(
-        self, db_session: AsyncSession, rows: list[dict]
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[tuple[str, int, str]]]:
         """Validate rows for actives.id_design_number update.
         Returns (errors, valid_rows) where valid_rows is [(active_number, design_number_id, design_number), ...]
@@ -308,18 +331,23 @@ class ActivesParserController(Controller):
         valid_rows: list[tuple[str, int, str]] = []
         batch_numbers: set[str] = set()
 
-        if rows and "Новая Позиция ТМЦ" not in rows[0]:
+        if rows and "Новая Позиция ТМЦ" not in rows[0] and "Новый ТМЦ номер" not in rows[0]:
             errors.append({
                 "row": 0,
                 "field": "Новая Позиция ТМЦ",
-                "message": "В файле не найдена колонка 'Новая Позиция ТМЦ'",
+                "message": "В файле не найдена колонка 'Новая Позиция ТМЦ' (или 'Новый ТМЦ номер')",
             })
             return errors, valid_rows
 
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
         for idx, row in enumerate(rows):
             row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
             active_number = str(row.get("Актив", "") or "").strip()
-            design_number = str(row.get("Новая Позиция ТМЦ") or "").strip()
+            design_number = str(row.get("Новая Позиция ТМЦ") or row.get("Новый ТМЦ номер") or "").strip()
 
             if not active_number:
                 errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})
@@ -340,7 +368,7 @@ class ActivesParserController(Controller):
                 continue
 
             if not design_number:
-                errors.append({"row": row_num, "field": "Новая Позиция ТМЦ", "message": "Поле 'Новая Позиция ТМЦ' пустое"})
+                errors.append({"row": row_num, "field": "Новая Позиция ТМЦ", "message": "Поле 'Новая Позиция ТМЦ' ('Новый ТМЦ номер') пустое"})
                 continue
 
             result = await db_session.execute(
@@ -357,73 +385,119 @@ class ActivesParserController(Controller):
 
         return errors, valid_rows
 
-    @post("/generate-sql-design-number")
-    async def generate_sql_design_number(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        errors, valid_rows = await self._validate_design_number(db_session, rows)
-
-        if errors:
+    @post("/design-number/generate-sql/start")
+    async def design_number_generate_sql_start(self, request: Request) -> Response:
+        """Запускает фоновую генерацию SQL-файла обновления id_design_number, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
             return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
                 status_code=200,
                 media_type="application/json",
             )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_design_number_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_design_number_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_design_number(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+        if not valid_rows:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+            return
 
         sql_lines = [
             f"UPDATE public.actives SET id_design_number = {design_number_id} "
             f"WHERE active_number = '{sql_escape(active_number)}';"
             for active_number, design_number_id, _ in valid_rows
         ]
-        content = "\n".join(sql_lines)
+        progress.update(status="done", sql="\n".join(sql_lines), count=len(sql_lines))
+
+    @post("/design-number/execute/start")
+    async def design_number_execute_start(self, request: Request) -> Response:
+        """Запускает фоновое обновление id_design_number в БД, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_design_number_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
         return Response(
-            content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
+            content=json.dumps({"task_id": task_id}),
             status_code=200,
             media_type="application/json",
         )
 
-    @post("/update-design-number")
-    async def update_design_number(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        errors, valid_rows = await self._validate_design_number(db_session, rows)
-
-        if errors:
-            return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
-                status_code=200,
-                media_type="application/json",
-            )
-
-        if not valid_rows:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
-
+    async def _run_design_number_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        valid_rows: list[tuple[str, int, str]] = []
         try:
-            for active_number, design_number_id, _ in valid_rows:
-                await db_session.execute(
-                    text("UPDATE public.actives SET id_design_number = :dn_id WHERE active_number = :an"),
-                    {"dn_id": design_number_id, "an": active_number},
-                )
-            await db_session.commit()
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_design_number(session, rows, progress=progress)
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+                    return
+
+                progress.update(processed=0, total=len(valid_rows), phase="executing")
+
+                try:
+                    for i, (active_number, design_number_id, _) in enumerate(valid_rows, start=1):
+                        await session.execute(
+                            text("UPDATE public.actives SET id_design_number = :dn_id WHERE active_number = :an"),
+                            {"dn_id": design_number_id, "an": active_number},
+                        )
+                        if i % 20 == 0 or i == len(valid_rows):
+                            progress["processed"] = i
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
         except Exception as e:
-            await db_session.rollback()
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
 
         now = datetime.now()
         log_lines = [
@@ -443,11 +517,8 @@ class ActivesParserController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Updated id_design_number for %d rows, log: %s", len(valid_rows), log_file)
 
-        return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено id_design_number для {len(valid_rows)} записей"}),
-            status_code=200,
-            media_type="application/json",
-        )
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Успешно обновлено id_design_number для {len(valid_rows)} записей")
 
     @post("/generate-sql-serial-number")
     async def generate_sql_serial_number(
@@ -540,6 +611,291 @@ class ActivesParserController(Controller):
             status_code=200,
             media_type="application/json",
         )
+
+    async def _validate_recount_mileage(
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    ) -> tuple[list[dict], list[dict]]:
+        """Валидирует строки файла «пересчитать пробег» (замена update_milage_start + recount_counter).
+
+        Для каждого актива по истории relocate считает поправку total к mileage_start.milage:
+        перемещения до MILEAGE_RECOUNT_CUTOFF со склада на поезд прибавляют пробег этого
+        поезда (mileage_train.mileage_average за период от перемещения до отсечки), с поезда
+        на склад — вычитают. Сами значения milage_const и counter_active.value здесь не
+        вычисляются — они читаются/считаются в БД в момент выполнения SQL
+        (см. _build_recount_mileage_sql_body).
+        """
+        actives_repo = ActivesRepository(session=db_session)
+        mileage_start_repo = MileageStartRepository(session=db_session)
+        counter_repo = CounterActiveRepository(session=db_session)
+
+        errors: list[dict] = []
+        valid_rows: list[dict] = []
+        batch_numbers: set[str] = set()
+
+        if rows and "Актив" not in rows[0]:
+            errors.append({"row": 0, "field": "Актив", "message": "В файле не найдена колонка 'Актив'"})
+            return errors, valid_rows
+
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
+        loc_old = aliased(Location)
+        loc_new = aliased(Location)
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None:
+                progress["processed"] = row_num
+
+            active_number = str(row.get("Актив", "") or "").strip()
+            if not active_number:
+                errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})
+                continue
+
+            if active_number in batch_numbers:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Дубликат внутри файла: '{active_number}'"})
+                continue
+
+            active = await actives_repo.get_one_or_none(Actives.active_number == active_number)
+            if active is None:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Актив не найден: '{active_number}'"})
+                continue
+            is_train = active.id_unit_type == 1
+
+            mileage_start_rows = await mileage_start_repo.get_many(MileageStart.id_active == active.id)
+            if not mileage_start_rows:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Запись mileage_start не найдена для актива '{active_number}'"})
+                continue
+            if len(mileage_start_rows) > 1:
+                errors.append({"row": row_num, "field": "Актив",
+                                "message": f"Несколько записей mileage_start для актива '{active_number}' — неоднозначно"})
+                continue
+
+            if not is_train:
+                counters = await counter_repo.get_many(
+                    CounterActive.id_active == active.id,
+                    CounterActive.id_counter_type == MILEAGE_COUNTER_TYPE_ID,
+                )
+                if not counters:
+                    errors.append({"row": row_num, "field": "Актив",
+                                    "message": f"Счётчик пробега (counter_type={MILEAGE_COUNTER_TYPE_ID}) не найден для актива '{active_number}'"})
+                    continue
+                if len(counters) > 1:
+                    errors.append({"row": row_num, "field": "Актив",
+                                    "message": f"Несколько счётчиков пробега для актива '{active_number}' — неоднозначно"})
+                    continue
+
+            relocates = (await db_session.execute(
+                select(
+                    Relocate.date,
+                    loc_old.id_train.label("id_train_old"),
+                    loc_new.id_train.label("id_train_new"),
+                )
+                .join(loc_old, Relocate.id_location_old == loc_old.id, isouter=True)
+                .join(loc_new, Relocate.id_location_new == loc_new.id, isouter=True)
+                .where(Relocate.id_active == active.id)
+                .order_by(Relocate.date)
+            )).all()
+
+            total = 0
+            for relocate_date, id_train_old, id_train_new in relocates:
+                if relocate_date is None:
+                    continue
+                if (relocate_date + MILEAGE_TZ_SHIFT).date() >= MILEAGE_RECOUNT_CUTOFF:
+                    continue
+                # Учитываются только перемещения склад<->поезд; поезд->поезд и
+                # склад->склад пробег не меняют (как в старом скрипте).
+                if id_train_old is not None and id_train_new is None:
+                    train_id, sign = id_train_old, -1
+                elif id_train_old is None and id_train_new is not None:
+                    train_id, sign = id_train_new, 1
+                else:
+                    continue
+
+                train_mileage = (await db_session.execute(
+                    select(func.sum(MileageTrain.mileage_average)).where(
+                        MileageTrain.id_train == train_id,
+                        MileageTrain.date_average > relocate_date,
+                        MileageTrain.date_average <= MILEAGE_RECOUNT_CUTOFF,
+                    )
+                )).scalar()
+                total += sign * (train_mileage or 0)
+
+            batch_numbers.add(active_number)
+            valid_rows.append({
+                "row_num": row_num,
+                "active_number": active_number,
+                "id_active": active.id,
+                "total": total,
+                "is_train": is_train,
+            })
+
+        return errors, valid_rows
+
+    @staticmethod
+    def _build_recount_mileage_sql_body(valid_rows: list[dict]) -> list[str]:
+        """Строит SQL пересчёта пробега (без BEGIN/COMMIT), общий для скачивания и выполнения.
+
+        Сначала все UPDATE mileage_start, затем все UPDATE counter_active: пересчёт
+        счётчика через function_get_mileage() читает mileage_start.milage, поэтому
+        в одной транзакции он видит уже обновлённые значения. milage_const читается
+        БД в момент выполнения, а не подставляется константой при генерации —
+        скачанный и выполненный позже файл не разойдётся с БД. Для поездов
+        (id_unit_type=1) счётчик не пересчитывается (как в старом скрипте).
+        """
+        sql_lines: list[str] = []
+        for vr in valid_rows:
+            sql_lines.append(
+                f"UPDATE public.mileage_start SET milage = COALESCE(milage_const, 0) + ({vr['total']}), "
+                f"is_recount = true WHERE id_active = {vr['id_active']}; -- '{sql_escape(vr['active_number'])}'"
+            )
+        for vr in valid_rows:
+            if vr["is_train"]:
+                continue
+            sql_lines.append(
+                f"UPDATE public.counter_active SET value = COALESCE("
+                f"(SELECT sum FROM public.function_get_mileage(id_active, date::date)), 0) "
+                f"WHERE id_active = {vr['id_active']} AND id_counter_type = {MILEAGE_COUNTER_TYPE_ID}; "
+                f"-- '{sql_escape(vr['active_number'])}'"
+            )
+        return sql_lines
+
+    @post("/recount-mileage/generate-sql/start")
+    async def recount_mileage_generate_sql_start(self, request: Request) -> Response:
+        """Запускает фоновую генерацию SQL-файла пересчёта пробега, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_recount_mileage_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_recount_mileage_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_recount_mileage(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+        if not valid_rows:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для пересчёта"}])
+            return
+
+        sql_lines = self._build_recount_mileage_sql_body(valid_rows)
+        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
+        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+
+    @post("/recount-mileage/execute/start")
+    async def recount_mileage_execute_start(self, request: Request) -> Response:
+        """Запускает фоновый атомарный пересчёт пробега в БД, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_recount_mileage_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_recount_mileage_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        valid_rows: list[dict] = []
+        sql_lines: list[str] = []
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_recount_mileage(session, rows, progress=progress)
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для пересчёта"}])
+                    return
+
+                progress.update(processed=0, total=1, phase="executing")
+
+                sql_lines = self._build_recount_mileage_sql_body(valid_rows)
+                sql_body = "\n".join(sql_lines)
+
+                try:
+                    # ВАЖНО: как и в create-actives — session.rollback() ниже откатывает и этот
+                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
+                    # (запросы репозиториев внутри _validate_recount_mileage). Не убирайте
+                    # обращения к session до этой точки.
+                    conn = await session.connection()
+                    raw_conn = await conn.get_raw_connection()
+                    await raw_conn.driver_connection.execute(sql_body)
+
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+
+                progress["processed"] = 1
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Recount Mileage: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Actives recounted: {len(valid_rows)}",
+            "",
+            *sql_lines,
+            "",
+        ]
+        log_file = LOG_DIR / f"recount_mileage_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Recounted mileage for %d actives, log: %s", len(valid_rows), log_file)
+
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Пробег пересчитан для {len(valid_rows)} активов")
 
     async def _validate_create_actives_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
@@ -899,8 +1255,8 @@ class ActivesParserController(Controller):
         progress.update(status="done", count=len(valid_rows),
                          message=f"Успешно создано активов: {len(valid_rows)}")
 
-    @get("/create-actives/progress/{task_id:str}")
-    async def create_actives_progress(self, task_id: str) -> Response:
+    @get("/progress/{task_id:str}")
+    async def task_progress(self, task_id: str) -> Response:
         state = _progress.get(task_id)
         if state is None:
             return Response(

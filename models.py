@@ -224,6 +224,31 @@ class IteratorNumberLast(Base):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class Relocate(Base):
+    __tablename__ = "relocate"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id_location_old: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_location_new: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date: Mapped[str | None] = mapped_column(DateTime, nullable=True)
+    id_user: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class MileageStart(Base):
+    __tablename__ = "mileage_start"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    milage: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date: Mapped[str | None] = mapped_column(Date, nullable=True)
+    is_recount: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    milage_const: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class CounterActive(Base):
     __tablename__ = "counter_active"
     __table_args__ = {"schema": "public"}
