@@ -473,3 +473,71 @@ def test_delete_actives_sql_body():
     assert "NOT EXISTS" in lines[7] and "materials" in lines[7] and "relocate" in lines[7]
     assert sql.count("DELETE FROM public.actives") == 2
     assert sql.count("DELETE FROM public.location") == 1
+
+
+async def make_create_actives_refs(db_session) -> None:
+    from models import IteratorNumberLast, Storage as StorageModel, Consignment as ConsignmentModel
+    db_session.add_all([
+        IteratorNumberLast(id=2, number=100, description="Номер следующего актива"),
+        StorageModel(name="Основной склад, МСК", last_lcn=10),
+        ConsignmentModel(name="ЧСП Исправные"),
+    ])
+    await db_session.flush()
+    await make_design_number(db_session, "DU0012929")
+
+
+CREATE_ACTIVES_ROW_TAIL = {"Количество": 1, "Склад": "Основной склад, МСК",
+                           "Тип актива": "SPD", "Партия": "ЧСП Исправные"}
+
+
+async def test_create_actives_old_tmc_column_name(db_session):
+    await make_create_actives_refs(db_session)
+
+    rows = [{"Номер ТМЦ (DU,KP,A2V)": "DU0012929", **CREATE_ACTIVES_ROW_TAIL}]
+    errors, valid_rows = await controller._validate_create_actives_rows(db_session, rows)
+
+    assert errors == []
+    assert len(valid_rows) == 1
+
+
+async def test_create_actives_new_articul_column_name(db_session):
+    await make_create_actives_refs(db_session)
+
+    rows = [{"АРТИКУЛ": "DU0012929", **CREATE_ACTIVES_ROW_TAIL}]
+    errors, valid_rows = await controller._validate_create_actives_rows(db_session, rows)
+
+    assert errors == []
+    assert len(valid_rows) == 1
+
+
+async def test_create_actives_tmc_column_missing(db_session):
+    await make_create_actives_refs(db_session)
+
+    rows = [{"Другое": "x", **CREATE_ACTIVES_ROW_TAIL}]
+    errors, valid_rows = await controller._validate_create_actives_rows(db_session, rows)
+
+    assert valid_rows == []
+    assert "не найдена колонка 'АРТИКУЛ'" in errors[0]["message"]
+
+
+def test_reconstruct_created_active_numbers():
+    valid_rows = [{"type_active": "SPV"}, {"type_active": "SPV"}, {"type_active": "SPD"}]
+    numbers = ActivesParserController._reconstruct_created_active_numbers(valid_rows, counter_after=103)
+
+    # ACTIVE_NUMBER_LENGTH = 10: префикс + цифры, дополненные нулями
+    assert numbers == ["SPV0000101", "SPV0000102", "SPD0000103"]
+
+
+def test_build_created_actives_xlsx():
+    import base64
+    from io import BytesIO
+    import openpyxl
+
+    b64 = ActivesParserController._build_created_actives_xlsx(
+        [("SPV0000101", "251200001"), ("SPV0000102", None)])
+    wb = openpyxl.load_workbook(BytesIO(base64.b64decode(b64)))
+    rows = list(wb.active.iter_rows(values_only=True))
+
+    assert rows[0] == ("active_number", "serial_number")
+    assert rows[1] == ("SPV0000101", "251200001")
+    assert rows[2] == ("SPV0000102", None)

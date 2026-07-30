@@ -1,9 +1,11 @@
 import asyncio
+import base64
 import json
 import logging
 import tempfile
 import time
 import uuid
+from io import BytesIO
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -1082,6 +1084,18 @@ class ActivesParserController(Controller):
             })
             return errors, valid_rows
 
+        # Колонка ТМЦ: в новых файлах называется 'АРТИКУЛ', в старых —
+        # 'Номер ТМЦ (DU,KP,A2V)'; матчится без регистра и краевых пробелов.
+        tmc_column: str | None = next(
+            (k for k in (rows[0] if rows else {})
+             if str(k).strip().lower() in ("артикул", "номер тмц (du,kp,a2v)")),
+            None,
+        )
+        if rows and tmc_column is None:
+            errors.append({"row": 0, "field": "АРТИКУЛ",
+                            "message": "В файле не найдена колонка 'АРТИКУЛ' (или 'Номер ТМЦ (DU,KP,A2V)')"})
+            return errors, valid_rows
+
         if progress is not None:
             progress.update(processed=0, total=len(rows), phase="validating")
 
@@ -1090,7 +1104,7 @@ class ActivesParserController(Controller):
             if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
                 progress["processed"] = row_num
 
-            design_number_raw = str(row.get("Номер ТМЦ (DU,KP,A2V)") or "").strip()
+            design_number_raw = str(row.get(tmc_column) or "").strip()
             if not design_number_raw or design_number_raw == "None":
                 continue
 
@@ -1157,7 +1171,7 @@ class ActivesParserController(Controller):
                 design_number_cache[design_number_raw] = dn.id if dn else None
             id_design_number = design_number_cache[design_number_raw]
             if id_design_number is None:
-                errors.append({"row": row_num, "field": "Номер ТМЦ (DU,KP,A2V)", "message": f"ТМЦ не найдена: '{design_number_raw}'"})
+                errors.append({"row": row_num, "field": tmc_column, "message": f"ТМЦ не найдена: '{design_number_raw}'"})
                 continue
 
             serial_number = (str(row.get("Серийный номер") or "").strip() if count == 1 else "none")
@@ -1928,9 +1942,40 @@ class ActivesParserController(Controller):
             media_type="application/json",
         )
 
+    @staticmethod
+    def _reconstruct_created_active_numbers(valid_rows: list[dict], counter_after: int) -> list[str]:
+        """Восстанавливает номера созданных активов по конечному значению счётчика.
+
+        DO-блок выдаёт номера строго по порядку valid_rows (active_num инкрементируется
+        на каждый актив), поэтому по значению счётчика после выполнения номера
+        восстанавливаются детерминированно. Значение counter_after нужно читать в той же
+        транзакции, что и DO-блок — FOR UPDATE ещё держит строку счётчика, и параллельный
+        запуск не мог вклиниться между.
+        """
+        counter_before = counter_after - len(valid_rows)
+        numbers: list[str] = []
+        for i, vr in enumerate(valid_rows, start=1):
+            width = ACTIVE_NUMBER_LENGTH - len(vr["type_active"])
+            numbers.append(vr["type_active"] + str(counter_before + i).rjust(width, "0"))
+        return numbers
+
+    @staticmethod
+    def _build_created_actives_xlsx(rows: list[tuple[str, str | None]]) -> str:
+        """Собирает xlsx (active_number, serial_number) и возвращает его в base64."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["active_number", "serial_number"])
+        for active_number, serial_number in rows:
+            ws.append([active_number, serial_number])
+        buf = BytesIO()
+        wb.save(buf)
+        return base64.b64encode(buf.getvalue()).decode()
+
     async def _run_create_actives_execute(self, task_id: str, rows: list[dict]) -> None:
         progress = _progress[task_id]
         valid_rows: list[dict] = []
+        created_numbers: list[str] = []
+        xlsx_rows: list[tuple[str, str | None]] = []
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
@@ -1958,6 +2003,12 @@ class ActivesParserController(Controller):
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)
 
+                    counter_after = (await session.execute(
+                        text("SELECT number FROM public.iterator_number_last WHERE description = :d"),
+                        {"d": ACTIVE_NUMBER_COUNTER_DESCRIPTION},
+                    )).scalar()
+                    created_numbers = self._reconstruct_created_active_numbers(valid_rows, counter_after)
+
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
@@ -1965,6 +2016,16 @@ class ActivesParserController(Controller):
                     return
 
                 progress["processed"] = 1
+
+                # Серийники читаются из БД (а не из файла) — отчёт отражает реально
+                # созданные записи
+                db_rows = (await session.execute(
+                    text("SELECT active_number, serial_number FROM public.actives "
+                         "WHERE active_number = ANY(:nums)"),
+                    {"nums": created_numbers},
+                )).all()
+                serial_by_number = {an: sn for an, sn in db_rows}
+                xlsx_rows = [(n, serial_by_number.get(n)) for n in created_numbers]
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
             return
@@ -1974,6 +2035,8 @@ class ActivesParserController(Controller):
             f"=== Create Actives From TMC: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
             f"Actives created: {len(valid_rows)}",
             "",
+            *(f"{an}\t{sn or ''}" for an, sn in xlsx_rows),
+            "",
         ]
         log_file = LOG_DIR / f"create_actives_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
@@ -1981,6 +2044,8 @@ class ActivesParserController(Controller):
         logger.info("Created %d actives from TMC, log saved to %s", len(valid_rows), log_file)
 
         progress.update(status="done", count=len(valid_rows),
+                         xlsx=self._build_created_actives_xlsx(xlsx_rows),
+                         xlsx_filename="actives.xlsx",
                          message=f"Успешно создано активов: {len(valid_rows)}")
 
     @get("/progress/{task_id:str}")
