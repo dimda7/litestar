@@ -5,7 +5,7 @@ import re
 import tempfile
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import openpyxl
@@ -19,7 +19,7 @@ from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
 from db_manager import get_session_maker
-from models import TrainType, CarPlace, DesignNumber, Models, Train
+from models import TrainType, CarPlace, DesignNumber, Models, Train, Actives, Storage, Consignment, User
 from schemas import (
     GenerateSQLRequest, DeleteRowsRequest, SelectSheetRequest,
     GenerateSQLResponse, ExecuteSQLResponse,
@@ -46,6 +46,12 @@ _tasks: dict[str, asyncio.Task] = {}
 # Модельный lcn вида 'M9.6.5': цифры после буквенного префикса и до первой
 # точки — id_train_type, остаток пути (после первой точки) переносится как есть.
 _MODEL_LCN_RE = re.compile(r"^\D*(\d+)(?:\.(.*))?$")
+
+# Excel-даты в остальных парсерах проекта вводятся по московскому времени, в
+# БД (relocate.date/date_current) хранятся в UTC — тот же сдвиг, что и в
+# ptoir_parser.py (MSK_OFFSET). Здесь дата не берётся из файла, поэтому сдвиг
+# применяется один раз к "сейчас" на весь батч перемещения.
+MOVE_TZ_SHIFT = timedelta(hours=3)
 
 
 def _cleanup_progress() -> None:
@@ -435,6 +441,160 @@ class ParserController(Controller):
         lcn_list = ", ".join(f"'{sql_escape(l)}'" for l in lcns)
         return [f"UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN ({lcn_list});"]
 
+    @staticmethod
+    async def _resolve_user_by_fullname(db_session: AsyncSession, fullname: str) -> int | None:
+        """Ищет fdw_users по ФИО, построенному так же, как session['fullname'] в auth.py:
+
+        ' '.join(filter(None, [lastname, firstname, middlename])) or username.
+        """
+        result = await db_session.execute(select(User.id, User.lastname, User.firstname, User.middlename, User.username))
+        for uid, lastname, firstname, middlename, username in result.all():
+            built = " ".join(filter(None, [lastname, firstname, middlename])) or username or ""
+            if built.strip() == fullname:
+                return uid
+        return None
+
+    async def _validate_and_build_move_rows(
+        self, db_session: AsyncSession, rows: list[dict],
+        storage_name: str, consignment_name: str, user_fullname: str,
+        progress: dict | None = None,
+    ) -> tuple[list[dict], list[dict], int | None, int | None, int | None]:
+        """Валидирует строки Excel для 'Переместить активы' (аналог move_active).
+
+        Склад/партия/пользователь — общие для всего файла (заданы один раз в
+        модалке, а не по строкам, как в исходном move_active). Возвращает
+        (errors, valid_rows, id_storage, id_consignment, id_user).
+        """
+        errors: list[dict] = []
+        valid_rows: list[dict] = []
+
+        storage_name = storage_name.strip()
+        consignment_name = consignment_name.strip()
+        user_fullname = user_fullname.strip()
+
+        id_storage: int | None = None
+        if not storage_name:
+            errors.append({"row": 0, "field": "Склад", "message": "Поле 'Склад' пустое"})
+        else:
+            id_storage = await db_session.scalar(select(Storage.id).where(Storage.name == storage_name))
+            if id_storage is None:
+                errors.append({"row": 0, "field": "Склад", "message": f"Склад не найден: '{storage_name}'"})
+
+        id_consignment: int | None = None
+        if not consignment_name:
+            errors.append({"row": 0, "field": "Партия", "message": "Поле 'Партия' пустое"})
+        else:
+            id_consignment = await db_session.scalar(select(Consignment.id).where(Consignment.name == consignment_name))
+            if id_consignment is None:
+                errors.append({"row": 0, "field": "Партия", "message": f"Партия не найдена: '{consignment_name}'"})
+
+        id_user: int | None = None
+        if not user_fullname:
+            errors.append({"row": 0, "field": "Пользователь", "message": "Поле 'Пользователь' пустое"})
+        else:
+            id_user = await self._resolve_user_by_fullname(db_session, user_fullname)
+            if id_user is None:
+                errors.append({"row": 0, "field": "Пользователь", "message": f"Пользователь не найден: '{user_fullname}'"})
+
+        if errors:
+            return errors, valid_rows, id_storage, id_consignment, id_user
+
+        active_column: str | None = next(
+            (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("актив", "active_number")),
+            None,
+        )
+        if rows and active_column is None:
+            errors.append({"row": 0, "field": "Актив", "message": "В файле не найдена колонка 'Актив' (или 'active_number')"})
+            return errors, valid_rows, id_storage, id_consignment, id_user
+
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
+        batch_numbers: set[str] = set()
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
+
+            active_number = str(row.get(active_column, "") or "").strip()
+            if not active_number:
+                errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})
+                continue
+
+            if active_number in batch_numbers:
+                errors.append({"row": row_num, "field": "Актив",
+                               "message": f"Дубликат внутри файла: '{active_number}'"})
+                continue
+
+            result = await db_session.execute(
+                select(Actives.id, Actives.id_location).where(Actives.active_number == active_number)
+            )
+            active_row = result.first()
+            if active_row is None:
+                errors.append({"row": row_num, "field": "Актив", "message": f"Актив не найден: '{active_number}'"})
+                continue
+
+            id_active, id_location_old = active_row
+            batch_numbers.add(active_number)
+            valid_rows.append({
+                "row": row_num,
+                "active_number": active_number,
+                "id_active": id_active,
+                "id_location_old": id_location_old,
+            })
+
+        return errors, valid_rows, id_storage, id_consignment, id_user
+
+    @staticmethod
+    def _build_move_actives_sql_body(
+        valid_rows: list[dict], id_storage: int, id_consignment: int, id_user: int,
+        reason: str, move_date: datetime,
+    ) -> list[str]:
+        """Строит DO-блок перемещения активов на склад (аналог move_active).
+
+        Один destination-склад на весь батч (в отличие от исходного скрипта,
+        где 'Куда' бралось по строкам) — упрощает счётчик lcn до одной
+        переменной вместо словаря по id склада. lcn выдаётся из storage.last_lcn
+        под FOR UPDATE и пишется обратно в конце DO-блока (в отличие от
+        исходного move_active, который инкрементировал счётчик только в памяти
+        Python и никогда не сохранял его обратно в БД — повторный запуск
+        выдавал бы те же номера lcn повторно).
+        """
+        total = len(valid_rows)
+        date_str = move_date.strftime("%Y-%m-%d %H:%M:%S")
+        reason_val = f"'{sql_escape(reason)}'" if reason else "NULL"
+
+        sql_lines: list[str] = ["DO $$", "DECLARE"]
+        sql_lines.append(
+            f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
+            f"FROM generate_series(1, {total}));"
+        )
+        sql_lines.append("    lcn_new bigint;")
+        sql_lines.append("BEGIN")
+        sql_lines.append(f"    SELECT last_lcn INTO lcn_new FROM public.storage WHERE id = {id_storage} FOR UPDATE;")
+
+        for i, vr in enumerate(valid_rows, start=1):
+            loc_ref = f"loc_ids[{i}]"
+            old_loc_val = str(vr["id_location_old"]) if vr["id_location_old"] is not None else "NULL"
+            sql_lines.append("    lcn_new := lcn_new + 1;")
+            sql_lines.append(
+                f"    INSERT INTO public.location (id, id_type_location, id_storage, id_consignment) "
+                f"VALUES ({loc_ref}, 1, {id_storage}, {id_consignment});"
+            )
+            sql_lines.append(
+                f"    INSERT INTO public.relocate (id_location_old, id_location_new, date, id_user, id_active, "
+                f"reason, date_current, id_order) VALUES ({old_loc_val}, {loc_ref}, '{date_str}', {id_user}, "
+                f"{vr['id_active']}, {reason_val}, '{date_str}', NULL);"
+            )
+            sql_lines.append(
+                f"    UPDATE public.actives SET id_location = {loc_ref}, id_actves_parent = NULL, "
+                f"id_actives_root = NULL, lcn = ('S{id_storage}.' || lcn_new)::ltree WHERE id = {vr['id_active']};"
+            )
+
+        sql_lines.append(f"    UPDATE public.storage SET last_lcn = lcn_new WHERE id = {id_storage};")
+        sql_lines.append("END $$;")
+        return sql_lines
+
     @post("/generate-sql")
     async def generate_sql(
         self,
@@ -791,6 +951,155 @@ class ParserController(Controller):
 
         progress.update(status="done", count=len(valid_rows),
                          message=f"Обновлено активов: {total_updated} (строк файла: {len(valid_rows)})")
+
+    @post("/move-actives/generate-sql/start")
+    async def move_actives_generate_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновую генерацию SQL-файла перемещения активов, возвращает task_id для опроса прогресса."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        reason = str(data.get("reason", "") or "")
+        storage_name = str(data.get("storage_name", "") or "")
+        consignment_name = str(data.get("consignment_name", "") or "")
+        user_fullname = str(data.get("user_fullname", "") or "")
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(
+            self._run_move_actives_generate(task_id, rows, reason, storage_name, consignment_name, user_fullname)
+        )
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_move_actives_generate(
+        self, task_id: str, rows: list[dict],
+        reason: str, storage_name: str, consignment_name: str, user_fullname: str,
+    ) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows, id_storage, id_consignment, id_user = await self._validate_and_build_move_rows(
+                    session, rows, storage_name, consignment_name, user_fullname, progress=progress,
+                )
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+        if not valid_rows:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}])
+            return
+
+        move_date = datetime.now() - MOVE_TZ_SHIFT
+        sql_lines = self._build_move_actives_sql_body(valid_rows, id_storage, id_consignment, id_user, reason, move_date)
+        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
+        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+
+    @post("/move-actives/execute-sql/start")
+    async def move_actives_execute_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновое атомарное перемещение активов, возвращает task_id для опроса прогресса."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        reason = str(data.get("reason", "") or "")
+        storage_name = str(data.get("storage_name", "") or "")
+        consignment_name = str(data.get("consignment_name", "") or "")
+        user_fullname = str(data.get("user_fullname", "") or "")
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(
+            self._run_move_actives_execute(task_id, rows, reason, storage_name, consignment_name, user_fullname)
+        )
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_move_actives_execute(
+        self, task_id: str, rows: list[dict],
+        reason: str, storage_name: str, consignment_name: str, user_fullname: str,
+    ) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                try:
+                    errors, valid_rows, id_storage, id_consignment, id_user = await self._validate_and_build_move_rows(
+                        session, rows, storage_name, consignment_name, user_fullname, progress=progress,
+                    )
+                except Exception as e:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    return
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}])
+                    return
+
+                progress.update(processed=0, total=1, phase="executing")
+                move_date = datetime.now() - MOVE_TZ_SHIFT
+                sql_body = "\n".join(
+                    self._build_move_actives_sql_body(valid_rows, id_storage, id_consignment, id_user, reason, move_date)
+                )
+                try:
+                    # DO $$ ... $$ с несколькими операторами внутри нельзя выполнить
+                    # через обычный execute() (asyncpg не готовит несколько команд в
+                    # одном prepared statement) — тот же приём, что и в create_actives/
+                    # create_named_actives: сырое соединение, session.rollback() ниже
+                    # откатывает и его, т.к. сессия уже открыла транзакцию раньше
+                    # (запросы валидации).
+                    conn = await session.connection()
+                    raw_conn = await conn.get_raw_connection()
+                    await raw_conn.driver_connection.execute(sql_body)
+                    progress["processed"] = 1
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Execute move-actives: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Storage={storage_name} (id={id_storage}), Consignment={consignment_name} (id={id_consignment}), "
+            f"User={user_fullname} (id={id_user})",
+            f"Rows processed: {len(valid_rows)}",
+            "",
+            sql_body,
+            "",
+        ]
+        log_file = LOG_DIR / f"move_actives_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Moved %d actives to storage '%s', log: %s", len(valid_rows), storage_name, log_file)
+
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Перемещено активов: {len(valid_rows)} (склад: {storage_name})")
 
     @get("/progress/{task_id:str}")
     async def get_progress(self, task_id: str) -> Response:

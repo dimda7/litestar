@@ -3,7 +3,10 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from models import Actives, Base, CarPlace, CounterGroup, CounterType, DesignNumber, Ptoir, PtoirLevelWarning, Train, TrainType
+from models import (
+    Actives, Base, CarPlace, Consignment, CounterGroup, CounterType, DesignNumber,
+    Ptoir, PtoirLevelWarning, Storage, Train, TrainType, User,
+)
 
 
 @pytest_asyncio.fixture
@@ -74,8 +77,8 @@ async def make_counter_type(db_session: AsyncSession, type_name: str = "Проб
     return obj.id
 
 
-async def make_active(db_session: AsyncSession, active_number: str = "SPV000001") -> int:
-    obj = Actives(active_number=active_number)
+async def make_active(db_session: AsyncSession, active_number: str = "SPV000001", **kwargs) -> int:
+    obj = Actives(active_number=active_number, **kwargs)
     db_session.add(obj)
     await db_session.flush()
     return obj.id
@@ -97,6 +100,29 @@ async def make_ptoir_level_warning(db_session: AsyncSession, id_ptoir: int, id_c
 
 async def make_train(db_session: AsyncSession, id_train_type: int, name: str = "Поезд 1") -> int:
     obj = Train(id_train_type=id_train_type, name=name)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_storage(db_session: AsyncSession, name: str = "Виртуальный склад", last_lcn: int = 0) -> int:
+    obj = Storage(name=name, last_lcn=last_lcn)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_consignment(db_session: AsyncSession, name: str = "ЧСП ЛОМ") -> int:
+    obj = Consignment(name=name)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_user(
+    db_session: AsyncSession, lastname: str = "Велебская", firstname: str = "Александра", middlename: str | None = "Владимировна",
+) -> int:
+    obj = User(lastname=lastname, firstname=firstname, middlename=middlename)
     db_session.add(obj)
     await db_session.flush()
     return obj.id
