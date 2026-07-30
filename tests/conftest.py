@@ -3,7 +3,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from models import Actives, Base, CarPlace, CounterGroup, CounterType, DesignNumber, Ptoir, PtoirLevelWarning, TrainType
+from models import Actives, Base, CarPlace, CounterGroup, CounterType, DesignNumber, Ptoir, PtoirLevelWarning, Train, TrainType
 
 
 @pytest_asyncio.fixture
@@ -90,6 +90,13 @@ async def make_ptoir(db_session: AsyncSession, number_ptoir: str = "ТО0001", i
 
 async def make_ptoir_level_warning(db_session: AsyncSession, id_ptoir: int, id_counter_type: int) -> int:
     obj = PtoirLevelWarning(id_ptoir=id_ptoir, id_counter_type=id_counter_type)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_train(db_session: AsyncSession, id_train_type: int, name: str = "Поезд 1") -> int:
+    obj = Train(id_train_type=id_train_type, name=name)
     db_session.add(obj)
     await db_session.flush()
     return obj.id

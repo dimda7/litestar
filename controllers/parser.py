@@ -1,12 +1,15 @@
+import asyncio
 import json
 import logging
+import re
 import tempfile
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 import openpyxl
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
@@ -15,7 +18,8 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
-from models import TrainType, CarPlace, DesignNumber, Models
+from db_manager import get_session_maker
+from models import TrainType, CarPlace, DesignNumber, Models, Train
 from schemas import (
     GenerateSQLRequest, DeleteRowsRequest, SelectSheetRequest,
     GenerateSQLResponse, ExecuteSQLResponse,
@@ -29,6 +33,34 @@ from parser_storage import (
 )
 
 logger = logging.getLogger("parser")
+
+# Валидация "set serial='none' lcn" дёргает запрос к БД на каждую уникальную
+# id_train_type, на больших файлах это идёт секундами — прогресс отдаётся
+# через отдельный опрос, чтобы не держать один HTTP-запрос открытым всё это время.
+PROGRESS_TTL_SECONDS = 15 * 60
+_progress: dict[str, dict] = {}
+# asyncio хранит только слабую ссылку на fire-and-forget задачи — без явного
+# хранения задача может быть собрана GC до завершения.
+_tasks: dict[str, asyncio.Task] = {}
+
+# Модельный lcn вида 'M9.6.5': цифры после буквенного префикса и до первой
+# точки — id_train_type, остаток пути (после первой точки) переносится как есть.
+_MODEL_LCN_RE = re.compile(r"^\D*(\d+)(?:\.(.*))?$")
+
+
+def _cleanup_progress() -> None:
+    cutoff = time.time() - PROGRESS_TTL_SECONDS
+    stale = [tid for tid, state in _progress.items() if state["created_at"] < cutoff]
+    for tid in stale:
+        _progress.pop(tid, None)
+
+
+def _parse_model_lcn(lcn: str) -> tuple[int, str] | None:
+    """Извлекает (id_train_type, остаток_пути) из lcn вида 'M9.6.5' -> (9, '6.5'); 'M9' -> (9, '')."""
+    match = _MODEL_LCN_RE.match(lcn)
+    if not match:
+        return None
+    return int(match.group(1)), match.group(2) or ""
 
 
 class ParserController(Controller):
@@ -315,6 +347,94 @@ class ParserController(Controller):
 
         return errors, valid_rows
 
+    async def _validate_and_build_serial_none_rows(
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    ) -> tuple[list[dict], list[dict]]:
+        """Валидирует строки Excel для 'set serial=none lcn'.
+
+        lcn вида 'M9.6.5': 9 — id_train_type, '6.5' — остаток пути. Для каждого
+        поезда с этим id_train_type подставляем его id вместо 'M9' и получаем
+        список lcn активов ('lcn_trains'), которым нужно проставить serial_number='none'.
+        """
+        errors: list[dict] = []
+        valid_rows: list[dict] = []
+
+        lcn_column: str | None = next(
+            (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("lsn", "lcn")),
+            None,
+        )
+        if rows and lcn_column is None:
+            errors.append({"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'lsn' (или 'lcn')"})
+            return errors, valid_rows
+
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
+        train_ids_by_type: dict[int, list[int]] = {}
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
+
+            lcn_raw = str(row.get(lcn_column, "") or "").strip()
+            if not lcn_raw:
+                errors.append({"row": row_num, "field": "lcn", "message": "Пустой lcn"})
+                continue
+
+            parsed = _parse_model_lcn(lcn_raw)
+            if parsed is None:
+                errors.append({"row": row_num, "field": "lcn",
+                               "message": f"Не удалось распознать id_train_type в lcn '{lcn_raw}'"})
+                continue
+            id_train_type, rest = parsed
+
+            if id_train_type not in train_ids_by_type:
+                result = await db_session.execute(select(Train.id).where(Train.id_train_type == id_train_type))
+                train_ids_by_type[id_train_type] = [r[0] for r in result.all()]
+            train_ids = train_ids_by_type[id_train_type]
+
+            if not train_ids:
+                errors.append({"row": row_num, "field": "lcn",
+                               "message": f"Поезда с id_train_type={id_train_type} не найдены"})
+                continue
+
+            lcn_trains = [f"{tid}.{rest}" if rest else str(tid) for tid in train_ids]
+
+            valid_rows.append({
+                "row": row_num,
+                "lcn": lcn_raw,
+                "id_train_type": id_train_type,
+                "lcn_trains": lcn_trains,
+            })
+
+        return errors, valid_rows
+
+    @staticmethod
+    def _merge_serial_none_lcns(valid_rows: list[dict]) -> list[str]:
+        """Объединяет lcn_trains всех строк файла в один список без дублей.
+
+        Разные строки Excel с одинаковым lsn (или разными lsn, дающими
+        пересекающиеся lcn) иначе давали бы несколько одинаковых/пересекающихся
+        UPDATE-запросов подряд — вместо этого один запрос на все строки файла.
+        """
+        seen: set[str] = set()
+        merged: list[str] = []
+        for vr in valid_rows:
+            for l in vr["lcn_trains"]:
+                if l not in seen:
+                    seen.add(l)
+                    merged.append(l)
+        return merged
+
+    @staticmethod
+    def _build_serial_none_sql_lines(valid_rows: list[dict]) -> list[str]:
+        lcns = ParserController._merge_serial_none_lcns(valid_rows)
+        if not lcns:
+            return []
+        lcn_list = ", ".join(f"'{sql_escape(l)}'" for l in lcns)
+        return [f"UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN ({lcn_list});"]
+
     @post("/generate-sql")
     async def generate_sql(
         self,
@@ -551,6 +671,138 @@ class ParserController(Controller):
 
         return Response(
             content=json.dumps({"status": "ok", "count": len(valid_ids), "message": f"Успешно удалено {len(valid_ids)} строк"}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    @post("/serial-none/generate-sql/start")
+    async def serial_none_generate_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновую генерацию SQL-файла 'set serial=none lcn', возвращает task_id для опроса прогресса."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_serial_none_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_serial_none_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_and_build_serial_none_rows(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+
+        sql_lines = self._build_serial_none_sql_lines(valid_rows)
+        progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
+
+    @post("/serial-none/execute-sql/start")
+    async def serial_none_execute_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновое атомарное обновление serial_number='none', возвращает task_id для опроса прогресса."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_serial_none_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_serial_none_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        total_updated = 0
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                try:
+                    errors, valid_rows = await self._validate_and_build_serial_none_rows(session, rows, progress=progress)
+                except Exception as e:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    return
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+                    return
+
+                # Одна общая UPDATE на объединённый (без дублей) список lcn всех
+                # строк файла — вместо запроса на каждую строку, что при
+                # одинаковых/пересекающихся lsn давало несколько идентичных
+                # UPDATE подряд.
+                progress.update(processed=0, total=1, phase="executing")
+                try:
+                    lcns = self._merge_serial_none_lcns(valid_rows)
+                    stmt = text(
+                        "UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN :lcns"
+                    ).bindparams(bindparam("lcns", expanding=True))
+                    result = await session.execute(stmt, {"lcns": lcns})
+                    total_updated = result.rowcount
+                    progress["processed"] = 1
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Execute serial-none update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Rows processed: {len(valid_rows)}, actives updated: {total_updated}",
+            "",
+            *self._build_serial_none_sql_lines(valid_rows),
+            "",
+        ]
+        log_file = LOG_DIR / f"serial_none_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Serial-none updated for %d rows (%d actives), log: %s", len(valid_rows), total_updated, log_file)
+
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Обновлено активов: {total_updated} (строк файла: {len(valid_rows)})")
+
+    @get("/progress/{task_id:str}")
+    async def get_progress(self, task_id: str) -> Response:
+        state = _progress.get(task_id)
+        if state is None:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Задача не найдена или устарела"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+        return Response(
+            content=json.dumps({k: v for k, v in state.items() if k != "created_at"}),
             status_code=200,
             media_type="application/json",
         )

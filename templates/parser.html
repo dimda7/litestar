@@ -78,6 +78,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
             Удалить строку в модели
         </button>
+        <button id="btn-serial-none" type="button" onclick="showSerialNoneModal()" class="btn btn-secondary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/></svg>
+            set serial='none' lcn
+        </button>
     </div>
 </div>
 {% endif %}
@@ -198,6 +202,45 @@
             </button>
         </div>
         <button onclick="closeDeleteModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
+    </div>
+</div>
+
+<div id="serial-none-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
+        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">set serial='none' lcn</h3>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Для каждого lcn ('M{id_train_type}.{путь}') найти все поезда этого типа и проставить serial_number='none' активам с соответствующим lcn</p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button onclick="downloadSerialNoneSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Скачать SQL-файл</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл serial_none.sql для ручного запуска</div>
+                </div>
+            </button>
+            <button onclick="executeSerialNoneUpdate()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#2e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Выполнить в базе данных</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное обновление всех строк</div>
+                </div>
+            </button>
+        </div>
+        <button onclick="closeSerialNoneModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
+    </div>
+</div>
+
+<div id="progress-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border-radius: 16px; padding: 32px 40px; min-width: 340px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.25);">
+        <div class="spinner" style="margin: 0 auto 20px;"></div>
+        <div id="progress-text" style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 14px;">Выполняется...</div>
+        <div style="background: var(--border); border-radius: 999px; height: 8px; overflow: hidden;">
+            <div id="progress-bar-fill" style="background: var(--accent); height: 100%; width: 0%; transition: width 0.2s;"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: var(--text-secondary);">
+            <span id="progress-counts"></span>
+            <span id="progress-percent">0%</span>
+        </div>
+        <div style="font-size: 12px; color: var(--text-hint); margin-top: 12px;">Не закрывайте страницу</div>
     </div>
 </div>
 
@@ -343,6 +386,117 @@
                 }
             })
             .catch(err => alert('Ошибка запроса: ' + err));
+    }
+
+    function showSerialNoneModal() {
+        document.getElementById('serial-none-modal').style.display = 'flex';
+    }
+
+    function closeSerialNoneModal() {
+        document.getElementById('serial-none-modal').style.display = 'none';
+    }
+
+    document.getElementById('serial-none-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeSerialNoneModal();
+    });
+
+    let progressPollTimer = null;
+
+    function showProgress() {
+        document.getElementById('progress-text').textContent = 'Проверка данных...';
+        document.getElementById('progress-bar-fill').style.width = '0%';
+        document.getElementById('progress-percent').textContent = '0%';
+        document.getElementById('progress-counts').textContent = '';
+        document.getElementById('progress-overlay').style.display = 'flex';
+    }
+
+    function updateProgress(state) {
+        const total = state.total || 0;
+        const processed = state.processed || 0;
+        const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+        document.getElementById('progress-bar-fill').style.width = pct + '%';
+        document.getElementById('progress-percent').textContent = pct + '%';
+        document.getElementById('progress-counts').textContent = processed + ' из ' + total;
+        document.getElementById('progress-text').textContent =
+            state.phase === 'executing' ? 'Запись в базу данных...' : 'Проверка данных...';
+    }
+
+    function hideProgress() {
+        if (progressPollTimer) {
+            clearInterval(progressPollTimer);
+            progressPollTimer = null;
+        }
+        document.getElementById('progress-overlay').style.display = 'none';
+    }
+
+    function pollProgress(taskId, onFinished) {
+        progressPollTimer = setInterval(() => {
+            fetch('/parser/progress/' + taskId)
+                .then(resp => resp.json())
+                .then(state => {
+                    if (state.status === 'running') {
+                        updateProgress(state);
+                        return;
+                    }
+                    clearInterval(progressPollTimer);
+                    progressPollTimer = null;
+                    onFinished(state);
+                })
+                .catch(err => {
+                    clearInterval(progressPollTimer);
+                    progressPollTimer = null;
+                    hideProgress();
+                    alert('Ошибка получения прогресса: ' + err);
+                });
+        }, 400);
+    }
+
+    function downloadSerialNoneSQL() {
+        closeSerialNoneModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showProgress();
+
+        fetch('/parser/serial-none/generate-sql/start', { method: 'POST', body: buildFormData() })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    const blob = new Blob([data.sql], { type: 'text/sql' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'serial_none.sql';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+    }
+
+    function executeSerialNoneUpdate() {
+        closeSerialNoneModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+
+        if (!confirm("Выполнить обновление serial_number='none' для всех строк в базе данных?")) return;
+
+        showProgress();
+
+        fetch('/parser/serial-none/execute-sql/start', { method: 'POST', body: buildFormData() })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    alert(data.message);
+                    location.reload();
+                }
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
     }
 </script>
 {% endif %}
