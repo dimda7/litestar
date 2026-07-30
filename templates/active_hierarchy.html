@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Иерархия активов{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Иерархия активов</h1>
+    <p class="page-subtitle">Синхронизация id_actves_parent (Верхний актив) и id_actives_root (Головной актив) с деревом lcn</p>
+</div>
+
+<div class="card" style="margin-bottom: 24px;">
+    <h2 style="margin-top: 0;">Верхний актив</h2>
+    <p style="font-size: 13px; color: var(--text-hint);">id_actves_parent должен указывать на active_number родителя на уровень выше по lcn</p>
+    <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+        <button type="button" class="btn btn-secondary" onclick="showHierarchy('parent')">Показать, что обновлять</button>
+        <button type="button" class="btn btn-primary" id="update-btn-parent" onclick="updateHierarchy('parent')" disabled>Обновить</button>
+    </div>
+    <div id="result-parent"></div>
+</div>
+
+<div class="card" style="margin-bottom: 24px;">
+    <h2 style="margin-top: 0;">Головной актив</h2>
+    <p style="font-size: 13px; color: var(--text-hint);">id_actives_root должен указывать на active_number вершины дерева (первый уровень lcn)</p>
+    <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+        <button type="button" class="btn btn-secondary" onclick="showHierarchy('root')">Показать, что обновлять</button>
+        <button type="button" class="btn btn-primary" id="update-btn-root" onclick="updateHierarchy('root')" disabled>Обновить</button>
+    </div>
+    <div id="result-root"></div>
+</div>
+
+<script>
+    const HIERARCHY_LABELS = {
+        parent: { current: 'Текущий id_actves_parent', new: 'Новый id_actves_parent', parentLcn: 'Lcn родителя' },
+        root: { current: 'Текущий id_actives_root', new: 'Новый id_actives_root', parentLcn: 'Lcn Головной' },
+    };
+
+    function renderRows(kind, rows, truncated) {
+        const box = document.getElementById('result-' + kind);
+        box.innerHTML = '';
+
+        if (rows.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'alert alert-success';
+            empty.textContent = 'Расхождений не найдено — обновлять нечего';
+            box.appendChild(empty);
+            return;
+        }
+
+        const labels = HIERARCHY_LABELS[kind];
+        const wrap = document.createElement('div');
+        wrap.className = 'table-wrapper';
+        const table = document.createElement('table');
+
+        const thead = document.createElement('thead');
+        const htr = document.createElement('tr');
+        ['id', 'lcn', 'active_number', labels.current, labels.new, labels.parentLcn].forEach(c => {
+            const th = document.createElement('th');
+            th.textContent = c;
+            htr.appendChild(th);
+        });
+        thead.appendChild(htr);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        rows.forEach(r => {
+            const tr = document.createElement('tr');
+            [r.id, r.lcn, r.active_number, r.current_value, r.new_value, r.parent_lcn].forEach(v => {
+                const td = document.createElement('td');
+                td.textContent = (v === null || v === undefined) ? '—' : v;
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        box.appendChild(wrap);
+
+        const count = document.createElement('div');
+        count.style.cssText = 'font-size: 12px; color: var(--text-hint); margin-top: 8px;';
+        count.textContent = 'Строк: ' + rows.length + (truncated ? ' (показаны первые ' + rows.length + ', есть ещё)' : '');
+        box.appendChild(count);
+    }
+
+    function showHierarchy(kind) {
+        const box = document.getElementById('result-' + kind);
+        box.innerHTML = '<div style="font-size: 13px; color: var(--text-hint);">Загрузка...</div>';
+        document.getElementById('update-btn-' + kind).disabled = true;
+
+        const formData = new FormData();
+        appendCsrfToken(formData);
+
+        fetch('/active-hierarchy/preview/' + kind, { method: 'POST', body: formData })
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.status === 'error') {
+                    box.innerHTML = '';
+                    const err = document.createElement('div');
+                    err.className = 'alert alert-error';
+                    err.textContent = data.message;
+                    box.appendChild(err);
+                    return;
+                }
+                renderRows(kind, data.rows, data.truncated);
+                document.getElementById('update-btn-' + kind).disabled = data.rows.length === 0;
+            })
+            .catch(err => {
+                box.innerHTML = '';
+                const errBox = document.createElement('div');
+                errBox.className = 'alert alert-error';
+                errBox.textContent = 'Ошибка запроса: ' + err;
+                box.appendChild(errBox);
+            });
+    }
+
+    function updateHierarchy(kind) {
+        const label = kind === 'parent' ? 'Верхний актив' : 'Головной актив';
+        if (!confirm('Обновить ' + label + ' в базе данных?')) return;
+
+        const btn = document.getElementById('update-btn-' + kind);
+        btn.disabled = true;
+
+        const formData = new FormData();
+        appendCsrfToken(formData);
+
+        fetch('/active-hierarchy/execute/' + kind, { method: 'POST', body: formData })
+            .then(resp => resp.json())
+            .then(data => {
+                const box = document.getElementById('result-' + kind);
+                box.innerHTML = '';
+                const alertBox = document.createElement('div');
+                alertBox.className = data.status === 'error' ? 'alert alert-error' : 'alert alert-success';
+                alertBox.textContent = data.message;
+                box.appendChild(alertBox);
+                if (data.status === 'ok') {
+                    showHierarchy(kind);
+                } else {
+                    btn.disabled = false;
+                }
+            })
+            .catch(err => {
+                const box = document.getElementById('result-' + kind);
+                box.innerHTML = '';
+                const errBox = document.createElement('div');
+                errBox.className = 'alert alert-error';
+                errBox.textContent = 'Ошибка запроса: ' + err;
+                box.appendChild(errBox);
+                btn.disabled = false;
+            });
+    }
+</script>
+{% endblock %}
