@@ -293,7 +293,7 @@
 <div id="change-lcn-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 460px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
         <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Изменить lcn в модели</h3>
-        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Файл с колонками «lsn»/«lcn» (новый) и «Старый lsn»/«Старый lcn» — lcn активов по всем поездам нужного типа меняется со старого значения на новое</p>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Файл с колонками «id» (models.id), «lsn»/«lcn» (новое значение) и опционально «Старый lsn»/«Старый lcn» (сверяется с текущим lcn) — меняет lcn в таблице models</p>
         <div style="display: flex; flex-direction: column; gap: 12px;">
             <button onclick="downloadChangeLcnSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
@@ -306,7 +306,7 @@
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="#2e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
                 <div>
                     <div style="font-weight: 500;">Выполнить в базе данных</div>
-                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное изменение lcn у всех найденных активов</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное изменение lcn у всех найденных моделей</div>
                 </div>
             </button>
         </div>
@@ -317,7 +317,7 @@
 <div id="move-no-relocate-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 460px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
         <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Переместить активы без relocate</h3>
-        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Как «Изменить lcn в модели» (файл с колонками «lsn»/«lcn» и «Старый lsn»/«Старый lcn»). Без Причины/Пользователя/Склада/Партии и без записи в relocate — id_location не меняется</p>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Файл с колонками «lsn»/«lcn» и «Старый lsn»/«Старый lcn» — активы находятся по всем поездам нужного типа (как в "set serial='none' lcn") и переносятся со старой позиции на новую. Без Причины/Пользователя/Склада/Партии и без записи в relocate — id_location не меняется</p>
         <div style="display: flex; flex-direction: column; gap: 12px;">
             <button onclick="downloadMoveNoRelocateSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
@@ -721,7 +721,7 @@
         document.getElementById('error-box').style.display = 'none';
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
 
-        if (!confirm('Выполнить изменение lcn у всех найденных активов в базе данных?')) return;
+        if (!confirm('Выполнить изменение lcn у всех найденных моделей в базе данных?')) return;
 
         showProgress();
 

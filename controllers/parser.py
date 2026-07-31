@@ -416,10 +416,10 @@ class ParserController(Controller):
 
         return errors, valid_rows
 
-    async def _validate_and_build_change_lcn_rows(
+    async def _validate_and_build_move_no_relocate_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки Excel для 'изменить lcn в модели'.
+        """Валидирует строки Excel для 'Переместить активы без relocate'.
 
         Каждая строка задаёт старый и новый модельный lcn ('Старый lsn' ->
         'lsn', оба вида 'M9.1.6') для одной и той же позиции. По id_train_type
@@ -518,6 +518,123 @@ class ParserController(Controller):
         return errors, pair_list
 
     @staticmethod
+    async def _check_lcn_collisions(db_session: AsyncSession, pair_list: list[dict]) -> list[dict]:
+        """Ищет активы, уже занимающие целевой new_lcn пары и не входящие в файл.
+
+        Двухфазный UPDATE (см. _build_two_phase_lcn_update_lines) безопасен для
+        цепочек ВНУТРИ одного батча (A->B, B->C), но не спасает, если целевой
+        new_lcn уже занят активом, которого в файле вообще нет — тогда
+        UniqueViolationError вылезет прямо в середине выполнения без понятной
+        причины. Отдельный метод (не часть _validate_and_build_move_no_relocate_rows)
+        — использует lcn::text, Postgres-специфичный каст, который не
+        поддерживается тестовой SQLite-БД (см. test_parser_change_lcn_validation.py).
+        """
+        if not pair_list:
+            return []
+        old_lcns = {vr["old_lcn"] for vr in pair_list}
+        new_lcns = [vr["new_lcn"] for vr in pair_list]
+        stmt = text(
+            "SELECT active_number, lcn::text FROM public.actives WHERE lcn::text IN :lcns"
+        ).bindparams(bindparam("lcns", expanding=True))
+        result = await db_session.execute(stmt, {"lcns": new_lcns})
+        errors: list[dict] = []
+        for active_number, current_lcn in result.all():
+            if current_lcn not in old_lcns:
+                errors.append({
+                    "row": 0, "field": "lcn",
+                    "message": (f"Конфликт: целевой lcn '{current_lcn}' уже занят активом "
+                                f"'{active_number}', которого нет в файле"),
+                })
+        return errors
+
+    async def _validate_and_build_change_model_lcn_rows(
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    ) -> tuple[list[dict], list[dict]]:
+        """Валидирует строки Excel для 'изменить lcn в модели' (таблица public.models).
+
+        Колонка 'id' — models.id (та же схема, что у листов "Удалить из
+        моделей"/"Добавить в модели" в этом же файле); 'lsn'/'lcn' — новое
+        значение models.lcn. Необязательная 'Старый lsn'/'Старый lcn' сверяется
+        с текущим models.lcn — защита от устаревшего/не того файла; в
+        обновлении не участвует (matching всегда по стабильному id, а не по
+        тексту lcn).
+        """
+        errors: list[dict] = []
+        valid_rows: list[dict] = []
+
+        id_column: str | None = next(
+            (k for k in (rows[0] if rows else {}) if str(k).strip().lower() == "id"),
+            None,
+        )
+        new_column: str | None = next(
+            (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("lsn", "lcn")),
+            None,
+        )
+        old_column: str | None = next(
+            (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("старый lsn", "старый lcn")),
+            None,
+        )
+        if rows and id_column is None:
+            errors.append({"row": 0, "field": "id", "message": "В файле не найдена колонка 'id'"})
+            return errors, valid_rows
+        if rows and new_column is None:
+            errors.append({"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'lsn' (или 'lcn')"})
+            return errors, valid_rows
+
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
+        batch_ids: dict[int, str] = {}
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
+
+            id_raw = str(row.get(id_column, "") or "").strip()
+            new_raw = str(row.get(new_column, "") or "").strip()
+            old_raw = str(row.get(old_column, "") or "").strip() if old_column else ""
+
+            if not id_raw:
+                errors.append({"row": row_num, "field": "id", "message": "Поле 'id' пустое"})
+                continue
+            try:
+                model_id = int(float(id_raw))
+            except ValueError:
+                errors.append({"row": row_num, "field": "id", "message": f"Некорректный id: '{id_raw}'"})
+                continue
+
+            if not new_raw:
+                errors.append({"row": row_num, "field": "lcn", "message": "Пустой lcn"})
+                continue
+
+            if model_id in batch_ids and batch_ids[model_id] != new_raw:
+                errors.append({"row": row_num, "field": "id",
+                               "message": (f"Конфликт: id={model_id} уже сопоставлен другому lcn "
+                                           f"('{batch_ids[model_id]}', а не '{new_raw}')")})
+                continue
+
+            result = await db_session.execute(
+                text("SELECT lcn::text FROM public.models WHERE id = :id"), {"id": model_id}
+            )
+            current_lcn = result.scalar_one_or_none()
+            if current_lcn is None:
+                errors.append({"row": row_num, "field": "id", "message": f"Модель с id={model_id} не найдена"})
+                continue
+
+            if old_raw and current_lcn != old_raw:
+                errors.append({"row": row_num, "field": "lcn",
+                               "message": (f"Текущий lcn модели id={model_id} ('{current_lcn}') "
+                                           f"не совпадает со 'Старый lsn' ('{old_raw}')")})
+                continue
+
+            if model_id not in batch_ids:
+                batch_ids[model_id] = new_raw
+                valid_rows.append({"id": model_id, "new_lcn": new_raw})
+
+        return errors, valid_rows
+
+    @staticmethod
     def _build_two_phase_lcn_update_lines(valid_rows: list[dict], extra_set: str = "") -> list[str]:
         """Двухфазный UPDATE lcn: старое -> временное ('Z'+старое) -> новое.
 
@@ -546,14 +663,32 @@ class ParserController(Controller):
         ]
 
     @staticmethod
-    def _build_change_lcn_sql_lines(valid_rows: list[dict]) -> list[str]:
+    def _build_move_no_relocate_sql_lines(valid_rows: list[dict]) -> list[str]:
+        """Тот же двухфазный UPDATE lcn, что и в 'Изменить lcn в модели' по
+        смыслу, но здесь — actives (без смены id_location и без relocate)."""
         return ParserController._build_two_phase_lcn_update_lines(valid_rows)
 
     @staticmethod
-    def _build_move_no_relocate_sql_lines(valid_rows: list[dict]) -> list[str]:
-        """Тот же двухфазный UPDATE lcn, что и _build_change_lcn_sql_lines,
-        без смены id_location и без записи в relocate."""
-        return ParserController._build_two_phase_lcn_update_lines(valid_rows)
+    def _build_change_lcn_sql_lines(valid_rows: list[dict]) -> list[str]:
+        """Двухфазный UPDATE public.models.lcn, сопоставление по models.id.
+
+        В отличие от actives-варианта, здесь matching идёт по стабильному id
+        (models.id не меняется, в отличие от lcn), а не по тексту lcn — сам id
+        уже однозначно определяет строку. 'Z'-префикс всё равно нужен: lcn
+        входит в составной UNIQUE (id_train_type, lcn, id_car_place,
+        id_design_number, is_default), и порядок построчной обработки одного
+        UPDATE не гарантирован — без временного значения возможен
+        UniqueViolationError на цепочках (см. _build_two_phase_lcn_update_lines).
+        """
+        if not valid_rows:
+            return []
+        id_list = ", ".join(str(vr["id"]) for vr in valid_rows)
+        values_list = ", ".join(f"({vr['id']}, '{sql_escape(vr['new_lcn'])}')" for vr in valid_rows)
+        return [
+            f"UPDATE public.models SET lcn = ('Z' || lcn::text)::ltree WHERE id IN ({id_list});",
+            "UPDATE public.models AS m SET lcn = v.new_lcn::ltree "
+            f"FROM (VALUES {values_list}) AS v(mid, new_lcn) WHERE m.id = v.mid;",
+        ]
 
     @staticmethod
     def _merge_serial_none_lcns(valid_rows: list[dict]) -> list[str]:
@@ -1114,7 +1249,7 @@ class ParserController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                errors, valid_rows = await self._validate_and_build_change_lcn_rows(session, rows, progress=progress)
+                errors, valid_rows = await self._validate_and_build_change_model_lcn_rows(session, rows, progress=progress)
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
             return
@@ -1133,7 +1268,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновое атомарное изменение lcn у активов, возвращает task_id для опроса прогресса."""
+        """Запускает фоновое атомарное изменение lcn у моделей, возвращает task_id для опроса прогресса."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1155,7 +1290,7 @@ class ParserController(Controller):
             session_maker = get_session_maker()
             async with session_maker() as session:
                 try:
-                    errors, valid_rows = await self._validate_and_build_change_lcn_rows(session, rows, progress=progress)
+                    errors, valid_rows = await self._validate_and_build_change_model_lcn_rows(session, rows, progress=progress)
                 except Exception as e:
                     progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
                     return
@@ -1172,7 +1307,7 @@ class ParserController(Controller):
                 try:
                     # Двухфазный UPDATE (см. _build_change_lcn_sql_lines) — оба шага
                     # обязаны выполниться в одной транзакции, иначе после первого шага
-                    # активы временно останутся с 'Z'-префиксом в lcn.
+                    # строки models временно останутся с 'Z'-префиксом в lcn.
                     sql_lines = self._build_change_lcn_sql_lines(valid_rows)
                     await session.execute(text(sql_lines[0]))
                     result = await session.execute(text(sql_lines[1]))
@@ -1190,7 +1325,7 @@ class ParserController(Controller):
         now = datetime.now()
         log_lines = [
             f"=== Execute change-lcn update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Pairs processed: {len(valid_rows)}, actives updated: {total_updated}",
+            f"Rows processed: {len(valid_rows)}, models updated: {total_updated}",
             "",
             *self._build_change_lcn_sql_lines(valid_rows),
             "",
@@ -1198,10 +1333,10 @@ class ParserController(Controller):
         log_file = LOG_DIR / f"change_lcn_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(log_lines))
-        logger.info("Changed lcn for %d pairs (%d actives), log: %s", len(valid_rows), total_updated, log_file)
+        logger.info("Changed lcn for %d models, log: %s", total_updated, log_file)
 
         progress.update(status="done", count=len(valid_rows),
-                         message=f"Изменено lcn у активов: {total_updated} (пар: {len(valid_rows)})")
+                         message=f"Изменено lcn у моделей: {total_updated} (строк файла: {len(valid_rows)})")
 
     @post("/move-no-relocate/generate-sql/start")
     async def move_no_relocate_generate_sql_start(
@@ -1231,7 +1366,9 @@ class ParserController(Controller):
             async with session_maker() as session:
                 # Та же валидация/парсинг пар lcn, что и у 'Изменить lcn в модели'
                 # (Старый lsn -> lsn, обе колонки резолвятся как в 'set serial=none lcn').
-                errors, valid_rows = await self._validate_and_build_change_lcn_rows(session, rows, progress=progress)
+                errors, valid_rows = await self._validate_and_build_move_no_relocate_rows(session, rows, progress=progress)
+                if not errors:
+                    errors.extend(await self._check_lcn_collisions(session, valid_rows))
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
             return
@@ -1272,7 +1409,9 @@ class ParserController(Controller):
             session_maker = get_session_maker()
             async with session_maker() as session:
                 try:
-                    errors, valid_rows = await self._validate_and_build_change_lcn_rows(session, rows, progress=progress)
+                    errors, valid_rows = await self._validate_and_build_move_no_relocate_rows(session, rows, progress=progress)
+                    if not errors:
+                        errors.extend(await self._check_lcn_collisions(session, valid_rows))
                 except Exception as e:
                     progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
                     return

@@ -1,4 +1,9 @@
-"""Тесты валидации ParserController._validate_and_build_change_lcn_rows / _build_change_lcn_sql_lines (controllers/parser.py)."""
+"""Тесты валидации ParserController._validate_and_build_move_no_relocate_rows /
+_build_move_no_relocate_sql_lines / _check_lcn_collisions (controllers/parser.py).
+
+Используются кнопкой 'Переместить активы без relocate' — активы находятся
+через lsn/lcn (как 'set serial=none lcn'), lcn меняется у actives.
+"""
 
 from controllers.parser import ParserController
 from tests.conftest import make_train
@@ -6,7 +11,7 @@ from tests.conftest import make_train
 
 async def validate(db_session, rows):
     controller = ParserController(owner=None)
-    return await controller._validate_and_build_change_lcn_rows(db_session, rows)
+    return await controller._validate_and_build_move_no_relocate_rows(db_session, rows)
 
 
 def error_fields(errors: list[dict]) -> list[str]:
@@ -125,7 +130,7 @@ async def test_missing_old_column_reported(db_session):
 
 def test_build_sql_lines_single_pair():
     valid_rows = [{"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"}]
-    sql_lines = ParserController._build_change_lcn_sql_lines(valid_rows)
+    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
 
     assert len(sql_lines) == 2
     assert sql_lines[0] == "UPDATE public.actives SET lcn = ('Z' || lcn::text)::ltree WHERE lcn::text IN ('1.1.6');"
@@ -140,7 +145,7 @@ def test_build_sql_lines_multiple_pairs():
         {"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"},
         {"old_lcn": "2.1.6", "new_lcn": "2.1.6.4"},
     ]
-    sql_lines = ParserController._build_change_lcn_sql_lines(valid_rows)
+    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
 
     assert len(sql_lines) == 2
     assert "'1.1.6'" in sql_lines[0] and "'2.1.6'" in sql_lines[0]
@@ -157,7 +162,7 @@ def test_build_sql_lines_chained_rename_is_collision_safe():
         {"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"},
         {"old_lcn": "1.1.6.4", "new_lcn": "1.1.6.4.1"},
     ]
-    sql_lines = ParserController._build_change_lcn_sql_lines(valid_rows)
+    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
 
     tmp_values = {f"Z{vr['old_lcn']}" for vr in valid_rows}
     new_values = {vr["new_lcn"] for vr in valid_rows}
@@ -166,24 +171,7 @@ def test_build_sql_lines_chained_rename_is_collision_safe():
     assert "('Z1.1.6.4', '1.1.6.4.1')" in sql_lines[1]
 
 
-def test_build_sql_lines_empty():
-    assert ParserController._build_change_lcn_sql_lines([]) == []
-
-
-def test_build_move_no_relocate_sql_lines_matches_change_lcn():
-    valid_rows = [{"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"}]
-    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
-
-    assert len(sql_lines) == 2
-    assert sql_lines[0] == "UPDATE public.actives SET lcn = ('Z' || lcn::text)::ltree WHERE lcn::text IN ('1.1.6');"
-    assert sql_lines[1] == (
-        "UPDATE public.actives AS act SET lcn = v.new_lcn::ltree "
-        "FROM (VALUES ('Z1.1.6', '1.1.6.4')) AS v(tmp_lcn, new_lcn) WHERE act.lcn::text = v.tmp_lcn;"
-    )
-    assert sql_lines == ParserController._build_change_lcn_sql_lines(valid_rows)
-
-
-def test_build_move_no_relocate_sql_lines_no_location_or_relocate_touch():
+def test_build_sql_lines_no_location_or_relocate_or_parent_root_touch():
     valid_rows = [{"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"}]
     sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
     sql = "\n".join(sql_lines)
@@ -194,5 +182,11 @@ def test_build_move_no_relocate_sql_lines_no_location_or_relocate_touch():
     assert "id_actives_root" not in sql
 
 
-def test_build_move_no_relocate_sql_lines_empty():
+def test_build_sql_lines_empty():
     assert ParserController._build_move_no_relocate_sql_lines([]) == []
+
+
+async def test_check_lcn_collisions_empty_pair_list_skips_query(db_session):
+    """pair_list=[] не должен трогать БД вовсе (lcn::text недоступен в SQLite)."""
+    errors = await ParserController._check_lcn_collisions(db_session, [])
+    assert errors == []
