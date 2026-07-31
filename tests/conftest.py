@@ -5,7 +5,7 @@ from sqlalchemy.pool import StaticPool
 
 from models import (
     Actives, Base, CarPlace, Consignment, CounterGroup, CounterType, DesignNumber,
-    Ptoir, PtoirLevelWarning, Storage, Train, TrainType, User,
+    Ptoir, PtoirLevelWarning, Storage, Train, TrainType, UnitType, User,
 )
 
 
@@ -65,6 +65,13 @@ async def make_design_number(db_session: AsyncSession, number: str = "DN-001", *
 
 async def make_counter_group(db_session: AsyncSession, name: str = "Группа 1") -> int:
     obj = CounterGroup(name=name)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_unit_type(db_session: AsyncSession, name: str = "Ось колесной пары") -> int:
+    obj = UnitType(name=name)
     db_session.add(obj)
     await db_session.flush()
     return obj.id

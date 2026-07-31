@@ -74,6 +74,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
             Обновить id_counter_group
         </button>
+        <button type="button" onclick="showModal('unit-type')" class="btn" style="background: #6a1b9a; color: #fff;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            Обновить unit_type
+        </button>
         <button type="button" onclick="showModal('serial-1c')" class="btn btn-success">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
             Обновить is_serial_1c
@@ -205,6 +209,11 @@
             desc.textContent = 'Обновить поле id_counter_group в design_number по значению counter_group из файла';
             hint.textContent = 'Файл design_number_update_counter_group.sql';
             btnSql.style.display = 'flex';
+        } else if (action === 'unit-type') {
+            title.textContent = 'Обновление id_unit_type';
+            desc.textContent = 'Обновить поле id_unit_type в design_number по значению unit_type из файла';
+            hint.textContent = 'Файл design_number_update_unit_type.sql';
+            btnSql.style.display = 'flex';
         } else if (action === 'serial-1c') {
             title.textContent = 'Обновление is_serial_1c';
             desc.textContent = 'Обновить поле is_serial_1c в design_number по значению из файла';
@@ -254,6 +263,12 @@
                 generateSql: '/design-number-parser/generate-sql-counter-group',
                 execute: '/design-number-parser/update-counter-group',
                 sqlFile: 'design_number_update_counter_group.sql'
+            };
+        } else if (currentAction === 'unit-type') {
+            return {
+                generateSql: '/design-number-parser/generate-sql-unit-type',
+                execute: '/design-number-parser/update-unit-type',
+                sqlFile: 'design_number_update_unit_type.sql'
             };
         } else if (currentAction === 'sync-counter-active') {
             return {

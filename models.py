@@ -62,6 +62,14 @@ class CounterGroup(Base):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class UnitType(Base):
+    __tablename__ = "unit_type"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class Models(Base):
     __tablename__ = "models"
     __table_args__ = {"schema": "public"}

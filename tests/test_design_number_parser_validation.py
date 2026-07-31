@@ -3,7 +3,7 @@
 import pytest
 
 from controllers.design_number_parser import DesignNumberParserController
-from tests.conftest import make_counter_group, make_design_number
+from tests.conftest import make_counter_group, make_design_number, make_unit_type
 
 
 def controller() -> DesignNumberParserController:
@@ -78,6 +78,76 @@ async def test_counter_group_unknown_name_reported(db_session):
     assert valid_rows == []
     assert errors[0]["field"] == "counter_group"
     assert "counter_group не найден" in errors[0]["message"]
+
+
+# --- _validate_unit_type ------------------------------------------------------
+
+async def test_unit_type_valid_row_passes(db_session):
+    dn_id = await make_design_number(db_session, "DN-001")
+    ut_id = await make_unit_type(db_session, "Ось колесной пары")
+
+    errors, valid_rows = await controller()._validate_unit_type(
+        db_session, [{"number": "DN-001", "unit_type": "Ось колесной пары"}]
+    )
+
+    assert errors == []
+    assert valid_rows == [(dn_id, "DN-001", ut_id)]
+
+
+async def test_unit_type_match_is_case_insensitive(db_session):
+    dn_id = await make_design_number(db_session, "DN-001")
+    ut_id = await make_unit_type(db_session, "Ось колесной пары")
+
+    errors, valid_rows = await controller()._validate_unit_type(
+        db_session, [{"number": "DN-001", "unit_type": "ось колесной пары"}]
+    )
+
+    assert errors == []
+    assert valid_rows == [(dn_id, "DN-001", ut_id)]
+
+
+async def test_unit_type_empty_number_reported(db_session):
+    errors, valid_rows = await controller()._validate_unit_type(
+        db_session, [{"number": "", "unit_type": "Ось колесной пары"}]
+    )
+
+    assert valid_rows == []
+    assert errors[0]["field"] == "number"
+
+
+async def test_unit_type_unknown_design_number_reported(db_session):
+    await make_unit_type(db_session, "Ось колесной пары")
+
+    errors, valid_rows = await controller()._validate_unit_type(
+        db_session, [{"number": "DN-999", "unit_type": "Ось колесной пары"}]
+    )
+
+    assert valid_rows == []
+    assert errors[0]["field"] == "number"
+    assert "design_number не найден" in errors[0]["message"]
+
+
+async def test_unit_type_empty_name_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await controller()._validate_unit_type(
+        db_session, [{"number": "DN-001", "unit_type": ""}]
+    )
+
+    assert valid_rows == []
+    assert errors[0]["field"] == "unit_type"
+
+
+async def test_unit_type_unknown_name_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await controller()._validate_unit_type(
+        db_session, [{"number": "DN-001", "unit_type": "Нет такого типа"}]
+    )
+
+    assert valid_rows == []
+    assert errors[0]["field"] == "unit_type"
+    assert "unit_type не найден" in errors[0]["message"]
 
 
 # --- _validate_is_serial_1c ---------------------------------------------------
