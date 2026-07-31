@@ -78,6 +78,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
             Удалить строку в модели
         </button>
+        <button id="btn-change-lcn" type="button" onclick="showChangeLcnModal()" class="btn btn-secondary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            Изменить lcn в модели
+        </button>
         <button id="btn-serial-none" type="button" onclick="showSerialNoneModal()" class="btn btn-secondary">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/></svg>
             set serial='none' lcn
@@ -236,7 +240,7 @@
 <div id="move-actives-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 460px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
         <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Переместить активы</h3>
-        <p style="margin: 0 0 20px; font-size: 14px; color: var(--text-secondary);">Файл с колонкой «Актив» (или «active_number») — все активы будут перемещены на указанный склад</p>
+        <p style="margin: 0 0 20px; font-size: 14px; color: var(--text-secondary);">Файл с колонкой «lsn»/«lcn» (как в "set serial='none' lcn") — активы определяются по всем поездам нужного типа и перемещаются на указанный склад</p>
 
         <div style="margin-bottom: 12px;">
             <label style="display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">Причина</label>
@@ -254,6 +258,12 @@
         <div style="margin-bottom: 20px;">
             <label style="display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">Партия</label>
             <input type="text" id="move-consignment" class="form-input" style="width: 100%;" value="ЧСП ЛОМ">
+        </div>
+        <div style="margin-bottom: 20px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer;">
+                <input type="checkbox" id="move-set-nocm" checked style="accent-color: var(--accent);">
+                Установить позицию ТМЦ = 'NOCM'
+            </label>
         </div>
 
         <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -273,6 +283,30 @@
             </button>
         </div>
         <button onclick="closeMoveActivesModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
+    </div>
+</div>
+
+<div id="change-lcn-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 460px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
+        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Изменить lcn в модели</h3>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Файл с колонками «lsn»/«lcn» (новый) и «Старый lsn»/«Старый lcn» — lcn активов по всем поездам нужного типа меняется со старого значения на новое</p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button onclick="downloadChangeLcnSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Скачать SQL-файл</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл change_lcn.sql для ручного запуска</div>
+                </div>
+            </button>
+            <button onclick="executeChangeLcn()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#2e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Выполнить в базе данных</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное изменение lcn у всех найденных активов</div>
+                </div>
+            </button>
+        </div>
+        <button onclick="closeChangeLcnModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
     </div>
 </div>
 
@@ -565,6 +599,7 @@
         formData.append('user_fullname', document.getElementById('move-user').value);
         formData.append('storage_name', document.getElementById('move-storage').value);
         formData.append('consignment_name', document.getElementById('move-consignment').value);
+        formData.append('set_nocm', document.getElementById('move-set-nocm').checked ? '1' : '0');
         return appendCsrfToken(formData);
     }
 
@@ -603,6 +638,66 @@
         showProgress();
 
         fetch('/parser/move-actives/execute-sql/start', { method: 'POST', body: buildMoveActivesFormData() })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    alert(data.message);
+                    location.reload();
+                }
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+    }
+
+    function showChangeLcnModal() {
+        document.getElementById('change-lcn-modal').style.display = 'flex';
+    }
+
+    function closeChangeLcnModal() {
+        document.getElementById('change-lcn-modal').style.display = 'none';
+    }
+
+    document.getElementById('change-lcn-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeChangeLcnModal();
+    });
+
+    function downloadChangeLcnSQL() {
+        closeChangeLcnModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showProgress();
+
+        fetch('/parser/change-lcn/generate-sql/start', { method: 'POST', body: buildFormData() })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    const blob = new Blob([data.sql], { type: 'text/sql' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'change_lcn.sql';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+    }
+
+    function executeChangeLcn() {
+        closeChangeLcnModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+
+        if (!confirm('Выполнить изменение lcn у всех найденных активов в базе данных?')) return;
+
+        showProgress();
+
+        fetch('/parser/change-lcn/execute-sql/start', { method: 'POST', body: buildFormData() })
             .then(resp => resp.json())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();

@@ -1,9 +1,18 @@
-"""Тесты валидации ParserController._validate_and_build_move_rows / _build_move_actives_sql_body (controllers/parser.py)."""
+"""Тесты валидации ParserController._validate_and_build_move_rows / _build_move_actives_sql_body (controllers/parser.py).
+
+Резолв активов по lcn ('SELECT ... WHERE lcn::text IN :lcns') использует
+Postgres-специфичный `::text`-каст на ltree-колонке — SQLite (тестовая БД)
+такой синтаксис не парсит вовсе (не просто "0 строк", а syntax error).
+Поэтому здесь покрыто всё, что происходит ДО этого запроса (резолв
+склад/партия/пользователь, парсинг lsn через _validate_and_build_serial_none_rows,
+сборка SQL-тела) — как и для аналогичного happy-path в train_parser.py (см.
+checkpoint.md, Фаза 9). Сам запрос проверен вручную на реальной БД grom-tk.
+"""
 
 from datetime import datetime
 
 from controllers.parser import ParserController
-from tests.conftest import make_active, make_consignment, make_storage, make_user
+from tests.conftest import make_consignment, make_design_number, make_storage, make_user
 
 
 DEFAULT_REASON = "Убран десятый (лишний) межвагонный переход с 6 вагона"
@@ -12,9 +21,12 @@ DEFAULT_STORAGE = "Виртуальный склад"
 DEFAULT_CONSIGNMENT = "ЧСП ЛОМ"
 
 
-async def validate(db_session, rows, storage_name=DEFAULT_STORAGE, consignment_name=DEFAULT_CONSIGNMENT, user_fullname=DEFAULT_USER_FULLNAME):
+async def validate(
+    db_session, rows, storage_name=DEFAULT_STORAGE, consignment_name=DEFAULT_CONSIGNMENT,
+    user_fullname=DEFAULT_USER_FULLNAME, set_nocm=False,
+):
     controller = ParserController(owner=None)
-    return await controller._validate_and_build_move_rows(db_session, rows, storage_name, consignment_name, user_fullname)
+    return await controller._validate_and_build_move_rows(db_session, rows, storage_name, consignment_name, user_fullname, set_nocm)
 
 
 def error_fields(errors: list[dict]) -> list[str]:
@@ -28,36 +40,11 @@ async def setup_defaults(db_session):
     return storage_id, consignment_id, user_id
 
 
-async def test_valid_row_resolves_everything(db_session):
-    storage_id, consignment_id, user_id = await setup_defaults(db_session)
-    active_id = await make_active(db_session, "SPV000001", id_location=42)
-
-    errors, valid_rows, id_storage, id_consignment, id_user = await validate(db_session, [{"Актив": "SPV000001"}])
-
-    assert errors == []
-    assert id_storage == storage_id
-    assert id_consignment == consignment_id
-    assert id_user == user_id
-    assert valid_rows == [{
-        "row": 1, "active_number": "SPV000001", "id_active": active_id, "id_location_old": 42,
-    }]
-
-
-async def test_active_number_column_alias(db_session):
-    await setup_defaults(db_session)
-    await make_active(db_session, "SPV000002")
-
-    errors, valid_rows, *_ = await validate(db_session, [{"active_number": "SPV000002"}])
-
-    assert errors == []
-    assert valid_rows[0]["active_number"] == "SPV000002"
-
-
 async def test_storage_not_found_reported(db_session):
     await make_consignment(db_session, DEFAULT_CONSIGNMENT)
     await make_user(db_session)
 
-    errors, valid_rows, id_storage, id_consignment, id_user = await validate(db_session, [{"Актив": "X"}], storage_name="Нет такого склада")
+    errors, valid_rows, id_storage, id_consignment, id_user, id_design_number = await validate(db_session, [{"lsn": "M9.6.5"}], storage_name="Нет такого склада")
 
     assert error_fields(errors) == ["Склад"]
     assert id_storage is None
@@ -68,7 +55,7 @@ async def test_consignment_not_found_reported(db_session):
     await make_storage(db_session, DEFAULT_STORAGE)
     await make_user(db_session)
 
-    errors, valid_rows, *_ = await validate(db_session, [{"Актив": "X"}], consignment_name="Нет такой партии")
+    errors, valid_rows, *_ = await validate(db_session, [{"lsn": "M9.6.5"}], consignment_name="Нет такой партии")
 
     assert error_fields(errors) == ["Партия"]
 
@@ -77,59 +64,90 @@ async def test_user_not_found_reported(db_session):
     await make_storage(db_session, DEFAULT_STORAGE)
     await make_consignment(db_session, DEFAULT_CONSIGNMENT)
 
-    errors, valid_rows, *_ = await validate(db_session, [{"Актив": "X"}], user_fullname="Несуществующий Пользователь Иванович")
+    errors, valid_rows, *_ = await validate(db_session, [{"lsn": "M9.6.5"}], user_fullname="Несуществующий Пользователь Иванович")
 
     assert error_fields(errors) == ["Пользователь"]
 
 
-async def test_user_resolved_without_middlename(db_session):
-    await make_storage(db_session, DEFAULT_STORAGE)
-    await make_consignment(db_session, DEFAULT_CONSIGNMENT)
+async def test_resolve_user_by_fullname_with_middlename(db_session):
+    user_id = await make_user(db_session, lastname="Велебская", firstname="Александра", middlename="Владимировна")
+
+    controller = ParserController(owner=None)
+    resolved = await controller._resolve_user_by_fullname(db_session, DEFAULT_USER_FULLNAME)
+
+    assert resolved == user_id
+
+
+async def test_resolve_user_by_fullname_without_middlename(db_session):
     user_id = await make_user(db_session, lastname="Иванов", firstname="Иван", middlename=None)
-    await make_active(db_session, "SPV000003")
 
-    errors, valid_rows, _, _, id_user = await validate(
-        db_session, [{"Актив": "SPV000003"}], user_fullname="Иванов Иван",
-    )
+    controller = ParserController(owner=None)
+    resolved = await controller._resolve_user_by_fullname(db_session, "Иванов Иван")
 
-    assert errors == []
-    assert id_user == user_id
+    assert resolved == user_id
 
 
-async def test_missing_active_column_reported(db_session):
+async def test_resolve_user_by_fullname_not_found(db_session):
+    await make_user(db_session)
+
+    controller = ParserController(owner=None)
+    resolved = await controller._resolve_user_by_fullname(db_session, "Несуществующий Пользователь")
+
+    assert resolved is None
+
+
+async def test_missing_lcn_column_reported(db_session):
     await setup_defaults(db_session)
 
     errors, valid_rows, *_ = await validate(db_session, [{"other": "x"}])
 
-    assert errors == [{"row": 0, "field": "Актив", "message": "В файле не найдена колонка 'Актив' (или 'active_number')"}]
+    assert errors == [{"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'lsn' (или 'lcn')"}]
 
 
-async def test_active_not_found_reported(db_session):
+async def test_unparseable_lcn_reported(db_session):
     await setup_defaults(db_session)
 
-    errors, valid_rows, *_ = await validate(db_session, [{"Актив": "MISSING"}])
+    errors, valid_rows, *_ = await validate(db_session, [{"lsn": "abc"}])
 
-    assert error_fields(errors) == ["Актив"]
-    assert "не найден" in errors[0]["message"]
-
-
-async def test_duplicate_active_in_file_reported(db_session):
-    await setup_defaults(db_session)
-    await make_active(db_session, "SPV000004")
-
-    errors, valid_rows, *_ = await validate(db_session, [{"Актив": "SPV000004"}, {"Актив": "SPV000004"}])
-
-    assert error_fields(errors) == ["Актив"]
-    assert "Дубликат" in errors[0]["message"]
-    assert len(valid_rows) == 1
+    assert error_fields(errors) == ["lcn"]
 
 
-async def test_empty_active_reported(db_session):
+async def test_no_trains_for_train_type_reported(db_session):
     await setup_defaults(db_session)
 
-    errors, valid_rows, *_ = await validate(db_session, [{"Актив": ""}])
+    errors, valid_rows, *_ = await validate(db_session, [{"lsn": "M9.6.5"}])
 
-    assert error_fields(errors) == ["Актив"]
+    assert error_fields(errors) == ["lcn"]
+    assert "не найдены" in errors[0]["message"]
+
+
+async def test_set_nocm_resolves_design_number(db_session):
+    await setup_defaults(db_session)
+    dn_id = await make_design_number(db_session, "NOCM")
+
+    errors, valid_rows, _, _, _, id_design_number = await validate(db_session, [{"lsn": "M9.6.5"}], set_nocm=True)
+
+    assert error_fields(errors) == ["lcn"]  # нет поездов этого типа — но NOCM успел зарезолвиться
+    assert id_design_number == dn_id
+
+
+async def test_set_nocm_not_found_reported(db_session):
+    await setup_defaults(db_session)
+
+    errors, valid_rows, _, _, _, id_design_number = await validate(db_session, [{"lsn": "M9.6.5"}], set_nocm=True)
+
+    assert error_fields(errors) == ["ТМЦ"]
+    assert "NOCM" in errors[0]["message"]
+    assert id_design_number is None
+
+
+async def test_set_nocm_false_skips_lookup(db_session):
+    await setup_defaults(db_session)
+
+    errors, valid_rows, _, _, _, id_design_number = await validate(db_session, [{"lsn": "M9.6.5"}], set_nocm=False)
+
+    assert id_design_number is None
+    assert error_fields(errors) == ["lcn"]  # NOCM не резолвился, но и не мешал — ошибка только по поездам
 
 
 def test_build_sql_body_single_row():
@@ -148,6 +166,32 @@ def test_build_sql_body_single_row():
     assert "VALUES (5, loc_ids[1], '2026-01-01 12:00:00', 2, 10, 'Убран десятый (лишний) межвагонный переход с 6 вагона', '2026-01-01 12:00:00', NULL);" in sql
     assert "UPDATE public.actives SET id_location = loc_ids[1], id_actves_parent = NULL, id_actives_root = NULL, lcn = ('S7.' || lcn_new)::ltree WHERE id = 10;" in sql
     assert "UPDATE public.storage SET last_lcn = lcn_new WHERE id = 7;" in sql
+
+
+def test_build_sql_body_with_design_number():
+    valid_rows = [{"id_active": 430071, "id_location_old": 5}]
+    sql_lines = ParserController._build_move_actives_sql_body(
+        valid_rows, id_storage=78, id_consignment=3, id_user=2,
+        reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0), id_design_number=74269,
+    )
+    sql = "\n".join(sql_lines)
+
+    assert (
+        "UPDATE public.actives SET id_location = loc_ids[1], id_actves_parent = NULL, "
+        "id_actives_root = NULL, id_design_number = 74269, lcn = ('S78.' || lcn_new)::ltree "
+        "WHERE id = 430071;"
+    ) in sql
+
+
+def test_build_sql_body_without_design_number_omits_clause():
+    valid_rows = [{"id_active": 10, "id_location_old": 5}]
+    sql_lines = ParserController._build_move_actives_sql_body(
+        valid_rows, id_storage=7, id_consignment=3, id_user=2,
+        reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0),
+    )
+    sql = "\n".join(sql_lines)
+
+    assert "id_design_number" not in sql
 
 
 def test_build_sql_body_null_old_location():
