@@ -518,7 +518,7 @@ class ParserController(Controller):
         return errors, pair_list
 
     @staticmethod
-    def _build_change_lcn_sql_lines(valid_rows: list[dict]) -> list[str]:
+    def _build_two_phase_lcn_update_lines(valid_rows: list[dict], extra_set: str = "") -> list[str]:
         """Двухфазный UPDATE lcn: старое -> временное ('Z'+старое) -> новое.
 
         Файл часто содержит цепочки (новый lcn одной пары совпадает со старым
@@ -529,6 +529,9 @@ class ParserController(Controller):
         префикс 'Z' гарантированно не пересекается с реальными lcn (train_id,
         'M'-модельные, 'S'-складские) — после первого прохода ни один активный
         lcn не совпадает со старым/новым значением другой пары.
+
+        extra_set — дополнительные ", колонка = значение" в финальном UPDATE
+        (например, сброс id_actves_parent/id_actives_root при перемещении).
         """
         if not valid_rows:
             return []
@@ -538,9 +541,23 @@ class ParserController(Controller):
         )
         return [
             f"UPDATE public.actives SET lcn = ('Z' || lcn::text)::ltree WHERE lcn::text IN ({old_list});",
-            "UPDATE public.actives AS act SET lcn = v.new_lcn::ltree "
+            f"UPDATE public.actives AS act SET lcn = v.new_lcn::ltree{extra_set} "
             f"FROM (VALUES {tmp_values_list}) AS v(tmp_lcn, new_lcn) WHERE act.lcn::text = v.tmp_lcn;",
         ]
+
+    @staticmethod
+    def _build_change_lcn_sql_lines(valid_rows: list[dict]) -> list[str]:
+        return ParserController._build_two_phase_lcn_update_lines(valid_rows)
+
+    @staticmethod
+    def _build_move_no_relocate_sql_lines(valid_rows: list[dict]) -> list[str]:
+        """Как _build_change_lcn_sql_lines, но дополнительно сбрасывает
+        id_actves_parent/id_actives_root — активная позиция сменилась,
+        старые ссылки на родителя/корень больше не актуальны (тот же сброс,
+        что и в 'Переместить активы', но без смены id_location/relocate)."""
+        return ParserController._build_two_phase_lcn_update_lines(
+            valid_rows, extra_set=", id_actves_parent = NULL, id_actives_root = NULL",
+        )
 
     @staticmethod
     def _merge_serial_none_lcns(valid_rows: list[dict]) -> list[str]:
@@ -1189,6 +1206,122 @@ class ParserController(Controller):
 
         progress.update(status="done", count=len(valid_rows),
                          message=f"Изменено lcn у активов: {total_updated} (пар: {len(valid_rows)})")
+
+    @post("/move-no-relocate/generate-sql/start")
+    async def move_no_relocate_generate_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновую генерацию SQL-файла 'Переместить активы без relocate', возвращает task_id."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_move_no_relocate_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_move_no_relocate_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                # Та же валидация/парсинг пар lcn, что и у 'Изменить lcn в модели'
+                # (Старый lsn -> lsn, обе колонки резолвятся как в 'set serial=none lcn').
+                errors, valid_rows = await self._validate_and_build_change_lcn_rows(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+
+        sql_lines = self._build_move_no_relocate_sql_lines(valid_rows)
+        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
+        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+
+    @post("/move-no-relocate/execute-sql/start")
+    async def move_no_relocate_execute_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновое атомарное перемещение активов без relocate, возвращает task_id."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_move_no_relocate_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_move_no_relocate_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        total_updated = 0
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                try:
+                    errors, valid_rows = await self._validate_and_build_change_lcn_rows(session, rows, progress=progress)
+                except Exception as e:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    return
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}])
+                    return
+
+                progress.update(processed=0, total=1, phase="executing")
+                try:
+                    # Двухфазный UPDATE, как в change-lcn, но дополнительно сбрасывает
+                    # id_actves_parent/id_actives_root; id_location и relocate не трогаются.
+                    sql_lines = self._build_move_no_relocate_sql_lines(valid_rows)
+                    await session.execute(text(sql_lines[0]))
+                    result = await session.execute(text(sql_lines[1]))
+                    total_updated = result.rowcount
+                    progress["processed"] = 1
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Execute move-no-relocate update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Pairs processed: {len(valid_rows)}, actives updated: {total_updated}",
+            "",
+            *self._build_move_no_relocate_sql_lines(valid_rows),
+            "",
+        ]
+        log_file = LOG_DIR / f"move_no_relocate_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Moved (no relocate) %d pairs (%d actives), log: %s", len(valid_rows), total_updated, log_file)
+
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Перемещено активов: {total_updated} (пар: {len(valid_rows)})")
 
     @post("/move-actives/generate-sql/start")
     async def move_actives_generate_sql_start(

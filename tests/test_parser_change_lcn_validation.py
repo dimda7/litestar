@@ -168,3 +168,28 @@ def test_build_sql_lines_chained_rename_is_collision_safe():
 
 def test_build_sql_lines_empty():
     assert ParserController._build_change_lcn_sql_lines([]) == []
+
+
+def test_build_move_no_relocate_sql_lines_resets_parent_and_root():
+    valid_rows = [{"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"}]
+    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
+
+    assert len(sql_lines) == 2
+    assert sql_lines[0] == "UPDATE public.actives SET lcn = ('Z' || lcn::text)::ltree WHERE lcn::text IN ('1.1.6');"
+    assert sql_lines[1] == (
+        "UPDATE public.actives AS act SET lcn = v.new_lcn::ltree, id_actves_parent = NULL, id_actives_root = NULL "
+        "FROM (VALUES ('Z1.1.6', '1.1.6.4')) AS v(tmp_lcn, new_lcn) WHERE act.lcn::text = v.tmp_lcn;"
+    )
+
+
+def test_build_move_no_relocate_sql_lines_no_location_or_relocate_touch():
+    valid_rows = [{"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"}]
+    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
+    sql = "\n".join(sql_lines)
+
+    assert "id_location" not in sql
+    assert "relocate" not in sql
+
+
+def test_build_move_no_relocate_sql_lines_empty():
+    assert ParserController._build_move_no_relocate_sql_lines([]) == []
