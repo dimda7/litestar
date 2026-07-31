@@ -219,6 +219,12 @@
 - [x] Проверено на реальном файле (лист «Изменить LCN», grom-tk, откатанная транзакция): 342 пары, оба шага по 342 rowcount; на конкретном активе `lcn` `276.1.6→276.1.6.4`, `id_actves_parent`/`id_actives_root` `VR1000001`/`VR1000000` → `NULL`, `id_location` не изменился, записей в `relocate` не создано; после `rollback()` всё вернулось как было
 - Коммиты: см. следующий коммит после этой записи
 
+## Фаза 21: "Переместить активы без relocate" — убран сброс parent/root; исправлена схема grom.models → public.models — ВЫПОЛНЕНА
+- [x] Из `_build_move_no_relocate_sql_lines` убран `extra_set=", id_actves_parent = NULL, id_actives_root = NULL"` — кнопка теперь строит SQL, идентичный `_build_change_lcn_sql_lines` (чистое переименование `lcn`, без побочных эффектов); проверено на `grom-tk` в откатанной транзакции — `id_actves_parent`/`id_actives_root` остались `VR1000001`/`VR1000000` без изменений, меняется только `lcn`
+- [x] Баг: «Удалить строку в модели» падал с `UndefinedTableError: relation "grom.models" does not exist` — во всех операциях над таблицей `models` в `controllers/parser.py` (INSERT/DELETE, генерация SQL и выполнение в БД, аудит-логи, docstring'и) была захардкожена несуществующая схема `grom` вместо реальной `public` (единственное место в файле, где не хватало правильного схема-префикса — остальные парсеры проекта используют `public.` последовательно). Исправлено во всех 8 местах; проверено на `grom-tk`: `DELETE FROM public.models WHERE id = ...` выполняется (rowcount=1), после `rollback()` строка на месте
+- [x] Тесты: `tests/test_parser_change_lcn_validation.py` обновлён под изменённый `_build_move_no_relocate_sql_lines` — итого 135 тестов зелёных (без изменения количества, тесты переписаны на месте)
+- Коммиты: см. следующий коммит после этой записи
+
 ## Следующие шаги
 1. Разобраться с дублирующимися `car_place.name` в БД (443 группы дублей) — сейчас такие строки Excel просто помечаются как ошибка валидации и не обрабатываются
 2. Покрыть happy-path `train_parser._validate_train_rows` (разрешение `car_place_id`/`id_actives_parent`) — нужен реальный Postgres в тестовом окружении (testcontainers или аналог), см. Фазу 9

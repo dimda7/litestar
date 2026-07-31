@@ -551,13 +551,9 @@ class ParserController(Controller):
 
     @staticmethod
     def _build_move_no_relocate_sql_lines(valid_rows: list[dict]) -> list[str]:
-        """Как _build_change_lcn_sql_lines, но дополнительно сбрасывает
-        id_actves_parent/id_actives_root — активная позиция сменилась,
-        старые ссылки на родителя/корень больше не актуальны (тот же сброс,
-        что и в 'Переместить активы', но без смены id_location/relocate)."""
-        return ParserController._build_two_phase_lcn_update_lines(
-            valid_rows, extra_set=", id_actves_parent = NULL, id_actives_root = NULL",
-        )
+        """Тот же двухфазный UPDATE lcn, что и _build_change_lcn_sql_lines,
+        без смены id_location и без записи в relocate."""
+        return ParserController._build_two_phase_lcn_update_lines(valid_rows)
 
     @staticmethod
     def _merge_serial_none_lcns(valid_rows: list[dict]) -> list[str]:
@@ -742,7 +738,7 @@ class ParserController(Controller):
         db_session: AsyncSession,
         data: GenerateSQLRequest = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Генерация SQL-файла для вставки строк в таблицу grom.models.
+        """Генерация SQL-файла для вставки строк в таблицу public.models.
 
         Валидирует данные из Excel, проверяет дубликаты и уникальные ограничения,
         затем возвращает SQL-код для скачивания в виде .sql файла.
@@ -768,7 +764,7 @@ class ParserController(Controller):
         for train_type_id, car_place_id, design_number_id, lcn, is_default in valid_rows:
             isdefault_val = "TRUE" if is_default else "FALSE"
             sql = (
-                f"INSERT INTO models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
+                f"INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
                 f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{sql_escape(lcn)}', {isdefault_val});"
             )
             sql_lines.append(sql)
@@ -787,7 +783,7 @@ class ParserController(Controller):
         db_session: AsyncSession,
         data: GenerateSQLRequest = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Атомарная вставка строк в таблицу grom.models.
+        """Атомарная вставка строк в таблицу public.models.
 
         Валидирует данные, выполняет все INSERT-запросы в одной транзакции.
         При ошибке вся транзакция откатывается. Логирует результат в log/.
@@ -821,7 +817,7 @@ class ParserController(Controller):
                 isdefault_val = "TRUE" if is_default else "FALSE"
                 await db_session.execute(
                     text(
-                        "INSERT INTO grom.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
+                        "INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
                         "VALUES (:tt, :cp, :dn, :lcn, :def)"
                     ),
                     {"tt": train_type_id, "cp": car_place_id, "dn": design_number_id, "lcn": lcn, "def": is_default},
@@ -844,7 +840,7 @@ class ParserController(Controller):
         for train_type_id, car_place_id, design_number_id, lcn, is_default in valid_rows:
             isdefault_val = "TRUE" if is_default else "FALSE"
             log_lines.append(
-                f"INSERT INTO grom.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
+                f"INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
                 f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{sql_escape(lcn)}', {isdefault_val});"
             )
         log_lines.append("")
@@ -866,7 +862,7 @@ class ParserController(Controller):
         request: Request,
         data: DeleteRowsRequest = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Генерация SQL-файла для удаления строк из таблицы grom.models.
+        """Генерация SQL-файла для удаления строк из таблицы public.models.
 
         Принимает массив объектов с полем id, возвращает SQL-код для скачивания.
         """
@@ -891,7 +887,7 @@ class ParserController(Controller):
                 media_type="application/json",
             )
 
-        sql_lines = [f"DELETE FROM models WHERE id = {rid};" for rid in valid_ids]
+        sql_lines = [f"DELETE FROM public.models WHERE id = {rid};" for rid in valid_ids]
         content = "\n".join(sql_lines)
         return Response(
             content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
@@ -906,7 +902,7 @@ class ParserController(Controller):
         db_session: AsyncSession,
         data: DeleteRowsRequest = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Атомарное удаление строк из таблицы grom.models.
+        """Атомарное удаление строк из таблицы public.models.
 
         Выполняет DELETE-запросы в одной транзакции. При ошибке откат.
         Логирует результат в log/.
@@ -942,7 +938,7 @@ class ParserController(Controller):
         try:
             for rid in valid_ids:
                 await db_session.execute(
-                    text("DELETE FROM grom.models WHERE id = :id"),
+                    text("DELETE FROM public.models WHERE id = :id"),
                     {"id": rid},
                 )
             await db_session.commit()
@@ -961,7 +957,7 @@ class ParserController(Controller):
             "",
         ]
         for rid in valid_ids:
-            log_lines.append(f"DELETE FROM grom.models WHERE id = {rid};")
+            log_lines.append(f"DELETE FROM public.models WHERE id = {rid};")
         log_lines.append("")
 
         log_file = LOG_DIR / f"delete_models_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
