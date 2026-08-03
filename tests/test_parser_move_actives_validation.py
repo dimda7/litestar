@@ -151,7 +151,7 @@ async def test_set_nocm_false_skips_lookup(db_session):
 
 
 def test_build_sql_body_single_row():
-    valid_rows = [{"id_active": 10, "id_location_old": 5}]
+    valid_rows = [{"id_active": 10, "id_location_old": 5, "active_number": "ULP0090952"}]
     sql_lines = ParserController._build_move_actives_sql_body(
         valid_rows, id_storage=7, id_consignment=3, id_user=2,
         reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0),
@@ -164,12 +164,12 @@ def test_build_sql_body_single_row():
     assert "INSERT INTO public.location (id, id_type_location, id_storage, id_consignment) VALUES (loc_ids[1], 1, 7, 3);" in sql
     assert "INSERT INTO public.relocate" in sql
     assert "VALUES (5, loc_ids[1], '2026-01-01 12:00:00', 2, 10, 'Убран десятый (лишний) межвагонный переход с 6 вагона', '2026-01-01 12:00:00', NULL);" in sql
-    assert "UPDATE public.actives SET id_location = loc_ids[1], id_actves_parent = NULL, id_actives_root = NULL, lcn = ('S7.' || lcn_new)::ltree WHERE id = 10;" in sql
+    assert "UPDATE public.actives SET id_location = loc_ids[1], id_actves_parent = NULL, id_actives_root = NULL, lcn = ('S7.' || lcn_new)::ltree WHERE id = 10; -- ULP0090952" in sql
     assert "UPDATE public.storage SET last_lcn = lcn_new WHERE id = 7;" in sql
 
 
 def test_build_sql_body_with_design_number():
-    valid_rows = [{"id_active": 430071, "id_location_old": 5}]
+    valid_rows = [{"id_active": 430071, "id_location_old": 5, "active_number": "ULP0090952"}]
     sql_lines = ParserController._build_move_actives_sql_body(
         valid_rows, id_storage=78, id_consignment=3, id_user=2,
         reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0), id_design_number=74269,
@@ -179,12 +179,12 @@ def test_build_sql_body_with_design_number():
     assert (
         "UPDATE public.actives SET id_location = loc_ids[1], id_actves_parent = NULL, "
         "id_actives_root = NULL, id_design_number = 74269, lcn = ('S78.' || lcn_new)::ltree "
-        "WHERE id = 430071;"
+        "WHERE id = 430071; -- ULP0090952"
     ) in sql
 
 
 def test_build_sql_body_without_design_number_omits_clause():
-    valid_rows = [{"id_active": 10, "id_location_old": 5}]
+    valid_rows = [{"id_active": 10, "id_location_old": 5, "active_number": "ULP0090952"}]
     sql_lines = ParserController._build_move_actives_sql_body(
         valid_rows, id_storage=7, id_consignment=3, id_user=2,
         reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0),
@@ -194,8 +194,19 @@ def test_build_sql_body_without_design_number_omits_clause():
     assert "id_design_number" not in sql
 
 
+def test_build_sql_body_active_number_comment_strips_newlines():
+    valid_rows = [{"id_active": 10, "id_location_old": 5, "active_number": "ULP\n0090952\r"}]
+    sql_lines = ParserController._build_move_actives_sql_body(
+        valid_rows, id_storage=7, id_consignment=3, id_user=2,
+        reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0),
+    )
+    sql = "\n".join(sql_lines)
+
+    assert "-- ULP 0090952" in sql
+
+
 def test_build_sql_body_null_old_location():
-    valid_rows = [{"id_active": 10, "id_location_old": None}]
+    valid_rows = [{"id_active": 10, "id_location_old": None, "active_number": "ULP0090952"}]
     sql_lines = ParserController._build_move_actives_sql_body(
         valid_rows, id_storage=7, id_consignment=3, id_user=2,
         reason="", move_date=datetime(2026, 1, 1, 12, 0, 0),

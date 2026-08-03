@@ -856,10 +856,11 @@ class ParserController(Controller):
                 f"{vr['id_active']}, {reason_val}, '{date_str}', NULL);"
             )
             design_number_clause = f"id_design_number = {id_design_number}, " if id_design_number is not None else ""
+            active_number_comment = str(vr["active_number"]).replace("\n", " ").replace("\r", " ")
             sql_lines.append(
                 f"    UPDATE public.actives SET id_location = {loc_ref}, id_actves_parent = NULL, "
                 f"id_actives_root = NULL, {design_number_clause}lcn = ('S{id_storage}.' || lcn_new)::ltree "
-                f"WHERE id = {vr['id_active']};"
+                f"WHERE id = {vr['id_active']}; -- {sql_escape(active_number_comment)}"
             )
 
         sql_lines.append(f"    UPDATE public.storage SET last_lcn = lcn_new WHERE id = {id_storage};")
