@@ -690,6 +690,150 @@ class ParserController(Controller):
             f"FROM (VALUES {values_list}) AS v(mid, new_lcn) WHERE m.id = v.mid;",
         ]
 
+    async def _validate_and_build_is_default_rows(
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    ) -> tuple[list[dict], list[dict]]:
+        """Валидирует строки Excel для 'Изменить серийность в модели' (models.is_default).
+
+        Колонка 'id' — models.id, 'isdefault' — новое значение (true/false/1/0/да/нет,
+        как в _validate_is_serial_1c design_number_parser.py). При переключении в true
+        дополнительно проверяются оба частичных UNIQUE-индекса models на is_default=true
+        (см. _validate_and_build_rows) — иначе конфликт вылезет как голый
+        UniqueViolationError прямо при выполнении, а не как понятная построчная ошибка.
+        """
+        errors: list[dict] = []
+
+        id_column: str | None = next(
+            (k for k in (rows[0] if rows else {}) if str(k).strip().lower() == "id"),
+            None,
+        )
+        isdefault_column: str | None = next(
+            (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("isdefault", "is_default")),
+            None,
+        )
+        if rows and id_column is None:
+            errors.append({"row": 0, "field": "id", "message": "В файле не найдена колонка 'id'"})
+            return errors, []
+        if rows and isdefault_column is None:
+            errors.append({"row": 0, "field": "isdefault", "message": "В файле не найдена колонка 'isdefault'"})
+            return errors, []
+
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
+        models_result = await db_session.execute(
+            select(Models.id, Models.id_train_type, Models.lcn, Models.id_car_place,
+                   Models.id_design_number, Models.is_default)
+        )
+        models_by_id = {m[0]: m for m in models_result.all()}
+
+        # Первый проход: парсинг колонок и дедуп по id — не смотрит на текущие
+        # default-множества, чтобы порядок строк файла не влиял на результат
+        # (важно для второго прохода, см. ниже).
+        parsed: dict[int, dict] = {}
+        order: list[int] = []
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
+
+            id_raw = str(row.get(id_column, "") or "").strip()
+            isdefault_raw = str(row.get(isdefault_column, "") or "").strip().lower()
+
+            if not id_raw:
+                errors.append({"row": row_num, "field": "id", "message": "Поле 'id' пустое"})
+                continue
+            try:
+                model_id = int(float(id_raw))
+            except ValueError:
+                errors.append({"row": row_num, "field": "id", "message": f"Некорректный id: '{id_raw}'"})
+                continue
+
+            if isdefault_raw not in ("true", "false", "1", "0", "да", "нет"):
+                errors.append({"row": row_num, "field": "isdefault",
+                               "message": f"Неверное значение isdefault: '{isdefault_raw}' (ожидается true/false)"})
+                continue
+            is_default = isdefault_raw in ("true", "1", "да")
+
+            if model_id in parsed:
+                if parsed[model_id]["is_default"] != is_default:
+                    errors.append({"row": row_num, "field": "id",
+                                   "message": (f"Конфликт: id={model_id} уже сопоставлен другому значению isdefault "
+                                               f"({parsed[model_id]['is_default']}, а не {is_default})")})
+                continue
+
+            if model_id not in models_by_id:
+                errors.append({"row": row_num, "field": "id", "message": f"Модель с id={model_id} не найдена"})
+                continue
+
+            parsed[model_id] = {"row": row_num, "is_default": is_default}
+            order.append(model_id)
+
+        # Второй проход: UNIQUE-коллизии is_default=true (см. _validate_and_build_rows).
+        # Модели из этого же файла учитываются по НОВОМУ значению из файла, а не по
+        # текущему в БД — иначе файл, который одновременно снимает старый default и
+        # ставит новый на то же место (lcn, car_place) / (car_place, train_type,
+        # design_number), давал бы ложный конфликт из-за произвольного порядка строк
+        # (тот же случай, для которого _build_is_default_sql_lines сортирует FALSE
+        # перед TRUE).
+        existing_default_lcn_car: dict[tuple, int] = {}
+        existing_default_car_type_design: dict[tuple, int] = {}
+        for mid, m in models_by_id.items():
+            if mid in parsed or not m[5]:
+                continue
+            existing_default_lcn_car[(m[2], m[3])] = mid
+            existing_default_car_type_design[(m[3], m[1], m[4])] = mid
+
+        batch_lcn_car: dict[tuple, int] = {}
+        batch_car_type_design: dict[tuple, int] = {}
+        valid_ids: list[int] = []
+
+        for model_id in order:
+            info = parsed[model_id]
+            row_num = info["row"]
+            is_default = info["is_default"]
+            _, id_train_type, lcn, id_car_place, id_design_number, _ = models_by_id[model_id]
+
+            if is_default:
+                lcn_car = (lcn, id_car_place)
+                car_type_design = (id_car_place, id_train_type, id_design_number)
+                owner = existing_default_lcn_car.get(lcn_car, batch_lcn_car.get(lcn_car))
+                if owner is not None and owner != model_id:
+                    errors.append({"row": row_num, "field": "isdefault",
+                                   "message": (f"Конфликт unique (lcn, car_place) WHERE is_default=true: "
+                                               f"lcn='{lcn}', car_place={id_car_place} уже заняты")})
+                    continue
+                owner2 = existing_default_car_type_design.get(car_type_design, batch_car_type_design.get(car_type_design))
+                if owner2 is not None and owner2 != model_id:
+                    errors.append({"row": row_num, "field": "isdefault",
+                                   "message": (f"Конфликт unique (car_place, train_type, design_number) WHERE is_default=true: "
+                                               f"car_place={id_car_place}, train_type={id_train_type}, "
+                                               f"design_number={id_design_number} уже заняты")})
+                    continue
+                batch_lcn_car[lcn_car] = model_id
+                batch_car_type_design[car_type_design] = model_id
+
+            valid_ids.append(model_id)
+
+        valid_rows = [{"id": mid, "is_default": parsed[mid]["is_default"]} for mid in valid_ids]
+        return errors, valid_rows
+
+    @staticmethod
+    def _build_is_default_sql_lines(valid_rows: list[dict]) -> list[str]:
+        """FALSE-строки идут перед TRUE: частичный UNIQUE-индекс (WHERE is_default=true)
+
+        проверяется построчно по мере выполнения отдельных UPDATE в одной транзакции,
+        а не в конце — если файл одновременно снимает старый default и ставит новый на
+        то же место (lcn, car_place) или (car_place, train_type, design_number), снятие
+        обязано выполниться раньше установки.
+        """
+        ordered = sorted(valid_rows, key=lambda vr: vr["is_default"])
+        return [
+            f"UPDATE public.models SET is_default = {'TRUE' if vr['is_default'] else 'FALSE'} WHERE id = {vr['id']};"
+            for vr in ordered
+        ]
+
     @staticmethod
     def _merge_serial_none_lcns(valid_rows: list[dict]) -> list[str]:
         """Объединяет lcn_trains всех строк файла в один список без дублей.
@@ -1338,6 +1482,122 @@ class ParserController(Controller):
 
         progress.update(status="done", count=len(valid_rows),
                          message=f"Изменено lcn у моделей: {total_updated} (строк файла: {len(valid_rows)})")
+
+    @post("/is-default/generate-sql/start")
+    async def is_default_generate_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновую генерацию SQL-файла 'Изменить серийность в модели', возвращает task_id."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_is_default_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_is_default_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_and_build_is_default_rows(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+
+        sql_lines = self._build_is_default_sql_lines(valid_rows)
+        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
+        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+
+    @post("/is-default/execute-sql/start")
+    async def is_default_execute_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновое атомарное изменение is_default у моделей, возвращает task_id."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_is_default_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_is_default_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        total_updated = 0
+        valid_rows: list[dict] = []
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                try:
+                    errors, valid_rows = await self._validate_and_build_is_default_rows(session, rows, progress=progress)
+                except Exception as e:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    return
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}])
+                    return
+
+                # FALSE-строки перед TRUE (см. _build_is_default_sql_lines) — по одному
+                # UPDATE на модель, каждый в своей транзакции-шаге, чтобы порядок был
+                # предсказуем для партиционного UNIQUE-индекса is_default=true.
+                sql_lines = self._build_is_default_sql_lines(valid_rows)
+                progress.update(processed=0, total=len(sql_lines), phase="executing")
+                try:
+                    for i, line in enumerate(sql_lines, start=1):
+                        result = await session.execute(text(line))
+                        total_updated += result.rowcount
+                        progress["processed"] = i
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Execute is-default update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Rows processed: {len(valid_rows)}, models updated: {total_updated}",
+            "",
+            *self._build_is_default_sql_lines(valid_rows),
+            "",
+        ]
+        log_file = LOG_DIR / f"is_default_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Changed is_default for %d models, log: %s", total_updated, log_file)
+
+        progress.update(status="done", count=len(valid_rows),
+                         message=f"Изменена серийность (is_default) у моделей: {total_updated} (строк файла: {len(valid_rows)})")
 
     @post("/move-no-relocate/generate-sql/start")
     async def move_no_relocate_generate_sql_start(
