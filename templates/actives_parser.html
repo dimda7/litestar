@@ -82,6 +82,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
             Создать активы из ТМЦ
         </button>
+        <button type="button" onclick="showCreateActiveFromModelModal()" class="btn btn-success">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            Создать актив из модели lcn
+        </button>
         <button type="button" onclick="showCreateNamedActivesModal()" class="btn btn-success">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             Создать именной актив
@@ -238,6 +242,30 @@
             </button>
         </div>
         <button onclick="closeCreateActivesModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
+    </div>
+</div>
+
+<div id="create-active-from-model-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
+        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Создание актива из модели lcn</h3>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">По строкам файла (колонки 'АРТИКУЛ', 'Тип актива', 'Серийный номер', 'lsn') создаёт по одному активу на каждый поезд с id_train_type из lsn (например 'M9.1.6.4' → тип 9). lcn и location (id_train, car_number, id_car_place) вычисляются из lsn и public.models. Позиции, уже занятые на части поездов, пропускаются</p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button onclick="generateCreateActiveFromModelSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Скачать SQL-файл</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл create_active_from_model.sql для ручного запуска</div>
+                </div>
+            </button>
+            <button onclick="executeCreateActiveFromModel()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#2e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Выполнить в базе данных</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное создание всех активов</div>
+                </div>
+            </button>
+        </div>
+        <button onclick="closeCreateActiveFromModelModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
     </div>
 </div>
 
@@ -726,6 +754,66 @@
         showCreateActivesProgress();
 
         fetch('/actives-parser/recount-mileage/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
+                hideCreateActivesProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                } else {
+                    alert(data.message);
+                    location.reload();
+                }
+            }))
+            .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
+    }
+
+    function showCreateActiveFromModelModal() {
+        document.getElementById('create-active-from-model-modal').style.display = 'flex';
+    }
+
+    function closeCreateActiveFromModelModal() {
+        document.getElementById('create-active-from-model-modal').style.display = 'none';
+    }
+
+    document.getElementById('create-active-from-model-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeCreateActiveFromModelModal();
+    });
+
+    function generateCreateActiveFromModelSQL() {
+        closeCreateActiveFromModelModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showCreateActivesProgress();
+
+        fetch('/actives-parser/create-active-from-model/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
+            .then(resp => resp.json())
+            .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
+                hideCreateActivesProgress();
+                if (data.status === 'error' || !data.sql) {
+                    handleErrors(data);
+                } else {
+                    const blob = new Blob([data.sql], { type: 'text/sql' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'create_active_from_model.sql';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            }))
+            .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
+    }
+
+    function executeCreateActiveFromModel() {
+        closeCreateActiveFromModelModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+
+        if (!confirm('Создать активы из модели lcn в базе данных?')) return;
+
+        showCreateActivesProgress();
+
+        fetch('/actives-parser/create-active-from-model/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
             .then(resp => resp.json())
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();

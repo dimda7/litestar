@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import tempfile
 import time
 import uuid
@@ -26,7 +27,7 @@ from models import (
     Actives, ActiveAdditionalField, ActivesToMainPtoir, CounterActive, Consignment,
     DesignNumber, IteratorNumberLast, Location, MaterialsToActives,
     MileageHistoryActives, MileageStart, MileageTrain, Orders, OrderToActives,
-    Ptoir, Relocate, Storage, StoragePlace,
+    Ptoir, Relocate, Storage, StoragePlace, Train,
 )
 from schemas import SelectSheetRequest
 from sql_utils import sql_escape
@@ -98,6 +99,21 @@ ORDERS_DEPENDENCY_CHECKS: list[tuple[str, str]] = [
     ("orders_work_operation", "id_order"),
     ("relocate", "id_order"),
 ]
+
+# Модельный lcn вида 'M9.1.6.4': цифры после буквенного префикса и до первой
+# точки — id_train_type, остаток пути (после первой точки) переносится как есть.
+# Тот же паттерн, что и в parser.py (_parse_model_lcn) — не переиспользуется
+# оттуда напрямую, т.к. контроллеры проекта самодостаточны (см. остальные модули).
+_MODEL_LCN_RE = re.compile(r"^\D*(\d+)(?:\.(.*))?$")
+
+
+def _parse_model_lcn(lcn: str) -> tuple[int, str] | None:
+    """Извлекает (id_train_type, остаток_пути) из lcn вида 'M9.6.5' -> (9, '6.5'); 'M9' -> (9, '')."""
+    match = _MODEL_LCN_RE.match(lcn)
+    if not match:
+        return None
+    return int(match.group(1)), match.group(2) or ""
+
 
 # Как и в train_parser: валидация строк ТМЦ дёргает несколько запросов к БД на
 # строку, на больших файлах это идёт секундами — прогресс отдаётся через
@@ -1228,6 +1244,10 @@ class ActivesParserController(Controller):
             f"    SELECT number INTO active_num FROM public.iterator_number_last "
             f"WHERE description = '{sql_escape(ACTIVE_NUMBER_COUNTER_DESCRIPTION)}' FOR UPDATE;"
         )
+        sql_lines.append(
+            f"    IF active_num IS NULL THEN RAISE EXCEPTION "
+            f"'Счётчик ''{sql_escape(ACTIVE_NUMBER_COUNTER_DESCRIPTION)}'' не найден или пуст'; END IF;"
+        )
         for storage_id in storage_ids:
             sql_lines.append(
                 f"    SELECT last_lcn INTO lcn_{storage_id} FROM public.storage WHERE id = {storage_id} FOR UPDATE;"
@@ -1278,6 +1298,277 @@ class ActivesParserController(Controller):
             f"WHERE description = '{sql_escape(ACTIVE_NUMBER_COUNTER_DESCRIPTION)}';"
         )
 
+        sql_lines.append("END $$;")
+
+        return sql_lines
+
+    async def _validate_create_active_from_model_rows(
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    ) -> tuple[list[dict], list[dict], int]:
+        """Валидирует строки для 'Создать актив из модели lcn'.
+
+        lsn вида 'M9.1.6.4': 9 — id_train_type, первый сегмент пути ('1') —
+        car_number, весь путь после id_train_type ('1.6.4') — остаток для
+        построения реального lcn актива на конкретном поезде. id_car_place
+        берётся из public.models по тому же lcn (WHERE id_train_type=... AND
+        lcn::text=lsn) — тот же принцип поиска, что и в train_parser.py при
+        создании нового поезда.
+
+        Один и тот же lcn часто встречается в нескольких строках models с
+        разными id_design_number (альтернативные позиции ТМЦ для одного и
+        того же места в модели) — на практике id_car_place у них обычно
+        совпадает, is_default при этом может быть false у ВСЕХ строк сразу
+        (см. проверено на реальной БД: 'M9.2.5.4' — 2 строки, обе
+        is_default=false, но с одинаковым id_car_place). Поэтому сначала
+        берутся все различные id_car_place без фильтра по is_default; если
+        значение одно — используется оно. Только если car_place реально
+        расходится между строками, в ход идёт is_default=true как тай-брейк;
+        если и после него неоднозначность не снята — ошибка по строке.
+
+        Количество создаваемых активов на позицию — НЕ из колонки файла, а
+        количество поездов этого id_train_type (public.train): на каждый
+        поезд создаётся свой актив со своей location (id_type_location=2,
+        id_train, car_number, id_car_place). Строки с одинаковым/пересекающимся
+        lsn используют общий кэш поездов по типу (как в
+        _validate_and_build_serial_none_rows в parser.py).
+
+        Активы, чей вычисленный lcn уже занят существующим активом (позиция уже
+        заполнена на части поездов парка), молча пропускаются — не ошибка
+        валидации, обычный случай частичного заполнения по парку. Возвращает
+        (errors, valid_rows, skipped_count).
+        """
+        errors: list[dict] = []
+        candidates: list[dict] = []
+
+        tmc_column: str | None = next(
+            (k for k in (rows[0] if rows else {})
+             if str(k).strip().lower() in ("артикул", "номер тмц (du,kp,a2v)")),
+            None,
+        )
+        if rows and tmc_column is None:
+            errors.append({"row": 0, "field": "АРТИКУЛ",
+                            "message": "В файле не найдена колонка 'АРТИКУЛ' (или 'Номер ТМЦ (DU,KP,A2V)')"})
+            return errors, [], 0
+
+        lsn_column: str | None = next(
+            (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("lsn", "lcn")),
+            None,
+        )
+        if rows and lsn_column is None:
+            errors.append({"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'lsn' (или 'lcn')"})
+            return errors, [], 0
+
+        counter_repo = IteratorNumberLastRepository(session=db_session)
+        counter_row = await counter_repo.get_one_or_none(
+            IteratorNumberLast.description == ACTIVE_NUMBER_COUNTER_DESCRIPTION
+        )
+        if counter_row is None or counter_row.number is None:
+            errors.append({
+                "row": 0, "field": "*",
+                "message": f"Не найден счётчик '{ACTIVE_NUMBER_COUNTER_DESCRIPTION}' в iterator_number_last",
+            })
+            return errors, [], 0
+
+        design_number_cache: dict[str, int | None] = {}
+        train_ids_by_type: dict[int, list[int]] = {}
+        model_cache: dict[tuple[int, str], list[int | None]] = {}
+
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
+                progress["processed"] = row_num
+
+            design_number_raw = str(row.get(tmc_column) or "").strip()
+            if not design_number_raw or design_number_raw == "None":
+                continue
+
+            type_active = str(row.get("Тип актива") or "").strip()
+            if not type_active:
+                errors.append({"row": row_num, "field": "Тип актива", "message": "Поле 'Тип актива' пустое"})
+                continue
+            if len(type_active) >= ACTIVE_NUMBER_LENGTH:
+                errors.append({
+                    "row": row_num, "field": "Тип актива",
+                    "message": (f"'{type_active}' слишком длинный для {ACTIVE_NUMBER_LENGTH}-значного "
+                                f"номера актива (префикс + цифры)"),
+                })
+                continue
+
+            lsn_raw = str(row.get(lsn_column) or "").strip()
+            if not lsn_raw:
+                errors.append({"row": row_num, "field": "lcn", "message": "Пустой lsn"})
+                continue
+
+            parsed = _parse_model_lcn(lsn_raw)
+            if parsed is None:
+                errors.append({"row": row_num, "field": "lcn",
+                                "message": f"Не удалось распознать id_train_type в lcn '{lsn_raw}'"})
+                continue
+            id_train_type, rest = parsed
+
+            if design_number_raw not in design_number_cache:
+                design_number_cache[design_number_raw] = await db_session.scalar(
+                    select(DesignNumber.id).where(DesignNumber.number == design_number_raw)
+                )
+            id_design_number = design_number_cache[design_number_raw]
+            if id_design_number is None:
+                errors.append({"row": row_num, "field": tmc_column, "message": f"ТМЦ не найдена: '{design_number_raw}'"})
+                continue
+
+            model_key = (id_train_type, lsn_raw)
+            if model_key not in model_cache:
+                model_result = await db_session.execute(
+                    text(
+                        "SELECT id_car_place, is_default FROM public.models "
+                        "WHERE id_train_type = :tt AND lcn::text = :lcn"
+                    ),
+                    {"tt": id_train_type, "lcn": lsn_raw},
+                )
+                model_cache[model_key] = model_result.all()
+            model_rows = model_cache[model_key]
+            if not model_rows:
+                errors.append({"row": row_num, "field": "lcn", "message": f"Модель с lcn '{lsn_raw}' не найдена"})
+                continue
+            distinct_places = {r[0] for r in model_rows}
+            if len(distinct_places) == 1:
+                id_car_place = next(iter(distinct_places))
+            else:
+                # Одному lcn может соответствовать несколько строк models с разными
+                # id_design_number (альтернативные позиции) — если они расходятся и по
+                # id_car_place, приоритет у строки с is_default=true. is_default=true
+                # не гарантирован на каждый lcn (см. случай выше, где обе строки не
+                # default, но совпадают по car_place — туда мы уже не попадаем).
+                default_places = {r[0] for r in model_rows if r[1]}
+                if len(default_places) == 1:
+                    id_car_place = next(iter(default_places))
+                else:
+                    errors.append({"row": row_num, "field": "lcn",
+                                    "message": (f"Модель с lcn '{lsn_raw}' неоднозначна: несколько разных "
+                                                f"id_car_place {sorted(p for p in distinct_places if p is not None)}")})
+                    continue
+
+            car_number: int | None = None
+            if rest:
+                first_segment = rest.split(".")[0]
+                try:
+                    car_number = int(first_segment)
+                except ValueError:
+                    errors.append({"row": row_num, "field": "lcn",
+                                    "message": f"Не удалось распознать номер вагона в lcn '{lsn_raw}'"})
+                    continue
+
+            if id_train_type not in train_ids_by_type:
+                result = await db_session.execute(select(Train.id).where(Train.id_train_type == id_train_type))
+                train_ids_by_type[id_train_type] = [r[0] for r in result.all()]
+            train_ids = train_ids_by_type[id_train_type]
+            if not train_ids:
+                errors.append({"row": row_num, "field": "lcn",
+                                "message": f"Поезда с id_train_type={id_train_type} не найдены"})
+                continue
+
+            # Серийник из файла применяется только когда для позиции создаётся ровно
+            # один актив (один поезд этого типа) — иначе один и тот же серийный номер
+            # продублировался бы на разные активы (как в _validate_create_actives_rows).
+            serial_raw = str(row.get("Серийный номер") or "").strip()
+            serial_number = serial_raw if len(train_ids) == 1 else "none"
+
+            for train_id in train_ids:
+                new_lcn = f"{train_id}.{rest}" if rest else str(train_id)
+                candidates.append({
+                    "row_num": row_num,
+                    "id_design_number": id_design_number,
+                    "type_active": type_active,
+                    "id_train": train_id,
+                    "car_number": car_number,
+                    "id_car_place": id_car_place,
+                    "lcn": new_lcn,
+                    "serial_number": serial_number or None,
+                })
+
+        if not candidates:
+            return errors, [], 0
+
+        # Батч-проверка занятости целевого lcn (один запрос на все строки файла, не на
+        # строку) + дедуп дублей внутри батча — оба случая молча пропускаются, не ошибка.
+        all_lcns = [c["lcn"] for c in candidates]
+        stmt = text(
+            "SELECT lcn::text FROM public.actives WHERE lcn::text IN :lcns"
+        ).bindparams(bindparam("lcns", expanding=True))
+        existing_lcns = set((await db_session.execute(stmt, {"lcns": all_lcns})).scalars().all())
+
+        valid_rows: list[dict] = []
+        seen_lcns: set[str] = set()
+        skipped_count = 0
+        for c in candidates:
+            if c["lcn"] in existing_lcns or c["lcn"] in seen_lcns:
+                skipped_count += 1
+                continue
+            seen_lcns.add(c["lcn"])
+            valid_rows.append(c)
+
+        return errors, valid_rows, skipped_count
+
+    @staticmethod
+    def _build_create_active_from_model_sql_body(valid_rows: list[dict]) -> list[str]:
+        """Строит тело SQL создания активов по модельным позициям (без BEGIN/COMMIT).
+
+        В отличие от _build_create_actives_sql_body здесь нет складского счётчика
+        (storage.last_lcn под FOR UPDATE) — реальный lcn каждого актива уже
+        детерминирован моделью (id_train + путь из lsn), поэтому FOR UPDATE нужен
+        только на общий счётчик номеров активов iterator_number_last.
+        """
+        total = len(valid_rows)
+
+        sql_lines: list[str] = ["DO $$", "DECLARE"]
+        sql_lines.append(
+            f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
+            f"FROM generate_series(1, {total}));"
+        )
+        sql_lines.append(
+            f"    act_ids bigint[] := ARRAY(SELECT nextval('public.actives_id_seq') "
+            f"FROM generate_series(1, {total}));"
+        )
+        sql_lines.append("    active_num bigint;")
+        sql_lines.append("BEGIN")
+        sql_lines.append(
+            f"    SELECT number INTO active_num FROM public.iterator_number_last "
+            f"WHERE description = '{sql_escape(ACTIVE_NUMBER_COUNTER_DESCRIPTION)}' FOR UPDATE;"
+        )
+        sql_lines.append(
+            f"    IF active_num IS NULL THEN RAISE EXCEPTION "
+            f"'Счётчик ''{sql_escape(ACTIVE_NUMBER_COUNTER_DESCRIPTION)}'' не найден или пуст'; END IF;"
+        )
+
+        for i, vr in enumerate(valid_rows, start=1):
+            loc_ref = f"loc_ids[{i}]"
+            act_ref = f"act_ids[{i}]"
+            sql_lines.append("    active_num := active_num + 1;")
+
+            car_number_val = str(vr["car_number"]) if vr["car_number"] is not None else "NULL"
+            car_place_val = str(vr["id_car_place"]) if vr["id_car_place"] is not None else "NULL"
+            sql_lines.append(
+                f"    INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
+                f"VALUES ({loc_ref}, 2, {vr['id_train']}, {car_number_val}, {car_place_val});"
+            )
+
+            sn_val = f"'{sql_escape(vr['serial_number'])}'" if vr["serial_number"] else "NULL"
+            number_width = ACTIVE_NUMBER_LENGTH - len(vr["type_active"])
+            active_number_expr = (
+                f"'{sql_escape(vr['type_active'])}' || lpad(active_num::text, {number_width}, '0')"
+            )
+            sql_lines.append(
+                f"    INSERT INTO public.actives (id, active_number, id_design_number, id_location, "
+                f"serial_number, lcn) VALUES ({act_ref}, {active_number_expr}, {vr['id_design_number']}, {loc_ref}, "
+                f"{sn_val}, '{sql_escape(vr['lcn'])}'::ltree);"
+            )
+
+        sql_lines.append(
+            f"    UPDATE public.iterator_number_last SET number = active_num "
+            f"WHERE description = '{sql_escape(ACTIVE_NUMBER_COUNTER_DESCRIPTION)}';"
+        )
         sql_lines.append("END $$;")
 
         return sql_lines
@@ -2047,6 +2338,148 @@ class ActivesParserController(Controller):
                          xlsx=self._build_created_actives_xlsx(xlsx_rows),
                          xlsx_filename="actives.xlsx",
                          message=f"Успешно создано активов: {len(valid_rows)}")
+
+    @post("/create-active-from-model/generate-sql/start")
+    async def create_active_from_model_generate_sql_start(self, request: Request) -> Response:
+        """Запускает фоновую генерацию SQL-файла создания активов из модели lcn, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_create_active_from_model_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_create_active_from_model_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows, skipped_count = \
+                    await self._validate_create_active_from_model_rows(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
+            return
+
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+        if not valid_rows:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+            return
+
+        sql_lines = self._build_create_active_from_model_sql_body(valid_rows)
+        header = [f"-- Пропущено (lcn уже занят на части поездов): {skipped_count}"] if skipped_count else []
+        full_sql = "\n".join([*header, "BEGIN;", *sql_lines, "COMMIT;"])
+        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+
+    @post("/create-active-from-model/execute/start")
+    async def create_active_from_model_execute_start(self, request: Request) -> Response:
+        """Запускает фоновую атомарную вставку активов из модели lcn, возвращает task_id."""
+        session_id = request.session.get(f"{PREFIX}_session_id", "")
+        stored = _load_data(session_id) if session_id else None
+        if not stored:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        rows: list[dict] = stored["rows"]
+
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_create_active_from_model_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_create_active_from_model_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        valid_rows: list[dict] = []
+        skipped_count = 0
+        sql_lines: list[str] = []
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows, skipped_count = \
+                    await self._validate_create_active_from_model_rows(session, rows, progress=progress)
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+                    return
+
+                progress.update(processed=0, total=1, phase="executing")
+
+                sql_lines = self._build_create_active_from_model_sql_body(valid_rows)
+                sql_body = "\n".join(sql_lines)
+
+                try:
+                    # ВАЖНО: как и в create-actives — session.rollback() ниже откатывает и этот
+                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
+                    # (запросы репозиториев внутри _validate_create_active_from_model_rows).
+                    # Не убирайте обращения к session до этой точки.
+                    conn = await session.connection()
+                    raw_conn = await conn.get_raw_connection()
+                    await raw_conn.driver_connection.execute(sql_body)
+
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+
+                progress["processed"] = 1
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        now = datetime.now()
+        log_lines = [
+            f"=== Create Active From Model LCN: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Actives created: {len(valid_rows)}",
+            f"Skipped (lcn already occupied): {skipped_count}",
+            "",
+            *sql_lines,
+            "",
+        ]
+        log_file = LOG_DIR / f"create_active_from_model_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Created %d actives from model lcn (%d skipped), log: %s",
+                     len(valid_rows), skipped_count, log_file)
+
+        message = f"Успешно создано активов: {len(valid_rows)}"
+        if skipped_count:
+            message += f" (пропущено {skipped_count} — позиция уже занята на части поездов)"
+        progress.update(status="done", count=len(valid_rows), message=message)
 
     @get("/progress/{task_id:str}")
     async def task_progress(self, task_id: str) -> Response:
