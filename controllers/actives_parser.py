@@ -400,11 +400,11 @@ class ActivesParserController(Controller):
         valid_rows: list[tuple[str, int, str]] = []
         batch_numbers: set[str] = set()
 
-        if rows and "Новая Позиция ТМЦ" not in rows[0] and "Новый ТМЦ номер" not in rows[0]:
+        if rows and not ({"Новая Позиция ТМЦ", "Новый ТМЦ номер", "Позиция ТМЦ"} & rows[0].keys()):
             errors.append({
                 "row": 0,
                 "field": "Новая Позиция ТМЦ",
-                "message": "В файле не найдена колонка 'Новая Позиция ТМЦ' (или 'Новый ТМЦ номер')",
+                "message": "В файле не найдена колонка 'Новая Позиция ТМЦ' (или 'Новый ТМЦ номер', 'Позиция ТМЦ')",
             })
             return errors, valid_rows
 
@@ -416,7 +416,9 @@ class ActivesParserController(Controller):
             if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
                 progress["processed"] = row_num
             active_number = str(row.get("Актив", "") or "").strip()
-            design_number = str(row.get("Новая Позиция ТМЦ") or row.get("Новый ТМЦ номер") or "").strip()
+            design_number = str(
+                row.get("Новая Позиция ТМЦ") or row.get("Новый ТМЦ номер") or row.get("Позиция ТМЦ") or ""
+            ).strip()
 
             if not active_number:
                 errors.append({"row": row_num, "field": "Актив", "message": "Поле 'Актив' пустое"})

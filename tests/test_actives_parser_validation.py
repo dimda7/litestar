@@ -29,6 +29,17 @@ async def test_design_number_new_column_name(db_session):
     assert valid_rows == [("ES1040010328", dn_id, "A2V00002691454")]
 
 
+async def test_design_number_short_column_name(db_session):
+    await make_active(db_session, "ES1040010328")
+    dn_id = await make_design_number(db_session, "A2V00002691454")
+
+    rows = [{"Актив": "ES1040010328", "Позиция ТМЦ": "A2V00002691454"}]
+    errors, valid_rows = await controller._validate_design_number(db_session, rows)
+
+    assert errors == []
+    assert valid_rows == [("ES1040010328", dn_id, "A2V00002691454")]
+
+
 async def test_design_number_column_missing(db_session):
     rows = [{"Актив": "ES1040010328", "Другая колонка": "x"}]
     errors, valid_rows = await controller._validate_design_number(db_session, rows)
