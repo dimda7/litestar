@@ -5,7 +5,7 @@ from sqlalchemy.pool import StaticPool
 
 from models import (
     Actives, Base, CarPlace, Consignment, CounterGroup, CounterType, DesignNumber,
-    Ptoir, PtoirLevelWarning, Storage, Train, TrainType, UnitType, User,
+    Orders, Ptoir, PtoirLevelWarning, Storage, Train, TrainType, UnitType, User,
 )
 
 
@@ -100,6 +100,13 @@ async def make_ptoir(db_session: AsyncSession, number_ptoir: str = "ТО0001", i
 
 async def make_ptoir_level_warning(db_session: AsyncSession, id_ptoir: int, id_counter_type: int) -> int:
     obj = PtoirLevelWarning(id_ptoir=id_ptoir, id_counter_type=id_counter_type)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_order(db_session: AsyncSession, order_number: str = "ЗН000001") -> int:
+    obj = Orders(order_number=order_number)
     db_session.add(obj)
     await db_session.flush()
     return obj.id

@@ -265,6 +265,14 @@ class OrderToActives(Base):
     id_active: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
+class OrderToOrder(Base):
+    __tablename__ = "order_to_order"
+    __table_args__ = {"schema": "public"}
+
+    id_parent: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id_child: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
 class ActiveAdditionalField(Base):
     __tablename__ = "active_additional_field"
     __table_args__ = {"schema": "public"}
