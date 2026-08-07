@@ -79,6 +79,17 @@ def _parse_car_number(position: str) -> int | None:
     return None
 
 
+def _parse_count_car(lsn: str) -> int | None:
+    """Извлекает count_car — второй сегмент lsn последней строки файла ('361.5.9.4' -> 5)."""
+    parts = lsn.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
 class TrainParserController(Controller):
     path = "/train-parser"
 
@@ -288,6 +299,7 @@ class TrainParserController(Controller):
     @staticmethod
     def _build_sql_body(
         id_train: int, id_type_train: int, train_name: str, valid_rows: list[dict], id_train_series: int,
+        count_car: int | None = None,
     ) -> list[str]:
         """Строит тело SQL-скрипта вставки поезда (без BEGIN/COMMIT).
 
@@ -360,6 +372,11 @@ class TrainParserController(Controller):
         sql_lines.append(
             f"UPDATE public.train SET id_train_series = {id_train_series} WHERE id = {id_train};"
         )
+
+        if count_car is not None:
+            sql_lines.append(
+                f"UPDATE public.train SET count_car = {count_car} WHERE id = {id_train};"
+            )
 
         sql_lines.append("SELECT nextval('public.location_id_seq');")
         sql_lines.append("SELECT nextval('public.actives_id_seq');")
@@ -434,8 +451,9 @@ class TrainParserController(Controller):
         # данных уже вставится, а остальные — нет, или (хуже) продолжат
         # выполняться и привяжутся не к тому train.id. BEGIN/COMMIT делает
         # весь файл одной атомарной операцией: либо всё, либо ничего.
+        count_car = _parse_count_car(str(rows[-1].get("lsn", "") or "").strip()) if rows else None
         sql_lines = ["BEGIN;"]
-        sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series))
+        sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
         sql_lines.append("COMMIT;")
 
         progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
@@ -515,7 +533,8 @@ class TrainParserController(Controller):
                 # через «сырое» соединение: DO $$ ... $$ с несколькими операторами
                 # внутри нельзя выполнить через обычный execute() с параметрами
                 # (asyncpg не готовит несколько команд в одном prepared statement).
-                sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series))
+                count_car = _parse_count_car(str(rows[-1].get("lsn", "") or "").strip()) if rows else None
+                sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
 
                 try:
                     # ВАЖНО: session.rollback() ниже откатывает и этот «сырой» вызов
