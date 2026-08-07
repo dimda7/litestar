@@ -96,6 +96,11 @@ class TrainParserController(Controller):
             if lsn and active_number:
                 key_actives[lsn] = active_number
 
+        # Первая строка файла — главный актив поезда (lsn из одного сегмента,
+        # например '361'). У него самого id_actives_root = NULL, у всех
+        # остальных активов — active_number главного (не наоборот).
+        root_active_number = str(rows[0].get("Актив", "") or "").strip() if rows else ""
+
         if progress is not None:
             progress.update(processed=0, total=len(rows), phase="validating")
 
@@ -167,7 +172,7 @@ class TrainParserController(Controller):
                 "lcn_new": lcn_new,
                 "id_actives_parent": id_actives_parent,
                 "is_root": idx == 0,
-                "root_number": active_number if idx == 0 else None,
+                "root_number": None if idx == 0 else root_active_number,
             })
 
         return errors, valid_rows
@@ -311,7 +316,7 @@ class TrainParserController(Controller):
             act_ref = f"act_ids[{idx}]"
 
             sn = vr["serial_number"]
-            sn_val = f"'{sql_escape(sn)}'" if sn and sn != "none" else "NULL"
+            sn_val = f"'{sql_escape(sn)}'" if sn else "NULL"
             parent_val = f"'{sql_escape(str(vr['id_actives_parent']))}'" if vr["id_actives_parent"] else "NULL"
             root_val = f"'{sql_escape(str(vr['root_number']))}'" if vr["root_number"] else "NULL"
             car_num_val = str(vr["car_number"]) if vr["car_number"] is not None else "NULL"
