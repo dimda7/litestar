@@ -430,10 +430,12 @@
         closeActionModal();
         document.getElementById('error-box').style.display = 'none';
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showProgress();
 
-        fetch('/parser/generate-sql', { method: 'POST', body: buildFormData() })
+        fetch('/parser/generate-sql/start', { method: 'POST', body: buildFormData() })
             .then(resp => resp.json())
-            .then(data => {
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
                 if (data.status === 'error') {
                     handleErrors(data);
                 } else {
@@ -445,8 +447,8 @@
                     a.click();
                     URL.revokeObjectURL(url);
                 }
-            })
-            .catch(err => alert('Ошибка запроса: ' + err));
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
     }
 
     function executeSQL() {
@@ -456,17 +458,20 @@
 
         if (!confirm('Выполнить вставку всех строк в базу данных?')) return;
 
-        fetch('/parser/execute-sql', { method: 'POST', body: buildFormData() })
+        showProgress();
+
+        fetch('/parser/execute-sql/start', { method: 'POST', body: buildFormData() })
             .then(resp => resp.json())
-            .then(data => {
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
                 if (data.status === 'error') {
                     handleErrors(data);
                 } else {
                     alert(data.message);
                     location.reload();
                 }
-            })
-            .catch(err => alert('Ошибка запроса: ' + err));
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
     }
 
     function showDeleteModal() {
@@ -483,13 +488,14 @@
 
     function deleteAllRows() {
         closeDeleteModal();
-        const formData = new FormData();
-        formData.append('rows', JSON.stringify(ALL_ROWS));
-        appendCsrfToken(formData);
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showProgress();
 
-        fetch('/parser/delete-rows', { method: 'POST', body: formData })
+        fetch('/parser/delete-rows/start', { method: 'POST', body: buildFormData() })
             .then(resp => resp.json())
-            .then(data => {
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
                 if (data.status === 'error') {
                     handleErrors(data);
                 } else {
@@ -501,8 +507,8 @@
                     a.click();
                     URL.revokeObjectURL(url);
                 }
-            })
-            .catch(err => alert('Ошибка запроса: ' + err));
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
     }
 
     function executeDelete() {
@@ -512,17 +518,20 @@
 
         if (!confirm('Выполнить удаление всех строк из базы данных?')) return;
 
-        fetch('/parser/execute-delete', { method: 'POST', body: buildFormData() })
+        showProgress();
+
+        fetch('/parser/execute-delete/start', { method: 'POST', body: buildFormData() })
             .then(resp => resp.json())
-            .then(data => {
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
                 if (data.status === 'error') {
                     handleErrors(data);
                 } else {
                     alert(data.message);
                     location.reload();
                 }
-            })
-            .catch(err => alert('Ошибка запроса: ' + err));
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
     }
 
     function showSerialNoneModal() {

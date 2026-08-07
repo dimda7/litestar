@@ -21,7 +21,7 @@ from litestar.response import Template, Response, Redirect
 from db_manager import get_session_maker
 from models import TrainType, CarPlace, DesignNumber, Models, Train, Storage, Consignment, User
 from schemas import (
-    GenerateSQLRequest, DeleteRowsRequest, SelectSheetRequest,
+    SelectSheetRequest,
     GenerateSQLResponse, ExecuteSQLResponse,
 )
 from sql_utils import sql_escape
@@ -241,7 +241,12 @@ class ParserController(Controller):
             request.session["parser_error"] = f"Ошибка чтения листа: {e}"
             return Redirect("/parser")
 
-    async def _validate_and_build_rows(self, db_session: AsyncSession, rows: list[dict]) -> tuple[list[dict[str, str]], list[tuple[int, int, int, str, bool]]]:
+    async def _validate_and_build_rows(
+        self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    ) -> tuple[list[dict[str, str]], list[tuple[int, int, int, str, bool]]]:
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+
         existing_rows = await db_session.execute(
             select(Models.id_train_type, Models.lcn, Models.id_car_place,
                    Models.id_design_number, Models.is_default)
@@ -266,6 +271,8 @@ class ParserController(Controller):
 
         for idx, row in enumerate(rows):
             row_num = idx + 1
+            if progress is not None:
+                progress["processed"] = row_num
             model_name = str(row.get("model", "")).strip()
             position = str(row.get("position", "")).strip()
             itemnum = str(row.get("itemnum", "")).strip()
@@ -1011,245 +1018,246 @@ class ParserController(Controller):
         sql_lines.append("END $$;")
         return sql_lines
 
-    @post("/generate-sql")
-    async def generate_sql(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-        data: GenerateSQLRequest = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        """Генерация SQL-файла для вставки строк в таблицу public.models.
-
-        Валидирует данные из Excel, проверяет дубликаты и уникальные ограничения,
-        затем возвращает SQL-код для скачивания в виде .sql файла.
-        """
-        rows: list[dict] = json.loads(data.rows)
-        try:
-            errors, valid_rows = await self._validate_and_build_rows(db_session, rows)
-        except Exception as e:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
-
-        if errors:
-            return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
-                status_code=200,
-                media_type="application/json",
-            )
-
+    @staticmethod
+    def _build_insert_sql_lines(valid_rows: list[tuple[int, int, int, str, bool]]) -> list[str]:
         sql_lines: list[str] = []
         for train_type_id, car_place_id, design_number_id, lcn, is_default in valid_rows:
             isdefault_val = "TRUE" if is_default else "FALSE"
-            sql = (
+            sql_lines.append(
                 f"INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
                 f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{sql_escape(lcn)}', {isdefault_val});"
             )
-            sql_lines.append(sql)
+        return sql_lines
 
-        content = "\n".join(sql_lines)
+    @staticmethod
+    def _parse_delete_ids(rows: list[dict], progress: dict | None = None) -> tuple[list[dict], list[int]]:
+        errors: list[dict] = []
+        valid_ids: list[int] = []
+        if progress is not None:
+            progress.update(processed=0, total=len(rows), phase="validating")
+        for idx, row in enumerate(rows):
+            row_num = idx + 1
+            if progress is not None:
+                progress["processed"] = row_num
+            row_id = row.get("id")
+            if not row_id:
+                errors.append({"row": row_num, "field": "id",
+                               "message": "Поле 'id' отсутствует или пустое"})
+                continue
+            valid_ids.append(int(row_id))
+        return errors, valid_ids
+
+    @staticmethod
+    def _build_delete_sql_lines(valid_ids: list[int]) -> list[str]:
+        return [f"DELETE FROM public.models WHERE id = {rid};" for rid in valid_ids]
+
+    @post("/generate-sql/start")
+    async def generate_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновую генерацию SQL-файла вставки строк в models, возвращает task_id для опроса прогресса."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_insert_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
         return Response(
-            content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
+            content=json.dumps({"task_id": task_id}),
             status_code=200,
             media_type="application/json",
         )
 
-    @post("/execute-sql")
-    async def execute_sql(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-        data: GenerateSQLRequest = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        """Атомарная вставка строк в таблицу public.models.
-
-        Валидирует данные, выполняет все INSERT-запросы в одной транзакции.
-        При ошибке вся транзакция откатывается. Логирует результат в log/.
-        """
-        rows: list[dict] = json.loads(data.rows)
+    async def _run_insert_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
         try:
-            errors, valid_rows = await self._validate_and_build_rows(db_session, rows)
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await self._validate_and_build_rows(session, rows, progress=progress)
         except Exception as e:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+            return
 
         if errors:
-            return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=errors)
+            return
 
-        if not valid_rows:
-            return Response(
-                content=json.dumps({"status": "error", "errors": ["Нет валидных строк для вставки"]}),
-                status_code=200,
-                media_type="application/json",
-            )
+        sql_lines = self._build_insert_sql_lines(valid_rows)
+        progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
 
+    @post("/execute-sql/start")
+    async def execute_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновую атомарную вставку строк в public.models, возвращает task_id для опроса прогресса."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_insert_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
+        return Response(
+            content=json.dumps({"task_id": task_id}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    async def _run_insert_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
         try:
-            for train_type_id, car_place_id, design_number_id, lcn, is_default in valid_rows:
-                isdefault_val = "TRUE" if is_default else "FALSE"
-                await db_session.execute(
-                    text(
-                        "INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
-                        "VALUES (:tt, :cp, :dn, :lcn, :def)"
-                    ),
-                    {"tt": train_type_id, "cp": car_place_id, "dn": design_number_id, "lcn": lcn, "def": is_default},
-                )
-            await db_session.commit()
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                try:
+                    errors, valid_rows = await self._validate_and_build_rows(session, rows, progress=progress)
+                except Exception as e:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    return
+
+                if errors:
+                    progress.update(status="error", errors=errors)
+                    return
+
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для вставки"}])
+                    return
+
+                progress.update(processed=0, total=len(valid_rows), phase="executing")
+                try:
+                    for i, (train_type_id, car_place_id, design_number_id, lcn, is_default) in enumerate(valid_rows, start=1):
+                        await session.execute(
+                            text(
+                                "INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
+                                "VALUES (:tt, :cp, :dn, :lcn, :def)"
+                            ),
+                            {"tt": train_type_id, "cp": car_place_id, "dn": design_number_id, "lcn": lcn, "def": is_default},
+                        )
+                        progress["processed"] = i
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
         except Exception as e:
-            await db_session.rollback()
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
 
         now = datetime.now()
         log_lines = [
             f"=== Execute SQL: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
             f"Rows inserted: {len(valid_rows)}",
             "",
+            *self._build_insert_sql_lines(valid_rows),
+            "",
         ]
-        for train_type_id, car_place_id, design_number_id, lcn, is_default in valid_rows:
-            isdefault_val = "TRUE" if is_default else "FALSE"
-            log_lines.append(
-                f"INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
-                f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{sql_escape(lcn)}', {isdefault_val});"
-            )
-        log_lines.append("")
-
         log_file = LOG_DIR / f"insert_models_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(log_lines))
         logger.info("SQL executed: %d rows inserted, log saved to %s", len(valid_rows), log_file)
 
+        progress.update(status="done", count=len(valid_rows), message=f"Успешно вставлено {len(valid_rows)} строк")
+
+    @post("/delete-rows/start")
+    async def delete_rows_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        """Запускает фоновую генерацию SQL-файла удаления строк из models, возвращает task_id для опроса прогресса."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_delete_generate(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно вставлено {len(valid_rows)} строк"}),
+            content=json.dumps({"task_id": task_id}),
             status_code=200,
             media_type="application/json",
         )
 
-    @post("/delete-rows")
-    async def delete_rows(
+    async def _run_delete_generate(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        errors, valid_ids = self._parse_delete_ids(rows, progress=progress)
+        if errors:
+            progress.update(status="error", errors=errors)
+            return
+
+        sql_lines = self._build_delete_sql_lines(valid_ids)
+        progress.update(status="done", sql="\n".join(sql_lines), count=len(sql_lines))
+
+    @post("/execute-delete/start")
+    async def execute_delete_start(
         self,
         request: Request,
-        data: DeleteRowsRequest = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Генерация SQL-файла для удаления строк из таблицы public.models.
-
-        Принимает массив объектов с полем id, возвращает SQL-код для скачивания.
-        """
-        rows: list[dict] = json.loads(data.rows)
-
-        errors: list[dict[str, str]] = []
-        valid_ids: list[int] = []
-
-        for idx, row in enumerate(rows):
-            row_num = idx + 1
-            row_id = row.get("id")
-            if not row_id:
-                errors.append({"row": row_num, "field": "id",
-                               "message": "Поле 'id' отсутствует или пустое"})
-                continue
-            valid_ids.append(int(row_id))
-
-        if errors:
-            return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
-                status_code=200,
-                media_type="application/json",
-            )
-
-        sql_lines = [f"DELETE FROM public.models WHERE id = {rid};" for rid in valid_ids]
-        content = "\n".join(sql_lines)
+        """Запускает фоновое атомарное удаление строк из public.models, возвращает task_id для опроса прогресса."""
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        _cleanup_progress()
+        task_id = uuid.uuid4().hex
+        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
+                               "status": "running", "created_at": time.time()}
+        task = asyncio.ensure_future(self._run_delete_execute(task_id, rows))
+        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
+        _tasks[task_id] = task
         return Response(
-            content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
+            content=json.dumps({"task_id": task_id}),
             status_code=200,
             media_type="application/json",
         )
 
-    @post("/execute-delete")
-    async def execute_delete(
-        self,
-        request: Request,
-        db_session: AsyncSession,
-        data: DeleteRowsRequest = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        """Атомарное удаление строк из таблицы public.models.
-
-        Выполняет DELETE-запросы в одной транзакции. При ошибке откат.
-        Логирует результат в log/.
-        """
-        rows: list[dict] = json.loads(data.rows)
-
-        errors: list[dict[str, str]] = []
-        valid_ids: list[int] = []
-
-        for idx, row in enumerate(rows):
-            row_num = idx + 1
-            row_id = row.get("id")
-            if not row_id:
-                errors.append({"row": row_num, "field": "id",
-                               "message": "Поле 'id' отсутствует или пустое"})
-                continue
-            valid_ids.append(int(row_id))
-
+    async def _run_delete_execute(self, task_id: str, rows: list[dict]) -> None:
+        progress = _progress[task_id]
+        errors, valid_ids = self._parse_delete_ids(rows, progress=progress)
         if errors:
-            return Response(
-                content=json.dumps({"status": "error", "errors": errors}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=errors)
+            return
 
         if not valid_ids:
-            return Response(
-                content=json.dumps({"status": "error", "errors": ["Нет валидных строк для удаления"]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для удаления"}])
+            return
 
+        progress.update(processed=0, total=len(valid_ids), phase="executing")
         try:
-            for rid in valid_ids:
-                await db_session.execute(
-                    text("DELETE FROM public.models WHERE id = :id"),
-                    {"id": rid},
-                )
-            await db_session.commit()
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                try:
+                    for i, rid in enumerate(valid_ids, start=1):
+                        await session.execute(text("DELETE FROM public.models WHERE id = :id"), {"id": rid})
+                        progress["processed"] = i
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
         except Exception as e:
-            await db_session.rollback()
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
 
         now = datetime.now()
         log_lines = [
             f"=== Execute Delete: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
             f"Rows deleted: {len(valid_ids)}",
             "",
+            *self._build_delete_sql_lines(valid_ids),
+            "",
         ]
-        for rid in valid_ids:
-            log_lines.append(f"DELETE FROM public.models WHERE id = {rid};")
-        log_lines.append("")
-
         log_file = LOG_DIR / f"delete_models_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(log_lines))
         logger.info("SQL executed: %d rows deleted, log saved to %s", len(valid_ids), log_file)
 
-        return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_ids), "message": f"Успешно удалено {len(valid_ids)} строк"}),
-            status_code=200,
-            media_type="application/json",
-        )
+        progress.update(status="done", count=len(valid_ids), message=f"Успешно удалено {len(valid_ids)} строк")
 
     @post("/serial-none/generate-sql/start")
     async def serial_none_generate_sql_start(
