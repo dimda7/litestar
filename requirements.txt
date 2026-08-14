@@ -1,4 +1,5 @@
 litestar>=2.0
+jinja2>=3.1
 cryptography>=42.0
 advanced-alchemy>=0.20
 sqlalchemy>=2.0

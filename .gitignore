@@ -12,5 +12,9 @@ dist/
 build/
 .pytest_cache/
 
+# Docker image dumps (docker save) — сотни МБ, в репозиторий не кладём
+*.tar
+.playwright-mcp/
+
 # Claude Code memory (optional: track or not)
 # .claude/memory/

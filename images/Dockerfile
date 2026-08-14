@@ -28,7 +28,7 @@ ENV PATH=/home/app/.local/bin:$PATH \
 
 # Только то, что реально нужно в рантайме — без tests/, venv/, .idea/, docx и т.д.
 # (полный список исключений см. images/Dockerfile.dockerignore)
-COPY app.py config.py db_manager.py logging_config.py middleware.py models.py parser_storage.py schemas.py sql_utils.py ./
+COPY app.py config.py db_manager.py jira_client.py logging_config.py middleware.py models.py parser_storage.py schemas.py sql_utils.py ./
 COPY controllers ./controllers
 COPY templates ./templates
 COPY static ./static

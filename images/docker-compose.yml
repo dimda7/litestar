@@ -4,6 +4,9 @@
 # Требует существующий ../.env (см. .env.example в корне репо) — без него
 # config.py упадёт при старте (DB_HOST/SESSION_SECRET и т.д. обязательны).
 
+# Без явного name проект получил бы имя каталога ("images"), а контейнер — images-app-1
+name: litestar-grom
+
 services:
   app:
     build:
