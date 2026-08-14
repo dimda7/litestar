@@ -27,6 +27,7 @@ from controllers.jira import JiraController
 from controllers.sql_console import SqlConsoleController
 from controllers.users import UsersController
 from controllers.settings import SettingsController
+from controllers.about import AboutController
 from middleware import AuthMiddleware
 
 configure_logging(level=settings.log_level)
@@ -75,7 +76,7 @@ jinja_engine = JinjaTemplateEngine(directory=base_dir / "templates")
 jinja_engine.register_template_callable("current_db_label", lambda context: db_manager.get_active_profile())
 
 app = Litestar(
-    route_handlers=[HomeController, UsersController, AuthController, ParserController, TrainParserController, DesignNumberParserController, ActivesParserController, ActiveHierarchyController, PtoirParserController, OrderParserController, JiraController, SqlConsoleController, SettingsController],
+    route_handlers=[HomeController, UsersController, AuthController, ParserController, TrainParserController, DesignNumberParserController, ActivesParserController, ActiveHierarchyController, PtoirParserController, OrderParserController, JiraController, SqlConsoleController, SettingsController, AboutController],
     template_config=TemplateConfig(
         engine=jinja_engine,
     ),

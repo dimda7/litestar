@@ -257,6 +257,14 @@ class Orders(Base):
     id_ptoir: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class Techcard(Base):
+    __tablename__ = "techcard"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class OrderToActives(Base):
     __tablename__ = "order_to_actives"
     __table_args__ = {"schema": "public"}
