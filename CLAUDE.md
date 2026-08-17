@@ -48,6 +48,12 @@
 - Excel-derived strings are passed through `sql_escape()` (`sql_utils.py`) before being interpolated into generated SQL — prevents injection/syntax breakage in the generated `.sql` files.
 - Per-module logging via `logging_config.py` (`logging.config.dictConfig`): each module logger (`app`, `parser`, `train_parser`, `design_number_parser`) gets its own `RotatingFileHandler` under `log/<module>.log`. `LOG_LEVEL` is configurable via `.env`.
 - SQL console query cancellation: the DB sits behind pgbouncer (`DB_PORT=6432`). Cancelling wraps execution in an `asyncio.Task` and calls `task.cancel()` so asyncpg sends a native Postgres `CancelRequest` — issuing a second SQL query on the pooled connection instead just queues behind the busy one and never cancels in time.
+- DB connections live in `config_data/db_profiles.json` (`db_profiles.py`), not in `Settings` — they are editable at runtime from the Settings page, so a frozen dict built at import time would go stale. `DB_*` env vars only seed the file on first start (sets with a missing/non-numeric variable are skipped); afterwards `.env` no longer influences the list. The file is read on every access rather than cached: one uvicorn worker (`app.py` and the Docker `CMD` both run without `--workers`) means no cross-process races, and no cache means no stale-list bugs.
+- Each connection is keyed by a uuid, never by its name — names are display-only, may repeat, and are freely editable without moving the active-connection pointer.
+- `db_profiles.delete()` takes the active connection id as a **parameter** rather than asking `db_manager` for it: `db_manager` already imports `db_profiles`, so the reverse import would close a cycle. Both invariants (cannot delete the active connection, cannot delete the last one) therefore live in the module and are testable without mocks.
+- Passwords are stored in plaintext, as they already were in `.env`; encrypting them with a key sitting in the same `.env` would add no security. The file is instead written atomically (`os.replace`) with mode `0600`, and a corrupt file degrades to an empty list — `load()` raising would 500 every page including the `/auth/db-select` recovery screen.
+- `db_manager` keeps a **target epoch** counter, bumped whenever the app starts pointing at a different database (profile switch, or an edit to the active profile's host/port/dbname). `AuthMiddleware` compares it against `session["db_epoch"]` set at login. Without it, only the user who triggered the switch was logged out, while everyone else kept working in the new database under a `user_id` validated against the old one's `fdw_users`.
+- Connection URLs are built by `db_profiles.build_url()`, which percent-encodes user and password — a typed password like `p@ss` otherwise makes SQLAlchemy parse the host as `ss@…`.
 
 ## Litestar Specifics
 - Jinja2: `TemplateConfig(engine=JinjaTemplateEngine(directory="templates"))`
@@ -65,4 +71,17 @@
 
 ## Known Bugs / Data Issues
 - When looking up `CarPlace` by `name`, use `.scalars().all()` and handle 0/1/many explicitly — `.scalar_one_or_none()` raises `MultipleResultsFound` if duplicate names ever reappear in DB
-EOF
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (dimda7/litestar), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five canonical labels used as-is. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
