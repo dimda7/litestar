@@ -90,14 +90,35 @@ class DesignNumberSelectSheetRequest(msgspec.Struct):
 
 
 class DBProfileRequest(msgspec.Struct):
-    """Запрос на проверку/переключение подключения к БД."""
+    """Запрос на проверку/переключение/удаление подключения к БД."""
 
     profile: str
-    """Имя профиля БД (например, 'grom-tk' или 'grom-prod')."""
+    """Идентификатор подключения (uuid из db_profiles.json)."""
 
 
 class DbSelectRequest(msgspec.Struct):
     """Запрос выбора БД на странице /auth/db-select (перед логином)."""
 
     profile: str
-    """Имя профиля БД."""
+    """Идентификатор подключения."""
+
+
+class DBProfileFormRequest(msgspec.Struct):
+    """Поля формы подключения к БД (добавление и проверка непосохранённых параметров).
+
+    Порт приходит строкой: разбор и диапазон проверяет db_profiles, чтобы
+    ошибка вернулась общим JSON-контрактом, а не 400-й от валидатора Litestar.
+    """
+
+    name: str
+    host: str
+    port: str
+    user: str
+    password: str
+    dbname: str
+
+
+class DBProfileUpdateRequest(DBProfileFormRequest):
+    """Те же поля плюс идентификатор изменяемого подключения."""
+
+    profile: str = ""

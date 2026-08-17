@@ -83,10 +83,16 @@ docker compose -f images/docker-compose.yml up -d          # без --build
 
 Минимально необходимое:
 
+> Переменные `DB_*` — только первичный засев. Список подключений живёт в томе
+> `config_data` и редактируется на странице Настройки (добавление, правка,
+> удаление); `DB_*` читаются один раз, пока `config_data/db_profiles.json` не
+> создан. Все три набора необязательны — набор с отсутствующей переменной
+> пропускается.
+
 | Переменная | Описание |
 |---|---|
-| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | БД по умолчанию (`6432` — pgbouncer, `5432` — прямой postgres) |
-| `DB_*_PROD`, `DB_*_MY` | Альтернативные БД (переключение: Настройки → Подключение к базе данных) |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Засев подключения `grom-tk` (`6432` — pgbouncer, `5432` — прямой postgres) |
+| `DB_*_PROD`, `DB_*_MY` | Засев подключений `grom-prod` и `grom-my` |
 | `JIIRA_HOST`, `JIIRA_PORT`, `JIIRA_USER`, `JIIRA_PASSWORD` | Jira: выбор вложения задачи вместо файла с диска |
 | `SERVER_PORT` | Порт внутри контейнера, по умолчанию `8011` |
 | `SESSION_SECRET` | Подпись cookie-сессии и CSRF-токена |
@@ -142,6 +148,7 @@ docker compose -f images/docker-compose.yml up -d --build  # пересобра�
 
 - `parser_data` → `/app/parser_data` (промежуточные JSON парсеров)
 - `app_log` → `/app/log` (пофайловые логи модулей: `app.log`, `parser.log`, …)
+- `config_data` → `/app/config_data` (подключения к БД, `db_profiles.json` — с паролями)
 
 `down -v` удалит эти тома вместе с данными.
 

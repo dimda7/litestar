@@ -22,8 +22,12 @@ services:
     volumes:
       - parser_data:/app/parser_data
       - app_log:/app/log
+      # Подключения к БД, добавленные через Настройки. Без тома список
+      # откатывался бы к сиду из .env при каждой пересборке образа.
+      - config_data:/app/config_data
     restart: unless-stopped
 
 volumes:
   parser_data:
   app_log:
+  config_data:

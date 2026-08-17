@@ -5,6 +5,8 @@ __pycache__/
 *.pyc
 *.log
 parser_data/*.json
+# Подключения к БД, добавленные через Настройки — хранят пароли
+config_data/
 log/
 .idea/
 *.egg-info/

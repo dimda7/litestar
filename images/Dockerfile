@@ -28,14 +28,15 @@ ENV PATH=/home/app/.local/bin:$PATH \
 
 # Только то, что реально нужно в рантайме — без tests/, venv/, .idea/, docx и т.д.
 # (полный список исключений см. images/Dockerfile.dockerignore)
-COPY app.py config.py db_manager.py jira_client.py logging_config.py middleware.py models.py parser_storage.py schemas.py sql_utils.py ./
+COPY app.py config.py db_manager.py db_profiles.py jira_client.py logging_config.py middleware.py models.py parser_storage.py schemas.py sql_utils.py ./
 COPY controllers ./controllers
 COPY templates ./templates
 COPY static ./static
 
-# parser_data/ и log/ создаёт сам код (parser_storage.py, mkdir(exist_ok=True)),
-# но директории нужно завести заранее, чтобы ими владел non-root пользователь app
-RUN mkdir -p parser_data log \
+# parser_data/, log/ и config_data/ создаёт сам код (parser_storage.py,
+# db_profiles.py — mkdir(exist_ok=True)), но директории нужно завести заранее,
+# чтобы ими владел non-root пользователь app
+RUN mkdir -p parser_data log config_data \
     && chown -R app:app /app /home/app/.local
 
 USER app

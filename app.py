@@ -73,7 +73,7 @@ class HomeController(Controller):
 base_dir = Path(__file__).parent
 
 jinja_engine = JinjaTemplateEngine(directory=base_dir / "templates")
-jinja_engine.register_template_callable("current_db_label", lambda context: db_manager.get_active_profile())
+jinja_engine.register_template_callable("current_db_label", lambda context: db_manager.get_active_label())
 
 app = Litestar(
     route_handlers=[HomeController, UsersController, AuthController, ParserController, TrainParserController, DesignNumberParserController, ActivesParserController, ActiveHierarchyController, PtoirParserController, OrderParserController, JiraController, SqlConsoleController, SettingsController, AboutController],

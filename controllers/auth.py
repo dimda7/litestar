@@ -11,9 +11,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import db_manager
-from config import settings
+import db_profiles
 from models import User
 from schemas import DbSelectRequest, LoginRequest
+
+
+def _visible_profiles() -> list[dict[str, str | int]]:
+    """Подключения для экрана до логина — без паролей."""
+    return [
+        {"id": p.id, "name": p.name, "host": p.host, "port": p.port, "dbname": p.dbname}
+        for p in db_profiles.load()
+    ]
 
 
 class AuthController(Controller):
@@ -22,14 +30,9 @@ class AuthController(Controller):
     @get("/db-select")
     async def db_select_page(self, request: Request) -> Template:
         """Выбор подключения к БД перед логином — у каждой БД свои пользователи."""
-        profiles = [
-            {"name": name, "label": profile.label, "host": profile.host,
-             "port": profile.port, "dbname": profile.dbname}
-            for name, profile in settings.db_profiles.items()
-        ]
         return Template(
             template_name="db_select.html",
-            context={"error": None, "db_profiles": profiles},
+            context={"error": None, "db_profiles": _visible_profiles()},
         )
 
     @post("/db-select")
@@ -39,23 +42,17 @@ class AuthController(Controller):
         data: DbSelectRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
     ) -> Template | Redirect:
         """Проверяет подключение к выбранной БД и делает её активной."""
-        profiles = [
-            {"name": name, "label": profile.label, "host": profile.host,
-             "port": profile.port, "dbname": profile.dbname}
-            for name, profile in settings.db_profiles.items()
-        ]
-
-        if data.profile not in settings.db_profiles:
+        if db_profiles.get(data.profile) is None:
             return Template(
                 template_name="db_select.html",
-                context={"error": "Неизвестный профиль БД", "db_profiles": profiles},
+                context={"error": "Неизвестное подключение к БД", "db_profiles": _visible_profiles()},
             )
 
         ok, message = await db_manager.test_connection(data.profile)
         if not ok:
             return Template(
                 template_name="db_select.html",
-                context={"error": message, "db_profiles": profiles},
+                context={"error": message, "db_profiles": _visible_profiles()},
             )
 
         db_manager.set_active_profile(data.profile)
@@ -110,6 +107,7 @@ class AuthController(Controller):
             )
 
         request.session["user_id"] = user.id
+        request.session["db_epoch"] = db_manager.get_target_epoch()
         request.session["username"] = user.username or ""
         request.session["fullname"] = " ".join(
             filter(None, [user.lastname, user.firstname, user.middlename])

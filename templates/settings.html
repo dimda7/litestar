@@ -9,25 +9,42 @@
 </div>
 
 <div class="card" style="max-width: 600px; margin-bottom: 24px;">
-    <h3 style="margin-bottom: 8px; font-size: 16px; font-weight: 500;">Подключение к базе данных</h3>
+    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px;">
+        <h3 style="font-size: 16px; font-weight: 500;">Подключение к базе данных</h3>
+        <button type="button" onclick="openAddModal()" class="btn btn-primary" style="padding: 6px 12px; font-size: 13px; white-space: nowrap;">
+            + Добавить подключение
+        </button>
+    </div>
     <p style="margin: 0 0 20px; font-size: 13px; color: var(--text-secondary);">
-        Текущее подключение: <strong id="active-db-label" style="color: var(--text-primary);">{{ active_db_profile }}</strong>
+        Текущее подключение: <strong id="active-db-label" style="color: var(--text-primary);">{{ active_db_label }}</strong>
     </p>
 
     <div id="db-test-result" style="display: none; margin-bottom: 16px; padding: 10px 14px; border-radius: 8px; font-size: 13px;"></div>
 
     <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
         {% for p in db_profiles %}
-        <label style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
-            <input type="radio" name="db_profile" value="{{ p.name }}" {{ 'checked' if p.name == active_db_profile }} style="accent-color: var(--accent);">
-            <div>
-                <div style="font-size: 14px; font-weight: 500;">
-                    {{ p.label }}
-                    {% if p.name == active_db_profile %}<span style="font-size: 11px; font-weight: 400; color: #2e7d32;">— подключено</span>{% endif %}
+        <div style="display: flex; align-items: center; gap: 8px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px;">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; flex: 1; min-width: 0;">
+                <input type="radio" name="db_profile" value="{{ p.id }}" {{ 'checked' if p.id == active_db_profile }} style="accent-color: var(--accent);">
+                <div style="min-width: 0;">
+                    <div style="font-size: 14px; font-weight: 500;">
+                        {{ p.name }}
+                        {% if p.id == active_db_profile %}<span style="font-size: 11px; font-weight: 400; color: #2e7d32;">— подключено</span>{% endif %}
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-hint);">{{ p.host }}:{{ p.port }} / {{ p.dbname }}</div>
                 </div>
-                <div style="font-size: 12px; color: var(--text-hint);">{{ p.host }}:{{ p.port }} / {{ p.dbname }}</div>
-            </div>
-        </label>
+            </label>
+            <button type="button" class="row-action" title="Изменить" onclick="openEditModal('{{ p.id }}')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                </svg>
+            </button>
+            <button type="button" class="row-action row-action-danger" title="Удалить" onclick="deleteConnection('{{ p.id }}')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                </svg>
+            </button>
+        </div>
         {% endfor %}
     </div>
 
@@ -65,6 +82,63 @@
     </div>
 </div>
 
+<div id="db-modal" class="modal-overlay">
+    <div class="modal-window">
+        <div class="modal-header">
+            <h3 id="db-modal-title" style="font-size: 16px; font-weight: 500;">Новое подключение</h3>
+            <button type="button" class="modal-close" onclick="closeDbModal()" title="Закрыть">&times;</button>
+        </div>
+
+        <form id="db-modal-form" class="modal-body" onsubmit="event.preventDefault(); saveConnection();">
+            <input type="hidden" id="db-field-id">
+
+            <div class="form-group">
+                <label class="form-label" for="db-field-name">Name</label>
+                <input class="form-input" id="db-field-name" type="text" required autocomplete="off">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="db-field-host">Host name/address</label>
+                <input class="form-input" id="db-field-host" type="text" required autocomplete="off">
+            </div>
+
+            <div style="display: flex; gap: 12px;">
+                <div class="form-group" style="flex: 0 0 120px;">
+                    <label class="form-label" for="db-field-port">Port</label>
+                    <input class="form-input" id="db-field-port" type="number" min="1" max="65535" value="5432" required>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label class="form-label" for="db-field-dbname">Database</label>
+                    <input class="form-input" id="db-field-dbname" type="text" required autocomplete="off">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="db-field-user">Username</label>
+                <input class="form-input" id="db-field-user" type="text" required autocomplete="off">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="db-field-password">Password</label>
+                <input class="form-input" id="db-field-password" type="password" autocomplete="new-password">
+            </div>
+
+            <div id="db-modal-result" style="display: none; margin-bottom: 16px; padding: 10px 14px; border-radius: 8px; font-size: 13px;"></div>
+
+            <div class="modal-footer">
+                <button type="button" onclick="testModalConnection()" class="btn" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border);">
+                    Проверить подключение
+                </button>
+                <div style="flex: 1;"></div>
+                <button type="button" onclick="closeDbModal()" class="btn" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border);">
+                    Отмена
+                </button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <style>
     .theme-card {
         display: flex;
@@ -91,9 +165,80 @@
         font-weight: 500;
         color: var(--text-primary);
     }
+    .row-action {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        flex: 0 0 auto;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg-secondary);
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+    .row-action:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+    .row-action-danger:hover {
+        border-color: #c62828;
+        color: #c62828;
+    }
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 100;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 48px 16px;
+        overflow-y: auto;
+    }
+    .modal-overlay.open {
+        display: flex;
+    }
+    .modal-window {
+        width: 100%;
+        max-width: 480px;
+        background: var(--bg-primary, #fff);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+    }
+    .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+    }
+    .modal-close {
+        border: none;
+        background: none;
+        font-size: 22px;
+        line-height: 1;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+    .modal-body {
+        padding: 20px;
+    }
+    .modal-footer {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-top: 4px;
+    }
 </style>
 
 <script>
+    const DB_PROFILES = {{ db_profiles | tojson }};
+
     function setTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('theme', theme);
@@ -116,12 +261,16 @@
         return checked ? checked.value : null;
     }
 
-    function showDbResult(ok, message) {
-        const box = document.getElementById('db-test-result');
+    function showResult(boxId, ok, message) {
+        const box = document.getElementById(boxId);
         box.style.display = 'block';
         box.style.background = ok ? '#e8f5e9' : '#ffebee';
         box.style.color = ok ? '#2e7d32' : '#c62828';
         box.textContent = message;
+    }
+
+    function showDbResult(ok, message) {
+        showResult('db-test-result', ok, message);
     }
 
     function buildDbFormData(profile) {
@@ -156,6 +305,110 @@
                         setTimeout(() => location.reload(), 600);
                     }
                 }
+            })
+            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
+    }
+
+    function fillModal(profile) {
+        document.getElementById('db-field-id').value = profile ? profile.id : '';
+        document.getElementById('db-field-name').value = profile ? profile.name : '';
+        document.getElementById('db-field-host').value = profile ? profile.host : '';
+        document.getElementById('db-field-port').value = profile ? profile.port : 5432;
+        document.getElementById('db-field-dbname').value = profile ? profile.dbname : '';
+        document.getElementById('db-field-user').value = profile ? profile.user : '';
+        document.getElementById('db-field-password').value = '';
+        document.getElementById('db-modal-result').style.display = 'none';
+    }
+
+    function openDbModal(title, profile) {
+        document.getElementById('db-modal-title').textContent = title;
+        fillModal(profile);
+        document.getElementById('db-modal').classList.add('open');
+        document.getElementById('db-field-name').focus();
+    }
+
+    function openAddModal() {
+        openDbModal('Новое подключение', null);
+    }
+
+    function openEditModal(profileId) {
+        const profile = DB_PROFILES.find(p => p.id === profileId);
+        if (!profile) return;
+
+        openDbModal('Изменение подключения', profile);
+        // Пароля в DB_PROFILES нет — он не рендерится в страницу; забираем
+        // отдельным запросом только для открываемого подключения.
+        fetch('/settings/db/password', { method: 'POST', body: buildDbFormData(profileId) })
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.status === 'ok') document.getElementById('db-field-password').value = data.password;
+            });
+    }
+
+    function closeDbModal() {
+        document.getElementById('db-modal').classList.remove('open');
+    }
+
+    document.getElementById('db-modal').addEventListener('click', function(event) {
+        if (event.target === this) closeDbModal();
+    });
+
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') closeDbModal();
+    });
+
+    function buildModalFormData() {
+        const formData = new FormData();
+        formData.append('name', document.getElementById('db-field-name').value);
+        formData.append('host', document.getElementById('db-field-host').value);
+        formData.append('port', document.getElementById('db-field-port').value);
+        formData.append('dbname', document.getElementById('db-field-dbname').value);
+        formData.append('user', document.getElementById('db-field-user').value);
+        formData.append('password', document.getElementById('db-field-password').value);
+        appendCsrfToken(formData);
+        return formData;
+    }
+
+    function testModalConnection() {
+        fetch('/settings/db/test-params', { method: 'POST', body: buildModalFormData() })
+            .then(resp => resp.json())
+            .then(data => showResult('db-modal-result', data.status === 'ok', data.message))
+            .catch(err => showResult('db-modal-result', false, 'Ошибка запроса: ' + err));
+    }
+
+    function saveConnection() {
+        const profileId = document.getElementById('db-field-id').value;
+        const formData = buildModalFormData();
+        if (profileId) formData.append('profile', profileId);
+
+        fetch(profileId ? '/settings/db/update' : '/settings/db/add', { method: 'POST', body: formData })
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.status !== 'ok') {
+                    showResult('db-modal-result', false, data.message);
+                    return;
+                }
+                closeDbModal();
+                showDbResult(true, data.message);
+                if (data.relogin) {
+                    setTimeout(() => { window.location = '/auth/login'; }, 600);
+                } else {
+                    setTimeout(() => location.reload(), 600);
+                }
+            })
+            .catch(err => showResult('db-modal-result', false, 'Ошибка запроса: ' + err));
+    }
+
+    function deleteConnection(profileId) {
+        const profile = DB_PROFILES.find(p => p.id === profileId);
+        if (!profile) return;
+        if (!confirm('Удалить подключение «' + profile.name + '»?')) return;
+
+        fetch('/settings/db/delete', { method: 'POST', body: buildDbFormData(profileId) })
+            .then(resp => resp.json())
+            .then(data => {
+                showDbResult(data.status === 'ok', data.message);
+                if (data.status === 'ok') setTimeout(() => location.reload(), 600);
             })
             .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
     }

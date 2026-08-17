@@ -29,14 +29,23 @@
         <form method="post" action="/auth/db-select">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
 
+            {% if not db_profiles %}
+            <div class="alert alert-error">
+                Подключений к БД нет. Список хранится в <code>config_data/db_profiles.json</code>:
+                либо файл повреждён, либо при первом запуске в <code>.env</code> не было ни одного
+                полного набора переменных <code>DB_*</code>. Поправьте <code>.env</code> (или сам файл)
+                и перезапустите приложение.
+            </div>
+            {% endif %}
+
             <div class="form-group">
                 <label class="form-label">База данных</label>
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                     {% for p in db_profiles %}
                     <label style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
-                        <input type="radio" name="profile" value="{{ p.name }}" {{ 'checked' if loop.first }} style="accent-color: var(--accent);">
+                        <input type="radio" name="profile" value="{{ p.id }}" {{ 'checked' if loop.first }} style="accent-color: var(--accent);">
                         <div>
-                            <div style="font-size: 14px; font-weight: 500;">{{ p.label }}</div>
+                            <div style="font-size: 14px; font-weight: 500;">{{ p.name }}</div>
                             <div style="font-size: 12px; color: var(--text-hint);">{{ p.host }}:{{ p.port }} / {{ p.dbname }}</div>
                         </div>
                     </label>
@@ -44,7 +53,7 @@
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 8px;" {{ 'disabled' if not db_profiles }}>
                 Подключиться
             </button>
         </form>

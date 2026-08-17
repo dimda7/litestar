@@ -55,6 +55,15 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
 
+        # Сессия выдана по пользователям той БД, которая была активна на момент
+        # входа. Если с тех пор приложение перевели на другую базу, логин в ней
+        # ничего не значит — тот же user_id там принадлежит другому человеку.
+        if session.get("db_epoch") != db_manager.get_target_epoch():
+            session.clear()
+            response = RedirectResponse("/auth/login", status_code=303)
+            await response(scope, receive, send)
+            return
+
         last_activity = session.get("last_activity")
         now = time.time()
         if last_activity and (now - last_activity) > SESSION_TIMEOUT:
