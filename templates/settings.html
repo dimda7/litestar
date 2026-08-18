@@ -284,18 +284,16 @@
         const profile = getSelectedProfile();
         if (!profile) return;
 
-        fetch('/settings/db/test-connection', { method: 'POST', body: buildDbFormData(profile) })
-            .then(resp => resp.json())
+        postForm('/settings/db/test-connection', buildDbFormData(profile))
             .then(data => showDbResult(data.status === 'ok', data.message))
-            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
+            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err.message));
     }
 
     function connectDb() {
         const profile = getSelectedProfile();
         if (!profile) return;
 
-        fetch('/settings/db/connect', { method: 'POST', body: buildDbFormData(profile) })
-            .then(resp => resp.json())
+        postForm('/settings/db/connect', buildDbFormData(profile))
             .then(data => {
                 showDbResult(data.status === 'ok', data.message);
                 if (data.status === 'ok') {
@@ -306,7 +304,7 @@
                     }
                 }
             })
-            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
+            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err.message));
     }
 
     function fillModal(profile) {
@@ -338,21 +336,20 @@
         openDbModal('Изменение подключения', profile);
         // Пароля в DB_PROFILES нет — он не рендерится в страницу; забираем
         // отдельным запросом только для открываемого подключения.
-        fetch('/settings/db/password', { method: 'POST', body: buildDbFormData(profileId) })
-            .then(resp => resp.json())
+        postForm('/settings/db/password', buildDbFormData(profileId))
             .then(data => {
                 if (data.status === 'ok') document.getElementById('db-field-password').value = data.password;
-            });
+            })
+            .catch(err => showResult('db-modal-result', false, 'Ошибка запроса: ' + err.message));
     }
 
     function closeDbModal() {
         document.getElementById('db-modal').classList.remove('open');
     }
 
-    document.getElementById('db-modal').addEventListener('click', function(event) {
-        if (event.target === this) closeDbModal();
-    });
-
+    // Клик по подложке модалку не закрывает: промах мимо окна стирал
+    // заполненную форму подключения. Закрытие — только явное: «×»,
+    // «Отмена» или Escape.
     document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape') closeDbModal();
     });
@@ -370,10 +367,9 @@
     }
 
     function testModalConnection() {
-        fetch('/settings/db/test-params', { method: 'POST', body: buildModalFormData() })
-            .then(resp => resp.json())
+        postForm('/settings/db/test-params', buildModalFormData())
             .then(data => showResult('db-modal-result', data.status === 'ok', data.message))
-            .catch(err => showResult('db-modal-result', false, 'Ошибка запроса: ' + err));
+            .catch(err => showResult('db-modal-result', false, 'Ошибка запроса: ' + err.message));
     }
 
     function saveConnection() {
@@ -381,8 +377,7 @@
         const formData = buildModalFormData();
         if (profileId) formData.append('profile', profileId);
 
-        fetch(profileId ? '/settings/db/update' : '/settings/db/add', { method: 'POST', body: formData })
-            .then(resp => resp.json())
+        postForm(profileId ? '/settings/db/update' : '/settings/db/add', formData)
             .then(data => {
                 if (data.status !== 'ok') {
                     showResult('db-modal-result', false, data.message);
@@ -396,7 +391,7 @@
                     setTimeout(() => location.reload(), 600);
                 }
             })
-            .catch(err => showResult('db-modal-result', false, 'Ошибка запроса: ' + err));
+            .catch(err => showResult('db-modal-result', false, 'Ошибка запроса: ' + err.message));
     }
 
     function deleteConnection(profileId) {
@@ -404,13 +399,12 @@
         if (!profile) return;
         if (!confirm('Удалить подключение «' + profile.name + '»?')) return;
 
-        fetch('/settings/db/delete', { method: 'POST', body: buildDbFormData(profileId) })
-            .then(resp => resp.json())
+        postForm('/settings/db/delete', buildDbFormData(profileId))
             .then(data => {
                 showDbResult(data.status === 'ok', data.message);
                 if (data.status === 'ok') setTimeout(() => location.reload(), 600);
             })
-            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err));
+            .catch(err => showDbResult(false, 'Ошибка запроса: ' + err.message));
     }
 </script>
 {% endblock %}

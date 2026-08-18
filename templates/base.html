@@ -16,6 +16,29 @@
             return formData;
         }
 
+        // POST формы с разбором ответа. Голый resp.json() падал с
+        // «Unexpected token '<'», когда сервер отдавал HTML: страницу логина
+        // после истечения сессии или страницу 500 — вместо причины
+        // пользователь видел ошибку парсера JSON.
+        async function postForm(url, formData) {
+            const resp = await fetch(url, { method: 'POST', body: formData });
+
+            if (resp.status === 401) {
+                let target = '/auth/login';
+                try { target = (await resp.json()).location || target; } catch (e) {}
+                window.location = target;
+                throw new Error('Сессия завершена — выполняется переход на страницу входа');
+            }
+
+            if (!(resp.headers.get('content-type') || '').includes('application/json')) {
+                throw new Error('сервер ответил ' + resp.status + ' без JSON, подробности в log/app.log');
+            }
+
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || data.message || ('ошибка ' + resp.status));
+            return data;
+        }
+
         function jiraFindAttachments(issuePrefixId, issueNumId, fileInputId, fileNameId, listContainerId, descriptionId) {
             const prefix = document.getElementById(issuePrefixId).value.trim();
             const num = document.getElementById(issueNumId).value.trim();

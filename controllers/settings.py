@@ -22,6 +22,16 @@ def _json(status: str, message: str, **extra: object) -> Response:
     )
 
 
+def _save_failed(e: OSError) -> Response:
+    """Файл подключений не записался (права, место на диске, ro-монтирование).
+
+    Без этой ветки ошибка уходила в общий обработчик 500, который отдаёт
+    HTML-страницу, а JS страницы настроек ждёт JSON.
+    """
+    logger.error("DB profiles file write failed: %s", e, exc_info=e)
+    return _json("error", f"Не удалось сохранить файл подключений: {e}")
+
+
 def _form_url(data: DBProfileFormRequest) -> str:
     return db_profiles.build_url(data.host, data.port, data.user, data.password, data.dbname)
 
@@ -120,6 +130,8 @@ class SettingsController(Controller):
             )
         except ValueError as e:
             return _json("error", str(e))
+        except OSError as e:
+            return _save_failed(e)
 
         logger.info(
             "DB profile added: %s (%s:%s/%s)", created.name, created.host, created.port, created.dbname,
@@ -143,6 +155,8 @@ class SettingsController(Controller):
             )
         except ValueError as e:
             return _json("error", str(e))
+        except OSError as e:
+            return _save_failed(e)
 
         # Закэшированный движок собран по старому URL — выбрасываем, иначе
         # правка host/пароля не подействует.
@@ -177,6 +191,8 @@ class SettingsController(Controller):
             db_profiles.delete(data.profile, db_manager.get_active_profile())
         except ValueError as e:
             return _json("error", str(e))
+        except OSError as e:
+            return _save_failed(e)
 
         await db_manager.forget_engine(data.profile)
 
