@@ -1,10 +1,10 @@
-# Собирается из корня репозитория:
+# Built from the repository root:
 #   docker build -f images/Dockerfile -t litestar-grom:latest .
-# или через docker-compose (context уже настроен в images/docker-compose.yml):
+# or through docker-compose (the context is already set in images/docker-compose.yml):
 #   docker compose -f images/docker-compose.yml build
 
-# ---- builder: ставим зависимости отдельным слоем, чтобы в финальном образе
-# не оставался pip-кэш и build-инструменты ----
+# ---- builder: install the dependencies as a separate layer so the final image
+# carries neither the pip cache nor the build tools ----
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
@@ -26,16 +26,16 @@ ENV PATH=/home/app/.local/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Только то, что реально нужно в рантайме — без tests/, venv/, .idea/, docx и т.д.
-# (полный список исключений см. images/Dockerfile.dockerignore)
+# Only what is genuinely needed at runtime — no tests/, venv/, .idea/, docx and so on
+# (see images/Dockerfile.dockerignore for the full exclusion list)
 COPY app.py config.py db_manager.py db_profiles.py jira_client.py logging_config.py middleware.py models.py parser_storage.py schemas.py sql_utils.py ./
 COPY controllers ./controllers
 COPY templates ./templates
 COPY static ./static
 
-# parser_data/, log/ и config_data/ создаёт сам код (parser_storage.py,
-# db_profiles.py — mkdir(exist_ok=True)), но директории нужно завести заранее,
-# чтобы ими владел non-root пользователь app
+# parser_data/, log/ and config_data/ are created by the code itself
+# (parser_storage.py, db_profiles.py — mkdir(exist_ok=True)), but the directories
+# must exist up front so the non-root user app owns them
 RUN mkdir -p parser_data log config_data \
     && chown -R app:app /app /home/app/.local
 
@@ -43,10 +43,10 @@ USER app
 
 EXPOSE 8011
 
-# Секреты (DB_*, SESSION_SECRET) в образ не закладываются — передаются переменными
-# окружения при запуске (см. docker-compose.yml, env_file: ../.env)
+# Secrets (DB_*, SESSION_SECRET) are not baked into the image — they are passed as
+# environment variables at run time (see docker-compose.yml, env_file: ../.env)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/', timeout=3)" || exit 1
 
-# ${SERVER_PORT} читается из окружения контейнера (см. config.py); по умолчанию 8011
+# ${SERVER_PORT} is read from the container environment (see config.py); defaults to 8011
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${SERVER_PORT:-8011}"]

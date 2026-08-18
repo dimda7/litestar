@@ -1,3 +1,6 @@
+// Depends on static/js/api.js (getJson, throwIfUnauthorized): base.html loads
+// api.js first, and nothing here runs before a user event, so the order holds.
+
 function jiraFindAttachments(issuePrefixId, issueNumId, fileInputId, fileNameId, listContainerId, descriptionId) {
     const prefix = document.getElementById(issuePrefixId).value.trim();
     const num = document.getElementById(issueNumId).value.trim();

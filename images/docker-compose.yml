@@ -1,10 +1,11 @@
-# Запуск из корня репозитория:
+# Run from the repository root:
 #   docker compose -f images/docker-compose.yml up -d --build
 #
-# Требует существующий ../.env (см. .env.example в корне репо) — без него
-# config.py упадёт при старте (DB_HOST/SESSION_SECRET и т.д. обязательны).
+# Requires an existing ../.env (see .env.example in the repo root) — without it
+# config.py fails at startup (DB_HOST, SESSION_SECRET and friends are required).
 
-# Без явного name проект получил бы имя каталога ("images"), а контейнер — images-app-1
+# Without an explicit name the project would be named after the directory ("images")
+# and the container would become images-app-1
 name: litestar-grom
 
 services:
@@ -16,14 +17,14 @@ services:
     env_file:
       - ../.env
     ports:
-      # Внутри контейнера приложение слушает ${SERVER_PORT:-8011} (см. Dockerfile CMD).
-      # Если меняете SERVER_PORT в .env — поправьте и правую часть здесь.
+      # Inside the container the app listens on ${SERVER_PORT:-8011} (see the Dockerfile
+      # CMD). If you change SERVER_PORT in .env, fix the right-hand side here too.
       - "8011:8011"
     volumes:
       - parser_data:/app/parser_data
       - app_log:/app/log
-      # Подключения к БД, добавленные через Настройки. Без тома список
-      # откатывался бы к сиду из .env при каждой пересборке образа.
+      # DB connections added through the Settings page. Without a volume the list
+      # would fall back to the .env seed on every image rebuild.
       - config_data:/app/config_data
     restart: unless-stopped
 

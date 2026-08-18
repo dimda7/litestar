@@ -44,7 +44,7 @@
 - Server-side rendering via Jinja2 for SEO and fast first paint.
 - Tailwind CDN for rapid prototyping without bundlers.
 - `SESSION_SECRET` is persisted in `.env` (`Settings.session_secret`), never regenerated at startup — regenerating it used to invalidate every session on restart and diverge across multiple workers.
-- CSRF protection via `CSRFConfig` (`litestar.config.csrf`), secret reused from `session_secret`. `base.html` exposes `csrf_token()` in a meta tag plus a JS `appendCsrfToken(formData)` helper for `fetch()` calls; plain forms use a hidden `_csrf_token` field.
+- CSRF protection via `CSRFConfig` (`litestar.config.csrf`), secret reused from `session_secret`. `base.html` exposes `csrf_token()` in a meta tag, which the `appendCsrfToken(formData)` helper in `static/js/api.js` reads for `fetch()` calls; plain forms use a hidden `_csrf_token` field.
 - Excel-derived strings are passed through `sql_escape()` (`sql_utils.py`) before being interpolated into generated SQL — prevents injection/syntax breakage in the generated `.sql` files.
 - Per-module logging via `logging_config.py` (`logging.config.dictConfig`): each module logger (`app`, `parser`, `train_parser`, `design_number_parser`) gets its own `RotatingFileHandler` under `log/<module>.log`. `LOG_LEVEL` is configurable via `.env`.
 - SQL console query cancellation: the DB sits behind pgbouncer (`DB_PORT=6432`). Cancelling wraps execution in an `asyncio.Task` and calls `task.cancel()` so asyncpg sends a native Postgres `CancelRequest` — issuing a second SQL query on the pooled connection instead just queues behind the busy one and never cancels in time.
