@@ -2,6 +2,7 @@
 
 from controllers.order_parser import OrderParserController
 from tests.conftest import make_order
+from sql_builders import orders as orders_sql
 
 
 def make_row(child="ЗН000783610", parent="ЗН000464234") -> dict:
@@ -98,7 +99,7 @@ async def test_unknown_parent_reported(db_session):
 
 
 def test_sql_body_upsert():
-    sql_lines = OrderParserController._build_sql_lines([(1, 2, "ЗН000783610", "ЗН000464234")])
+    sql_lines = orders_sql.assign_parent_order([(1, 2, "ЗН000783610", "ЗН000464234")])
 
     assert len(sql_lines) == 1
     assert "INSERT INTO public.order_to_order (id_parent, id_child) VALUES (2, 1)" in sql_lines[0]

@@ -1,5 +1,5 @@
-"""Validation tests for ParserController._validate_and_build_change_model_lcn_rows /
-_build_change_lcn_sql_lines (controllers/parser.py) — the 'Изменить lcn в модели' button.
+"""Validation tests for validate_change_model_lcn_rows /
+models_sql.change_model_lcn (controllers/parser/change_lcn.py, sql_builders/models.py) — the 'Изменить lcn в модели' button.
 
 Changes lcn in public.models, matching on models.id (the 'id' column in the
 file) rather than on assets.
@@ -14,12 +14,13 @@ resolution in the other buttons of this page. The query itself and the full
 happy path were verified by hand against the real grom-tk database.
 """
 
-from controllers.parser import ParserController
+from controllers.parser.change_lcn import validate_change_model_lcn_rows
+
+from sql_builders import models as models_sql
 
 
 async def validate(db_session, rows):
-    controller = ParserController(owner=None)
-    return await controller._validate_and_build_change_model_lcn_rows(db_session, rows)
+    return await validate_change_model_lcn_rows(db_session, rows)
 
 
 def error_fields(errors: list[dict]) -> list[str]:
@@ -62,7 +63,7 @@ async def test_missing_lcn_column_reported(db_session):
 
 def test_build_sql_lines_single_row():
     valid_rows = [{"id": 269122, "new_lcn": "M9.1.6.4"}]
-    sql_lines = ParserController._build_change_lcn_sql_lines(valid_rows)
+    sql_lines = models_sql.change_model_lcn(valid_rows)
 
     assert len(sql_lines) == 2
     assert sql_lines[0] == "UPDATE public.models SET lcn = ('Z' || lcn::text)::ltree WHERE id IN (269122);"
@@ -77,7 +78,7 @@ def test_build_sql_lines_multiple_rows():
         {"id": 1, "new_lcn": "M9.1.6.4"},
         {"id": 2, "new_lcn": "M9.1.6.4.1"},
     ]
-    sql_lines = ParserController._build_change_lcn_sql_lines(valid_rows)
+    sql_lines = models_sql.change_model_lcn(valid_rows)
 
     assert len(sql_lines) == 2
     assert "WHERE id IN (1, 2);" in sql_lines[0]
@@ -87,11 +88,11 @@ def test_build_sql_lines_multiple_rows():
 
 def test_build_sql_lines_targets_models_not_actives():
     valid_rows = [{"id": 1, "new_lcn": "M9.1.6.4"}]
-    sql = "\n".join(ParserController._build_change_lcn_sql_lines(valid_rows))
+    sql = "\n".join(models_sql.change_model_lcn(valid_rows))
 
     assert "public.models" in sql
     assert "public.actives" not in sql
 
 
 def test_build_sql_lines_empty():
-    assert ParserController._build_change_lcn_sql_lines([]) == []
+    assert models_sql.change_model_lcn([]) == []

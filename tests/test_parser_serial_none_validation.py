@@ -1,12 +1,13 @@
-"""Validation tests for ParserController._validate_and_build_serial_none_rows and _parse_model_lcn (controllers/parser.py)."""
+"""Validation tests for validate_serial_none_rows and parse_model_lcn (controllers/parser/serial_none.py, controllers/parser/common.py)."""
 
-from controllers.parser import ParserController, _parse_model_lcn
+from controllers.parser.common import parse_model_lcn
+from controllers.parser.serial_none import validate_serial_none_rows
 from tests.conftest import make_train
+from sql_builders import models as models_sql
 
 
 async def validate(db_session, rows):
-    controller = ParserController(owner=None)
-    return await controller._validate_and_build_serial_none_rows(db_session, rows)
+    return await validate_serial_none_rows(db_session, rows)
 
 
 def error_fields(errors: list[dict]) -> list[str]:
@@ -14,19 +15,19 @@ def error_fields(errors: list[dict]) -> list[str]:
 
 
 def test_parse_model_lcn_with_letter_prefix_and_path():
-    assert _parse_model_lcn("M9.6.5") == (9, "6.5")
+    assert parse_model_lcn("M9.6.5") == (9, "6.5")
 
 
 def test_parse_model_lcn_with_letter_prefix_no_path():
-    assert _parse_model_lcn("M9") == (9, "")
+    assert parse_model_lcn("M9") == (9, "")
 
 
 def test_parse_model_lcn_without_letter_prefix():
-    assert _parse_model_lcn("9.6.5") == (9, "6.5")
+    assert parse_model_lcn("9.6.5") == (9, "6.5")
 
 
 def test_parse_model_lcn_unparseable():
-    assert _parse_model_lcn("abc") is None
+    assert parse_model_lcn("abc") is None
 
 
 async def test_valid_row_lists_all_matching_trains(db_session):
@@ -101,7 +102,7 @@ def test_duplicate_lsn_rows_merge_into_single_update():
         {"lcn_trains": ["281.6.5", "275.6.5", "278.6.5"]},
     ]
 
-    sql_lines = ParserController._build_serial_none_sql_lines(valid_rows)
+    sql_lines = models_sql.set_serial_none(valid_rows)
 
     assert len(sql_lines) == 1
     assert sql_lines[0].count("UPDATE public.actives") == 1
@@ -117,6 +118,6 @@ def test_overlapping_lsn_rows_merge_without_duplicate_lcns():
         {"lcn_trains": ["2.6.5", "3.6.5"]},
     ]
 
-    merged = ParserController._merge_serial_none_lcns(valid_rows)
+    merged = models_sql.merge_serial_none_lcns(valid_rows)
 
     assert merged == ["1.6.5", "2.6.5", "3.6.5"]

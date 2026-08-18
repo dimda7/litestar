@@ -1,33 +1,48 @@
 import json
 import logging
-import tempfile
-import uuid
 from datetime import datetime
-from pathlib import Path
 
-import openpyxl
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
-from litestar.datastructures import UploadFile
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
 from models import DesignNumber, CounterGroup, UnitType
 from schemas import DesignNumberSelectSheetRequest
-from sql_utils import sql_escape
-from parser_storage import (
-    LOG_DIR,
-    load_data as _load_data,
-    save_data as _save_data,
-    cleanup_old_files as _cleanup_old_files,
-)
+import excel_upload
+from parser_storage import LOG_DIR
+from sql_builders import design_number as design_number_sql
+from sql_builders.actives import MILEAGE_COUNTER_TYPE_ID
 
 logger = logging.getLogger("design_number_parser")
 
 PREFIX = "dn_parser"
+
+# public.counter_type ids: 1 'Моточасы', 2 'Время', 3 'Пробег'
+# (MILEAGE_COUNTER_TYPE_ID, sql_builders/actives.py).
+MOTOR_HOURS_COUNTER_TYPE_ID = 1
+TIME_COUNTER_TYPE_ID = 2
+
+# public.frequency_type ids of the units a counter is measured in.
+KM_FREQUENCY_TYPE_ID = 5
+ENGINE_HOURS_FREQUENCY_TYPE_ID = 7
+MM_FREQUENCY_TYPE_ID = 8
+
+# The counter_active rows created by the counter_group sync carry the unit their
+# counter is measured in: 'Моточасы' counts engine hours, 'Пробег' kilometres,
+# and every remaining counter type (4..30 — wheel and brake disc wear) is
+# measured in millimetres. 'Время' gets no counter_active row at all.
+FREQUENCY_TYPE_BY_COUNTER_TYPE: dict[int, int] = {
+    MOTOR_HOURS_COUNTER_TYPE_ID: ENGINE_HOURS_FREQUENCY_TYPE_ID,
+    MILEAGE_COUNTER_TYPE_ID: KM_FREQUENCY_TYPE_ID,
+}
+
+
+def _frequency_type_for(counter_type_id: int) -> int:
+    return FREQUENCY_TYPE_BY_COUNTER_TYPE.get(counter_type_id, MM_FREQUENCY_TYPE_ID)
 
 
 class DesignNumberParserController(Controller):
@@ -51,8 +66,7 @@ class DesignNumberParserController(Controller):
             pending_sheets = request.session.get(f"{PREFIX}_pending_sheets", [])
             pending_filename = request.session.get(f"{PREFIX}_pending_filename", "")
 
-        session_id = request.session.get(f"{PREFIX}_session_id", "")
-        stored = _load_data(session_id) if session_id else None
+        stored = excel_upload.stored_data(request, PREFIX)
 
         all_rows: list[dict] = stored["rows"] if stored else []
         headers: list[str] = stored["headers"] if stored else []
@@ -88,63 +102,8 @@ class DesignNumberParserController(Controller):
 
     @post("/upload")
     async def upload(self, request: Request) -> Redirect:
-        form = await request.form()
-        upload_file: UploadFile | None = form.get("file")
-
-        if not upload_file or not upload_file.filename:
-            request.session[f"{PREFIX}_error"] = "Файл не выбран"
-            return Redirect("/design-number-parser")
-
-        suffix = Path(upload_file.filename).suffix.lower()
-        if suffix not in (".xlsx", ".xls"):
-            request.session[f"{PREFIX}_error"] = "Поддерживаются только .xlsx и .xls файлы"
-            return Redirect("/design-number-parser")
-
-        try:
-            _cleanup_old_files()
-
-            content = await upload_file.read()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-
-            wb = openpyxl.load_workbook(tmp_path, read_only=True)
-            sheet_names = wb.sheetnames
-            wb.close()
-
-            if len(sheet_names) > 1:
-                request.session[f"{PREFIX}_pending_file"] = tmp_path
-                request.session[f"{PREFIX}_pending_sheets"] = sheet_names
-                request.session[f"{PREFIX}_pending_filename"] = upload_file.filename
-                return Redirect("/design-number-parser?select_sheet=1")
-
-            wb = openpyxl.load_workbook(tmp_path, read_only=True)
-            ws = wb.active
-
-            rows: list[dict[str, str | None]] = []
-            headers: list[str] = []
-
-            for i, row in enumerate(ws.iter_rows(values_only=True)):
-                if i == 0:
-                    headers = [str(c) if c else f"col_{i}" for i, c in enumerate(row)]
-                    continue
-                rows.append({headers[j]: row[j] for j in range(len(row))})
-
-            wb.close()
-            Path(tmp_path).unlink(missing_ok=True)
-
-            session_id = uuid.uuid4().hex
-            _save_data(session_id, {
-                "headers": headers,
-                "rows": rows,
-                "filename": upload_file.filename,
-            })
-            request.session[f"{PREFIX}_session_id"] = session_id
-
-            return Redirect("/design-number-parser")
-        except Exception as e:
-            request.session[f"{PREFIX}_error"] = f"Ошибка чтения файла: {e}"
-            return Redirect("/design-number-parser")
+        """Upload of an Excel file (.xlsx/.xls) — see excel_upload.handle_upload."""
+        return await excel_upload.handle_upload(request, PREFIX, "/design-number-parser")
 
     @post("/select-sheet")
     async def select_sheet(
@@ -152,52 +111,8 @@ class DesignNumberParserController(Controller):
         request: Request,
         data: DesignNumberSelectSheetRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
     ) -> Redirect:
-        sheet_name = data.sheet_name
-
-        tmp_path = request.session.get(f"{PREFIX}_pending_file", "")
-        filename = request.session.get(f"{PREFIX}_pending_filename", "")
-        sheet_names = request.session.get(f"{PREFIX}_pending_sheets", [])
-
-        if not tmp_path or not Path(tmp_path).exists():
-            request.session[f"{PREFIX}_error"] = "Временный файл истёк. Загрузите файл заново."
-            return Redirect("/design-number-parser")
-
-        if sheet_name not in sheet_names:
-            request.session[f"{PREFIX}_error"] = "Выбранный лист не найден в файле."
-            return Redirect("/design-number-parser")
-
-        try:
-            wb = openpyxl.load_workbook(tmp_path, read_only=True)
-            ws = wb[sheet_name]
-
-            rows: list[dict[str, str | None]] = []
-            headers: list[str] = []
-
-            for i, row in enumerate(ws.iter_rows(values_only=True)):
-                if i == 0:
-                    headers = [str(c) if c else f"col_{i}" for i, c in enumerate(row)]
-                    continue
-                rows.append({headers[j]: row[j] for j in range(len(row))})
-
-            wb.close()
-            Path(tmp_path).unlink(missing_ok=True)
-
-            request.session.pop(f"{PREFIX}_pending_file", None)
-            request.session.pop(f"{PREFIX}_pending_sheets", None)
-            request.session.pop(f"{PREFIX}_pending_filename", None)
-
-            session_id = uuid.uuid4().hex
-            _save_data(session_id, {
-                "headers": headers,
-                "rows": rows,
-                "filename": f"{filename} [{sheet_name}]",
-            })
-            request.session[f"{PREFIX}_session_id"] = session_id
-
-            return Redirect("/design-number-parser")
-        except Exception as e:
-            request.session[f"{PREFIX}_error"] = f"Ошибка чтения листа: {e}"
-            return Redirect("/design-number-parser")
+        """Sheet choice for a multi-sheet Excel file — see excel_upload.handle_sheet_choice."""
+        return excel_upload.handle_sheet_choice(request, PREFIX, "/design-number-parser", data.sheet_name)
 
     async def _validate_counter_group(
         self, db_session: AsyncSession, rows: list[dict]
@@ -370,8 +285,7 @@ class DesignNumberParserController(Controller):
             f"Rows updated: {len(valid_rows)}",
             "",
         ]
-        for dn_id, number, cg_id in valid_rows:
-            log_lines.append(f"UPDATE design_number SET id_counter_group = {cg_id} WHERE number = '{sql_escape(number)}';")
+        log_lines.extend(design_number_sql.update_counter_group(valid_rows))
         log_lines.append("")
 
         log_file = LOG_DIR / f"update_counter_group_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
@@ -430,8 +344,7 @@ class DesignNumberParserController(Controller):
             f"Rows updated: {len(valid_rows)}",
             "",
         ]
-        for dn_id, number, ut_id in valid_rows:
-            log_lines.append(f"UPDATE design_number SET id_unit_type = {ut_id} WHERE number = '{sql_escape(number)}';")
+        log_lines.extend(design_number_sql.update_unit_type(valid_rows))
         log_lines.append("")
 
         log_file = LOG_DIR / f"update_unit_type_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
@@ -462,10 +375,7 @@ class DesignNumberParserController(Controller):
                 media_type="application/json",
             )
 
-        sql_lines = [
-            f"UPDATE design_number SET id_unit_type = {ut_id} WHERE number = '{sql_escape(number)}';"
-            for _, number, ut_id in valid_rows
-        ]
+        sql_lines = design_number_sql.update_unit_type(valid_rows)
         content = "\n".join(sql_lines)
         return Response(
             content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
@@ -547,14 +457,9 @@ class DesignNumberParserController(Controller):
                     missing_types = new_types - existing_types
 
                     for ct_id in missing_types:
-                        if ct_id == 2:
+                        if ct_id == TIME_COUNTER_TYPE_ID:
                             continue
-                        if ct_id == 1:
-                            freq = 7
-                        elif ct_id == 3:
-                            freq = 5
-                        else:
-                            freq = 8
+                        freq = _frequency_type_for(ct_id)
                         now_ts = datetime.now()
                         await db_session.execute(
                             text(
@@ -673,14 +578,9 @@ class DesignNumberParserController(Controller):
                 missing_types = new_types - existing_types
 
                 for ct_id in missing_types:
-                    if ct_id == 2:
+                    if ct_id == TIME_COUNTER_TYPE_ID:
                         continue
-                    if ct_id == 1:
-                        freq = 7
-                    elif ct_id == 3:
-                        freq = 5
-                    else:
-                        freq = 8
+                    freq = _frequency_type_for(ct_id)
                     sql_lines.append(
                         f"INSERT INTO public.counter_active "
                         f"(id_active, date, value, id_counter_type, id_frequency_type, is_train, date_create) "
@@ -711,10 +611,7 @@ class DesignNumberParserController(Controller):
                 media_type="application/json",
             )
 
-        sql_lines = [
-            f"UPDATE design_number SET id_counter_group = {cg_id} WHERE number = '{sql_escape(number)}';"
-            for _, number, cg_id in valid_rows
-        ]
+        sql_lines = design_number_sql.update_counter_group(valid_rows)
         content = "\n".join(sql_lines)
         return Response(
             content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
@@ -767,8 +664,7 @@ class DesignNumberParserController(Controller):
             f"Rows updated: {len(valid_rows)}",
             "",
         ]
-        for dn_id, number, is_serial_1c in valid_rows:
-            log_lines.append(f"UPDATE design_number SET is_serial_1c = {'TRUE' if is_serial_1c else 'FALSE'} WHERE number = '{sql_escape(number)}';")
+        log_lines.extend(design_number_sql.update_is_serial_1c(valid_rows))
         log_lines.append("")
 
         log_file = LOG_DIR / f"update_is_serial_1c_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
@@ -799,10 +695,7 @@ class DesignNumberParserController(Controller):
                 media_type="application/json",
             )
 
-        sql_lines = [
-            f"UPDATE design_number SET is_serial_1c = {'TRUE' if is_serial_1c else 'FALSE'} WHERE number = '{sql_escape(number)}';"
-            for _, number, is_serial_1c in valid_rows
-        ]
+        sql_lines = design_number_sql.update_is_serial_1c(valid_rows)
         content = "\n".join(sql_lines)
         return Response(
             content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),

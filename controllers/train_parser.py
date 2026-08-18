@@ -1,47 +1,20 @@
-import asyncio
-import json
 import logging
-import tempfile
-import time
-import uuid
-from datetime import date, datetime
-from pathlib import Path
+from datetime import datetime
 
-import openpyxl
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
-from litestar.datastructures import UploadFile
 from litestar.response import Template, Response, Redirect
 
 from db_manager import get_session_maker
-from models import TrainType, DesignNumber, Models, MileageTrain, CounterActive
-from sql_utils import sql_escape
-from parser_storage import (
-    LOG_DIR,
-    load_data as _load_data,
-    save_data as _save_data,
-    cleanup_old_files as _cleanup_old_files,
-)
+from models import TrainType, DesignNumber
+import excel_upload
+from parser_storage import LOG_DIR
+from progress_tasks import error_response, progress_response, start_task
+from sql_builders import train as train_sql
 
 logger = logging.getLogger("train_parser")
-
-# Validation issues several database queries per row, and on large files
-# (thousands of rows) that takes seconds — progress is served through a
-# separate poll rather than holding one HTTP request open all that time.
-PROGRESS_TTL_SECONDS = 15 * 60
-_progress: dict[str, dict] = {}
-# asyncio only keeps a weak reference to fire-and-forget tasks — without
-# storing it explicitly the task can be garbage collected before it finishes.
-_tasks: dict[str, asyncio.Task] = {}
-
-
-def _cleanup_progress() -> None:
-    cutoff = time.time() - PROGRESS_TTL_SECONDS
-    stale = [tid for tid, state in _progress.items() if state["created_at"] < cutoff]
-    for tid in stale:
-        _progress.pop(tid, None)
 
 
 def _lcn_to_model(lsn: str, id_train_type: int) -> str:
@@ -195,8 +168,7 @@ class TrainParserController(Controller):
         error: str = request.session.pop("train_parser_error", "")
         success: str = request.session.pop("train_parser_success", "")
 
-        session_id = request.session.get("train_parser_session_id", "")
-        stored = _load_data(session_id) if session_id else None
+        stored = excel_upload.stored_data(request, "train_parser")
 
         all_rows: list[dict] = stored["rows"] if stored else []
         headers: list[str] = stored["headers"] if stored else []
@@ -231,54 +203,8 @@ class TrainParserController(Controller):
 
     @post("/upload")
     async def upload(self, request: Request) -> Redirect:
-        """Upload of the Excel file holding the train structure."""
-        form = await request.form()
-        upload_file: UploadFile | None = form.get("file")
-
-        if not upload_file or not upload_file.filename:
-            request.session["train_parser_error"] = "Файл не выбран"
-            return Redirect("/train-parser")
-
-        suffix = Path(upload_file.filename).suffix.lower()
-        if suffix not in (".xlsx", ".xls"):
-            request.session["train_parser_error"] = "Поддерживаются только .xlsx и .xls файлы"
-            return Redirect("/train-parser")
-
-        try:
-            _cleanup_old_files()
-
-            content = await upload_file.read()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-
-            wb = openpyxl.load_workbook(tmp_path, read_only=True)
-            ws = wb.active
-
-            rows: list[dict[str, str | None]] = []
-            headers: list[str] = []
-
-            for i, row in enumerate(ws.iter_rows(values_only=True)):
-                if i == 0:
-                    headers = [str(c) if c else f"col_{i}" for i, c in enumerate(row)]
-                    continue
-                rows.append({headers[j]: row[j] for j in range(len(row))})
-
-            wb.close()
-            Path(tmp_path).unlink(missing_ok=True)
-
-            session_id = uuid.uuid4().hex
-            _save_data(session_id, {
-                "headers": headers,
-                "rows": rows,
-                "filename": upload_file.filename,
-            })
-            request.session["train_parser_session_id"] = session_id
-
-            return Redirect("/train-parser")
-        except Exception as e:
-            request.session["train_parser_error"] = f"Ошибка чтения файла: {e}"
-            return Redirect("/train-parser")
+        """Upload of an Excel file (.xlsx/.xls) — see excel_upload.handle_upload."""
+        return await excel_upload.handle_upload(request, "train_parser", "/train-parser", allow_sheet_choice=False)
 
     @staticmethod
     async def _resolve_type_and_series(
@@ -296,93 +222,6 @@ class TrainParserController(Controller):
             return None, None, f"У типа поезда '{train_type_name}' не задана серия (id_train_series)"
         return id_type_train, id_train_series, None
 
-    @staticmethod
-    def _build_sql_body(
-        id_train: int, id_type_train: int, train_name: str, valid_rows: list[dict], id_train_series: int,
-        count_car: int | None = None,
-    ) -> list[str]:
-        """Build the body of the train insert script (without BEGIN/COMMIT).
-
-        Shared by "Скачать SQL-файл" (wrapped in BEGIN;...COMMIT; and served as
-        a file) and "Выполнить в базе данных" (run as a single multi-statement
-        query inside the already open session) — both paths build the same SQL
-        so their behaviour cannot drift apart.
-        """
-        now = datetime.utcnow().replace(microsecond=0)
-        today = date.today()
-        sql_lines: list[str] = []
-
-        sql_lines.append(f"INSERT INTO public.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{sql_escape(train_name)}', true, false);")
-        sql_lines.append(f"INSERT INTO public.mileage_train (id_train, milage, mileage_average, date, date_average) VALUES ({id_train}, 0, 0, '{now}', '{today}');")
-
-        # id_location/id_actives are not precomputed as max(id)+1 — that snapshot
-        # could go stale by execution time and collide on the PK. The ids come
-        # from the sequence inside the script instead. One nextval() per variable
-        # blew DECLARE up to thousands of lines (id1..idN), so a single query
-        # collects an array of ids for all rows at once, indexed into as
-        # loc_ids[i].
-        body_lines: list[str] = []
-
-        for idx, vr in enumerate(valid_rows, start=1):
-            loc_ref = f"loc_ids[{idx}]"
-            act_ref = f"act_ids[{idx}]"
-
-            sn = vr["serial_number"]
-            sn_val = f"'{sql_escape(sn)}'" if sn else "NULL"
-            parent_val = f"'{sql_escape(str(vr['id_actives_parent']))}'" if vr["id_actives_parent"] else "NULL"
-            root_val = f"'{sql_escape(str(vr['root_number']))}'" if vr["root_number"] else "NULL"
-            car_num_val = str(vr["car_number"]) if vr["car_number"] is not None else "NULL"
-            cp_val = str(vr["car_place_id"]) if vr["car_place_id"] is not None else "NULL"
-            ut_val = str(vr["id_unit_type"]) if vr["id_unit_type"] is not None else "NULL"
-
-            body_lines.append(
-                f"    INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
-                f"VALUES ({loc_ref}, 2, {id_train}, {car_num_val}, {cp_val});"
-            )
-            body_lines.append(
-                f"    INSERT INTO public.actives (id, active_number, id_unit_type, id_design_number, id_location, "
-                f"serial_number, lcn, id_actves_parent, id_actives_root) "
-                f"VALUES ({act_ref}, '{sql_escape(vr['active_number'])}', {ut_val}, {vr['id_design_number']}, "
-                f"{loc_ref}, {sn_val}, '{sql_escape(vr['lcn_new'])}', {parent_val}, {root_val});"
-            )
-
-            if vr["is_root"]:
-                body_lines.append(f"    UPDATE public.counter_active SET is_train = true WHERE id_active = {act_ref};")
-
-        sql_lines.append("DO $$")
-        sql_lines.append("DECLARE")
-        sql_lines.append(
-            f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
-            f"FROM generate_series(1, {len(valid_rows)}));"
-        )
-        sql_lines.append(
-            f"    act_ids bigint[] := ARRAY(SELECT nextval('public.actives_id_seq') "
-            f"FROM generate_series(1, {len(valid_rows)}));"
-        )
-        sql_lines.append("BEGIN")
-        sql_lines.extend(body_lines)
-        sql_lines.append("END $$;")
-
-        sql_lines.append(
-            f"UPDATE public.train AS t SET active = act.id "
-            f"FROM public.location AS loc LEFT JOIN public.actives act ON act.id_location = loc.id "
-            f"WHERE nlevel(act.lcn) = 1 AND loc.id_train = t.id AND t.id = {id_train};"
-        )
-
-        sql_lines.append(
-            f"UPDATE public.train SET id_train_series = {id_train_series} WHERE id = {id_train};"
-        )
-
-        if count_car is not None:
-            sql_lines.append(
-                f"UPDATE public.train SET count_car = {count_car} WHERE id = {id_train};"
-            )
-
-        sql_lines.append("SELECT nextval('public.location_id_seq');")
-        sql_lines.append("SELECT nextval('public.actives_id_seq');")
-
-        return sql_lines
-
     @post("/generate-sql/start")
     async def generate_sql_start(self, request: Request) -> Response:
         """Start background SQL file generation; returns a task_id to poll for progress."""
@@ -391,39 +230,15 @@ class TrainParserController(Controller):
         train_type_name = str(form.get("train_type_name", "")).strip()
 
         if not train_name or not train_type_name:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Укажите название поезда и тип поезда"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            return error_response("Укажите название поезда и тип поезда")
 
-        session_id = request.session.get("train_parser_session_id", "")
-        stored = _load_data(session_id) if session_id else None
-        if not stored:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+        rows = excel_upload.stored_rows(request, "train_parser")
+        if rows is None:
+            return error_response("Данные не загружены")
 
-        rows: list[dict] = stored["rows"]
+        return start_task(len(rows), lambda progress: self._run_generate(progress, train_name, train_type_name, rows))
 
-        _cleanup_progress()
-        task_id = uuid.uuid4().hex
-        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
-                               "status": "running", "created_at": time.time()}
-        task = asyncio.ensure_future(self._run_generate(task_id, train_name, train_type_name, rows))
-        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
-        _tasks[task_id] = task
-
-        return Response(
-            content=json.dumps({"task_id": task_id}),
-            status_code=200,
-            media_type="application/json",
-        )
-
-    async def _run_generate(self, task_id: str, train_name: str, train_type_name: str, rows: list[dict]) -> None:
-        progress = _progress[task_id]
+    async def _run_generate(self, progress: dict, train_name: str, train_type_name: str, rows: list[dict]) -> None:
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
@@ -453,7 +268,7 @@ class TrainParserController(Controller):
         # atomic operation: all of it or none.
         count_car = _parse_count_car(str(rows[-1].get("lsn", "") or "").strip()) if rows else None
         sql_lines = ["BEGIN;"]
-        sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
+        sql_lines.extend(train_sql.insert_train(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
         sql_lines.append("COMMIT;")
 
         progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
@@ -466,40 +281,16 @@ class TrainParserController(Controller):
         train_type_name = str(form.get("train_type_name", "")).strip()
 
         if not train_name or not train_type_name:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Укажите название поезда и тип поезда"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+            return error_response("Укажите название поезда и тип поезда")
 
-        session_id = request.session.get("train_parser_session_id", "")
-        stored = _load_data(session_id) if session_id else None
-        if not stored:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Данные не загружены"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
+        rows = excel_upload.stored_rows(request, "train_parser")
+        if rows is None:
+            return error_response("Данные не загружены")
 
-        rows: list[dict] = stored["rows"]
+        return start_task(len(rows), lambda progress: self._run_execute(progress, train_name, train_type_name, rows))
 
-        _cleanup_progress()
-        task_id = uuid.uuid4().hex
-        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
-                               "status": "running", "created_at": time.time()}
-        task = asyncio.ensure_future(self._run_execute(task_id, train_name, train_type_name, rows))
-        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
-        _tasks[task_id] = task
-
-        return Response(
-            content=json.dumps({"task_id": task_id}),
-            status_code=200,
-            media_type="application/json",
-        )
-
-    async def _run_execute(self, task_id: str, train_name: str, train_type_name: str, rows: list[dict]) -> None:
+    async def _run_execute(self, progress: dict, train_name: str, train_type_name: str, rows: list[dict]) -> None:
         """Atomic insert of the train data (train, mileage, location, actives, counter_active)."""
-        progress = _progress[task_id]
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
@@ -534,7 +325,7 @@ class TrainParserController(Controller):
                 # through an ordinary parameterised execute(), because asyncpg will not
                 # prepare several commands in one prepared statement.
                 count_car = _parse_count_car(str(rows[-1].get("lsn", "") or "").strip()) if rows else None
-                sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
+                sql_body = "\n".join(train_sql.insert_train(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
 
                 try:
                     # IMPORTANT: session.rollback() below also rolls this raw call back
@@ -575,15 +366,4 @@ class TrainParserController(Controller):
 
     @get("/progress/{task_id:str}")
     async def get_progress(self, task_id: str) -> Response:
-        state = _progress.get(task_id)
-        if state is None:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Задача не найдена или устарела"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
-        return Response(
-            content=json.dumps({k: v for k, v in state.items() if k != "created_at"}),
-            status_code=200,
-            media_type="application/json",
-        )
+        return progress_response(task_id)

@@ -1,10 +1,15 @@
 from datetime import date, datetime
 
-from controllers.actives_parser import ActivesParserController
+from controllers.actives_parser.create_actives import (
+    build_created_actives_xlsx, reconstruct_created_active_numbers, validate_create_actives_rows,
+)
+from controllers.actives_parser.create_named_actives import validate_create_named_actives
+from controllers.actives_parser.delete_actives import validate_delete_actives
+from controllers.actives_parser.design_number import validate_design_number
+from controllers.actives_parser.recount_mileage import validate_recount_mileage
 from models import Actives, Consignment, CounterActive, Location, MileageStart, MileageTrain, Relocate, Storage
 from tests.conftest import make_active, make_design_number
-
-controller = ActivesParserController(owner=None)
+from sql_builders import actives as actives_sql
 
 
 async def test_design_number_old_column_name(db_session):
@@ -12,7 +17,7 @@ async def test_design_number_old_column_name(db_session):
     dn_id = await make_design_number(db_session, "A2V00002691454")
 
     rows = [{"Актив": "ES1040010328", "Новая Позиция ТМЦ": "A2V00002691454"}]
-    errors, valid_rows = await controller._validate_design_number(db_session, rows)
+    errors, valid_rows = await validate_design_number(db_session, rows)
 
     assert errors == []
     assert valid_rows == [("ES1040010328", dn_id, "A2V00002691454")]
@@ -23,7 +28,7 @@ async def test_design_number_new_column_name(db_session):
     dn_id = await make_design_number(db_session, "A2V00002691454")
 
     rows = [{"Актив": "ES1040010328", "Новый ТМЦ номер": "A2V00002691454"}]
-    errors, valid_rows = await controller._validate_design_number(db_session, rows)
+    errors, valid_rows = await validate_design_number(db_session, rows)
 
     assert errors == []
     assert valid_rows == [("ES1040010328", dn_id, "A2V00002691454")]
@@ -34,7 +39,7 @@ async def test_design_number_short_column_name(db_session):
     dn_id = await make_design_number(db_session, "A2V00002691454")
 
     rows = [{"Актив": "ES1040010328", "Позиция ТМЦ": "A2V00002691454"}]
-    errors, valid_rows = await controller._validate_design_number(db_session, rows)
+    errors, valid_rows = await validate_design_number(db_session, rows)
 
     assert errors == []
     assert valid_rows == [("ES1040010328", dn_id, "A2V00002691454")]
@@ -42,7 +47,7 @@ async def test_design_number_short_column_name(db_session):
 
 async def test_design_number_column_missing(db_session):
     rows = [{"Актив": "ES1040010328", "Другая колонка": "x"}]
-    errors, valid_rows = await controller._validate_design_number(db_session, rows)
+    errors, valid_rows = await validate_design_number(db_session, rows)
 
     assert valid_rows == []
     assert len(errors) == 1
@@ -53,7 +58,7 @@ async def test_design_number_new_column_empty_value(db_session):
     await make_active(db_session, "ES1040010328")
 
     rows = [{"Актив": "ES1040010328", "Новый ТМЦ номер": ""}]
-    errors, valid_rows = await controller._validate_design_number(db_session, rows)
+    errors, valid_rows = await validate_design_number(db_session, rows)
 
     assert valid_rows == []
     assert len(errors) == 1
@@ -81,7 +86,7 @@ async def make_recount_active(
 
 
 async def test_recount_mileage_column_missing(db_session):
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, [{"Другое": "x"}])
+    errors, valid_rows = await validate_recount_mileage(db_session, [{"Другое": "x"}])
 
     assert valid_rows == []
     assert len(errors) == 1
@@ -89,7 +94,7 @@ async def test_recount_mileage_column_missing(db_session):
 
 
 async def test_recount_mileage_active_not_found(db_session):
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
+    errors, valid_rows = await validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
 
     assert valid_rows == []
     assert len(errors) == 1
@@ -99,7 +104,7 @@ async def test_recount_mileage_active_not_found(db_session):
 async def test_recount_mileage_missing_mileage_start(db_session):
     await make_recount_active(db_session, with_mileage_start=False)
 
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
+    errors, valid_rows = await validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
 
     assert valid_rows == []
     assert "mileage_start не найдена" in errors[0]["message"]
@@ -108,7 +113,7 @@ async def test_recount_mileage_missing_mileage_start(db_session):
 async def test_recount_mileage_missing_counter(db_session):
     await make_recount_active(db_session, with_counter=False)
 
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
+    errors, valid_rows = await validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
 
     assert valid_rows == []
     assert "Счётчик пробега" in errors[0]["message"]
@@ -117,7 +122,7 @@ async def test_recount_mileage_missing_counter(db_session):
 async def test_recount_mileage_train_needs_no_counter(db_session):
     await make_recount_active(db_session, id_unit_type=1, with_counter=False)
 
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
+    errors, valid_rows = await validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
 
     assert errors == []
     assert len(valid_rows) == 1
@@ -149,7 +154,7 @@ async def test_recount_mileage_total_from_relocate_history(db_session):
     ])
     await db_session.flush()
 
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
+    errors, valid_rows = await validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
 
     assert errors == []
     assert len(valid_rows) == 1
@@ -164,7 +169,7 @@ def test_recount_mileage_sql_body_order_and_trains():
         {"row_num": 2, "active_number": "ES0000001", "id_active": 20, "total": -5, "is_train": True,
          "milage_const": None, "insert_mileage_start": False},
     ]
-    lines = ActivesParserController._build_recount_mileage_sql_body(valid_rows)
+    lines = actives_sql.recount_mileage(valid_rows)
 
     assert len(lines) == 3
     assert "UPDATE public.mileage_start SET milage = COALESCE(milage_const, 0) + (25)" in lines[0]
@@ -185,7 +190,7 @@ async def test_recount_mileage_const_column_update_and_insert(db_session):
         {"Актив": "UL0000001", "milage_const": 500},
         {"Актив": "UL0000002", "milage_const": "700.0"},
     ]
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+    errors, valid_rows = await validate_recount_mileage(db_session, rows)
 
     assert errors == []
     assert valid_rows[0]["milage_const"] == 500
@@ -202,7 +207,7 @@ async def test_recount_mileage_const_zero_and_empty_ignored(db_session):
         {"Актив": "UL0000001", "milage_const": 0},
         {"Актив": "UL0000002", "milage_const": None},
     ]
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+    errors, valid_rows = await validate_recount_mileage(db_session, rows)
 
     assert errors == []
     assert all(vr["milage_const"] is None for vr in valid_rows)
@@ -213,7 +218,7 @@ async def test_recount_mileage_const_header_with_nbsp_and_e_spelling(db_session)
     await make_recount_active(db_session, "UL0000001")
 
     rows = [{"Актив": "UL0000001", "mileage_const\xa0": 295544}]
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+    errors, valid_rows = await validate_recount_mileage(db_session, rows)
 
     assert errors == []
     assert valid_rows[0]["milage_const"] == 295544
@@ -223,7 +228,7 @@ async def test_recount_mileage_const_invalid_value(db_session):
     await make_recount_active(db_session, "UL0000001")
 
     rows = [{"Актив": "UL0000001", "milage_const": "abc"}]
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+    errors, valid_rows = await validate_recount_mileage(db_session, rows)
 
     assert valid_rows == []
     assert "Некорректное значение milage_const" in errors[0]["message"]
@@ -234,7 +239,7 @@ async def test_recount_mileage_const_missing_mileage_start_without_const(db_sess
     await make_recount_active(db_session, "UL0000001", with_mileage_start=False)
 
     rows = [{"Актив": "UL0000001", "milage_const": ""}]
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+    errors, valid_rows = await validate_recount_mileage(db_session, rows)
 
     assert valid_rows == []
     assert "mileage_start не найдена" in errors[0]["message"]
@@ -247,7 +252,7 @@ def test_recount_mileage_sql_body_const_first():
         {"row_num": 2, "active_number": "UL0000002", "id_active": 20, "total": 0, "is_train": False,
          "milage_const": 700, "insert_mileage_start": True},
     ]
-    lines = ActivesParserController._build_recount_mileage_sql_body(valid_rows)
+    lines = actives_sql.recount_mileage(valid_rows)
 
     assert len(lines) == 6
     # the milage_const block comes first: UPDATE for an existing row, INSERT for a new one
@@ -275,7 +280,7 @@ NAMED_ROW = {"Актив": "SPD452390", "ТМЦ": "DU0012929",
 
 
 async def test_create_named_actives_columns_missing(db_session):
-    errors, valid_rows = await controller._validate_create_named_actives(
+    errors, valid_rows = await validate_create_named_actives(
         db_session, [{"Актив": "SPD452390", "Другое": "x"}])
 
     assert valid_rows == []
@@ -287,7 +292,7 @@ async def test_create_named_actives_columns_missing(db_session):
 async def test_create_named_actives_happy_path(db_session):
     await make_named_actives_refs(db_session)
 
-    errors, valid_rows = await controller._validate_create_named_actives(db_session, [dict(NAMED_ROW)])
+    errors, valid_rows = await validate_create_named_actives(db_session, [dict(NAMED_ROW)])
 
     assert errors == []
     assert len(valid_rows) == 1
@@ -300,7 +305,7 @@ async def test_create_named_actives_already_exists(db_session):
     await make_named_actives_refs(db_session)
     await make_active(db_session, "SPD452390")
 
-    errors, valid_rows = await controller._validate_create_named_actives(db_session, [dict(NAMED_ROW)])
+    errors, valid_rows = await validate_create_named_actives(db_session, [dict(NAMED_ROW)])
 
     assert valid_rows == []
     assert "уже существует" in errors[0]["message"]
@@ -309,7 +314,7 @@ async def test_create_named_actives_already_exists(db_session):
 async def test_create_named_actives_duplicate_in_file(db_session):
     await make_named_actives_refs(db_session)
 
-    errors, valid_rows = await controller._validate_create_named_actives(
+    errors, valid_rows = await validate_create_named_actives(
         db_session, [dict(NAMED_ROW), dict(NAMED_ROW)])
 
     assert len(valid_rows) == 1
@@ -324,7 +329,7 @@ async def test_create_named_actives_refs_not_found(db_session):
         dict(NAMED_ROW, **{"Актив": "SPD452391", "Положение": "Нет такого"}),
         dict(NAMED_ROW, **{"Актив": "SPD452392", "Партия": "Нет такой"}),
     ]
-    errors, valid_rows = await controller._validate_create_named_actives(db_session, rows)
+    errors, valid_rows = await validate_create_named_actives(db_session, rows)
 
     assert valid_rows == []
     messages = " | ".join(e["message"] for e in errors)
@@ -340,7 +345,7 @@ def test_create_named_actives_sql_body():
         {"row_num": 2, "active_number": "SPD452391", "id_design_number": 8,
          "id_storage": 3, "id_consignment": 4},
     ]
-    lines = ActivesParserController._build_create_named_actives_sql_body(valid_rows)
+    lines = actives_sql.create_named_actives(valid_rows)
     sql = "\n".join(lines)
 
     assert sql.startswith("DO $$")
@@ -358,14 +363,14 @@ async def test_recount_mileage_active_number_column_name(db_session):
     await make_recount_active(db_session, "UL0000001")
 
     rows = [{"active_number": "UL0000001"}]
-    errors, valid_rows = await controller._validate_recount_mileage(db_session, rows)
+    errors, valid_rows = await validate_recount_mileage(db_session, rows)
 
     assert errors == []
     assert valid_rows[0]["active_number"] == "UL0000001"
 
 
 async def test_delete_actives_column_missing(db_session):
-    errors, valid_rows = await controller._validate_delete_actives(db_session, [{"Другое": "x"}])
+    errors, valid_rows = await validate_delete_actives(db_session, [{"Другое": "x"}])
 
     assert valid_rows == []
     assert "не найдена колонка 'Актив'" in errors[0]["message"]
@@ -375,7 +380,7 @@ async def test_delete_actives_not_found_and_duplicate(db_session):
     await make_active(db_session, "SPD1077356")
 
     rows = [{"Актив": "SPD1077356"}, {"Актив": "SPD1077356"}, {"Актив": "NOPE"}]
-    errors, valid_rows = await controller._validate_delete_actives(db_session, rows)
+    errors, valid_rows = await validate_delete_actives(db_session, rows)
 
     assert len(valid_rows) == 1
     messages = " | ".join(e["message"] for e in errors)
@@ -392,7 +397,7 @@ async def make_order_dependency_tables(db_session) -> None:
     order_to_actives) are skipped.
     """
     from sqlalchemy import text as sql_text
-    from controllers.actives_parser import ORDERS_DEPENDENCY_CHECKS
+    from controllers.actives_parser.delete_actives import ORDERS_DEPENDENCY_CHECKS
     from models import Base
     existing = set(Base.metadata.tables)
     columns: dict[str, set[str]] = {}
@@ -423,7 +428,7 @@ async def test_delete_actives_blocked_by_dependencies(db_session):
     await db_session.flush()
 
     rows = [{"Актив": "SPD1077356"}, {"Актив": "SPD1077357"}]
-    errors, valid_rows = await controller._validate_delete_actives(db_session, rows)
+    errors, valid_rows = await validate_delete_actives(db_session, rows)
 
     assert [vr["id_active"] for vr in valid_rows] == [ok_id]
     messages = " | ".join(e["message"] for e in errors)
@@ -442,7 +447,7 @@ async def test_delete_actives_blocked_by_order_with_dependencies(db_session):
     await db_session.execute(sql_text(
         f"INSERT INTO public.labor_costs (id_order) VALUES ({order.id})"))
 
-    errors, valid_rows = await controller._validate_delete_actives(
+    errors, valid_rows = await validate_delete_actives(
         db_session, [{"Актив": "SPD1077358"}])
 
     assert valid_rows == []
@@ -453,7 +458,7 @@ async def test_delete_actives_blocked_by_order_with_dependencies(db_session):
 async def test_delete_actives_active_number_column(db_session):
     await make_active(db_session, "SPD1077356")
 
-    errors, valid_rows = await controller._validate_delete_actives(
+    errors, valid_rows = await validate_delete_actives(
         db_session, [{"active_number": "SPD1077356"}])
 
     assert errors == []
@@ -465,7 +470,7 @@ def test_delete_actives_sql_body():
         {"row_num": 1, "active_number": "SPD1077356", "id_active": 10, "id_location": 100},
         {"row_num": 2, "active_number": "SPD1077357", "id_active": 20, "id_location": None},
     ]
-    lines = ActivesParserController._build_delete_actives_sql_body(valid_rows)
+    lines = actives_sql.delete_actives(valid_rows)
     sql = "\n".join(lines)
 
     # framing: the DBA trigger tr_abort_delete is disabled for the transaction
@@ -505,7 +510,7 @@ async def test_create_actives_old_tmc_column_name(db_session):
     await make_create_actives_refs(db_session)
 
     rows = [{"Номер ТМЦ (DU,KP,A2V)": "DU0012929", **CREATE_ACTIVES_ROW_TAIL}]
-    errors, valid_rows = await controller._validate_create_actives_rows(db_session, rows)
+    errors, valid_rows = await validate_create_actives_rows(db_session, rows)
 
     assert errors == []
     assert len(valid_rows) == 1
@@ -515,7 +520,7 @@ async def test_create_actives_new_articul_column_name(db_session):
     await make_create_actives_refs(db_session)
 
     rows = [{"АРТИКУЛ": "DU0012929", **CREATE_ACTIVES_ROW_TAIL}]
-    errors, valid_rows = await controller._validate_create_actives_rows(db_session, rows)
+    errors, valid_rows = await validate_create_actives_rows(db_session, rows)
 
     assert errors == []
     assert len(valid_rows) == 1
@@ -525,7 +530,7 @@ async def test_create_actives_tmc_column_missing(db_session):
     await make_create_actives_refs(db_session)
 
     rows = [{"Другое": "x", **CREATE_ACTIVES_ROW_TAIL}]
-    errors, valid_rows = await controller._validate_create_actives_rows(db_session, rows)
+    errors, valid_rows = await validate_create_actives_rows(db_session, rows)
 
     assert valid_rows == []
     assert "не найдена колонка 'АРТИКУЛ'" in errors[0]["message"]
@@ -533,7 +538,7 @@ async def test_create_actives_tmc_column_missing(db_session):
 
 def test_reconstruct_created_active_numbers():
     valid_rows = [{"type_active": "SPV"}, {"type_active": "SPV"}, {"type_active": "SPD"}]
-    numbers = ActivesParserController._reconstruct_created_active_numbers(valid_rows, counter_after=103)
+    numbers = reconstruct_created_active_numbers(valid_rows, counter_after=103)
 
     # ACTIVE_NUMBER_LENGTH = 10: the prefix plus zero-padded digits
     assert numbers == ["SPV0000101", "SPV0000102", "SPD0000103"]
@@ -544,7 +549,7 @@ def test_build_created_actives_xlsx():
     from io import BytesIO
     import openpyxl
 
-    b64 = ActivesParserController._build_created_actives_xlsx(
+    b64 = build_created_actives_xlsx(
         [("SPV0000101", "251200001"), ("SPV0000102", None)])
     wb = openpyxl.load_workbook(BytesIO(base64.b64decode(b64)))
     rows = list(wb.active.iter_rows(values_only=True))

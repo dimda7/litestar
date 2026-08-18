@@ -1,7 +1,8 @@
-"""FK/UNIQUE validation tests for ParserController._validate_and_build_rows (controllers/parser.py)."""
+"""FK/UNIQUE validation tests for validate_insert_rows (controllers/parser/insert_models.py)."""
+
+from controllers.parser.insert_models import validate_insert_rows
 
 from models import Models
-from controllers.parser import ParserController
 from tests.conftest import make_car_place, make_design_number, make_train_type
 
 
@@ -16,8 +17,7 @@ def make_row(model="", position="", itemnum="", lsn="", is_default=False) -> dic
 
 
 async def validate(db_session, rows):
-    controller = ParserController(owner=None)
-    return await controller._validate_and_build_rows(db_session, rows)
+    return await validate_insert_rows(db_session, rows)
 
 
 def error_fields(errors: list[dict]) -> list[str]:

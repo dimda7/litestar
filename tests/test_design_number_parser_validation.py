@@ -2,6 +2,7 @@
 
 import pytest
 
+from controllers import design_number_parser as dn_parser
 from controllers.design_number_parser import DesignNumberParserController
 from tests.conftest import make_counter_group, make_design_number, make_unit_type
 
@@ -195,3 +196,18 @@ async def test_is_serial_1c_empty_number_reported(db_session):
 
     assert valid_rows == []
     assert errors[0]["field"] == "number"
+
+
+def test_counter_is_measured_in_its_own_unit():
+    assert (dn_parser._frequency_type_for(dn_parser.MOTOR_HOURS_COUNTER_TYPE_ID)
+            == dn_parser.ENGINE_HOURS_FREQUENCY_TYPE_ID)
+    assert dn_parser._frequency_type_for(dn_parser.MILEAGE_COUNTER_TYPE_ID) == dn_parser.KM_FREQUENCY_TYPE_ID
+    # wheel and brake disc wear (counter types 4..30) is measured in millimetres
+    assert dn_parser._frequency_type_for(17) == dn_parser.MM_FREQUENCY_TYPE_ID
+
+
+def test_counter_type_and_frequency_type_ids_match_the_database_dictionaries():
+    assert (dn_parser.MOTOR_HOURS_COUNTER_TYPE_ID, dn_parser.TIME_COUNTER_TYPE_ID,
+            dn_parser.MILEAGE_COUNTER_TYPE_ID) == (1, 2, 3)
+    assert (dn_parser.KM_FREQUENCY_TYPE_ID, dn_parser.ENGINE_HOURS_FREQUENCY_TYPE_ID,
+            dn_parser.MM_FREQUENCY_TYPE_ID) == (5, 7, 8)

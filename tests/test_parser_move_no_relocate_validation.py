@@ -1,17 +1,17 @@
-"""Validation tests for ParserController._validate_and_build_move_no_relocate_rows /
-_build_move_no_relocate_sql_lines / _check_lcn_collisions (controllers/parser.py).
+"""Validation tests for validate_move_no_relocate_rows /
+models_sql.move_no_relocate / check_lcn_collisions (controllers/parser/move_no_relocate.py, sql_builders/models.py).
 
 Used by the 'Переместить активы без relocate' button — assets are located by
 lsn/lcn (as in 'set serial=none lcn') and the lcn changes on actives.
 """
 
-from controllers.parser import ParserController
+from controllers.parser.move_no_relocate import check_lcn_collisions, validate_move_no_relocate_rows
 from tests.conftest import make_train
+from sql_builders import models as models_sql
 
 
 async def validate(db_session, rows):
-    controller = ParserController(owner=None)
-    return await controller._validate_and_build_move_no_relocate_rows(db_session, rows)
+    return await validate_move_no_relocate_rows(db_session, rows)
 
 
 def error_fields(errors: list[dict]) -> list[str]:
@@ -130,7 +130,7 @@ async def test_missing_old_column_reported(db_session):
 
 def test_build_sql_lines_single_pair():
     valid_rows = [{"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"}]
-    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
+    sql_lines = models_sql.move_no_relocate(valid_rows)
 
     assert len(sql_lines) == 2
     assert sql_lines[0] == "UPDATE public.actives SET lcn = ('Z' || lcn::text)::ltree WHERE lcn::text IN ('1.1.6');"
@@ -145,7 +145,7 @@ def test_build_sql_lines_multiple_pairs():
         {"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"},
         {"old_lcn": "2.1.6", "new_lcn": "2.1.6.4"},
     ]
-    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
+    sql_lines = models_sql.move_no_relocate(valid_rows)
 
     assert len(sql_lines) == 2
     assert "'1.1.6'" in sql_lines[0] and "'2.1.6'" in sql_lines[0]
@@ -162,7 +162,7 @@ def test_build_sql_lines_chained_rename_is_collision_safe():
         {"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"},
         {"old_lcn": "1.1.6.4", "new_lcn": "1.1.6.4.1"},
     ]
-    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
+    sql_lines = models_sql.move_no_relocate(valid_rows)
 
     tmp_values = {f"Z{vr['old_lcn']}" for vr in valid_rows}
     new_values = {vr["new_lcn"] for vr in valid_rows}
@@ -173,7 +173,7 @@ def test_build_sql_lines_chained_rename_is_collision_safe():
 
 def test_build_sql_lines_no_location_or_relocate_or_parent_root_touch():
     valid_rows = [{"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"}]
-    sql_lines = ParserController._build_move_no_relocate_sql_lines(valid_rows)
+    sql_lines = models_sql.move_no_relocate(valid_rows)
     sql = "\n".join(sql_lines)
 
     assert "id_location" not in sql
@@ -183,10 +183,10 @@ def test_build_sql_lines_no_location_or_relocate_or_parent_root_touch():
 
 
 def test_build_sql_lines_empty():
-    assert ParserController._build_move_no_relocate_sql_lines([]) == []
+    assert models_sql.move_no_relocate([]) == []
 
 
 async def test_check_lcn_collisions_empty_pair_list_skips_query(db_session):
     """pair_list=[] must not touch the DB at all (lcn::text is unavailable in SQLite)."""
-    errors = await ParserController._check_lcn_collisions(db_session, [])
+    errors = await check_lcn_collisions(db_session, [])
     assert errors == []

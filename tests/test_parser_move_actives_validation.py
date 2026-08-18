@@ -1,10 +1,11 @@
-"""Validation tests for ParserController._validate_and_build_move_rows / _build_move_actives_sql_body (controllers/parser.py).
+"""Validation tests for validate_move_rows / models_sql.move_actives
+(controllers/parser/move_actives.py, sql_builders/models.py).
 
 Resolving assets by lcn ('SELECT ... WHERE lcn::text IN :lcns') uses the
 Postgres-specific `::text` cast on an ltree column — SQLite (the test DB) does
 not parse that syntax at all (a syntax error, not merely "0 rows"). So what is
 covered here is everything happening BEFORE that query (resolving
-storage/consignment/user, parsing lsn via _validate_and_build_serial_none_rows,
+storage/consignment/user, parsing lsn via validate_serial_none_rows,
 building the SQL body) — same as for the equivalent happy path in
 train_parser.py (see checkpoint.md, phase 9). The query itself was verified by
 hand against the real grom-tk database.
@@ -12,8 +13,9 @@ hand against the real grom-tk database.
 
 from datetime import datetime
 
-from controllers.parser import ParserController
+from controllers.parser.move_actives import resolve_user_by_fullname, validate_move_rows
 from tests.conftest import make_consignment, make_design_number, make_storage, make_user
+from sql_builders import models as models_sql
 
 
 DEFAULT_REASON = "Убран десятый (лишний) межвагонный переход с 6 вагона"
@@ -26,8 +28,7 @@ async def validate(
     db_session, rows, storage_name=DEFAULT_STORAGE, consignment_name=DEFAULT_CONSIGNMENT,
     user_fullname=DEFAULT_USER_FULLNAME, set_nocm=False,
 ):
-    controller = ParserController(owner=None)
-    return await controller._validate_and_build_move_rows(db_session, rows, storage_name, consignment_name, user_fullname, set_nocm)
+    return await validate_move_rows(db_session, rows, storage_name, consignment_name, user_fullname, set_nocm)
 
 
 def error_fields(errors: list[dict]) -> list[str]:
@@ -73,8 +74,7 @@ async def test_user_not_found_reported(db_session):
 async def test_resolve_user_by_fullname_with_middlename(db_session):
     user_id = await make_user(db_session, lastname="Велебская", firstname="Александра", middlename="Владимировна")
 
-    controller = ParserController(owner=None)
-    resolved = await controller._resolve_user_by_fullname(db_session, DEFAULT_USER_FULLNAME)
+    resolved = await resolve_user_by_fullname(db_session, DEFAULT_USER_FULLNAME)
 
     assert resolved == user_id
 
@@ -82,8 +82,7 @@ async def test_resolve_user_by_fullname_with_middlename(db_session):
 async def test_resolve_user_by_fullname_without_middlename(db_session):
     user_id = await make_user(db_session, lastname="Иванов", firstname="Иван", middlename=None)
 
-    controller = ParserController(owner=None)
-    resolved = await controller._resolve_user_by_fullname(db_session, "Иванов Иван")
+    resolved = await resolve_user_by_fullname(db_session, "Иванов Иван")
 
     assert resolved == user_id
 
@@ -91,8 +90,7 @@ async def test_resolve_user_by_fullname_without_middlename(db_session):
 async def test_resolve_user_by_fullname_not_found(db_session):
     await make_user(db_session)
 
-    controller = ParserController(owner=None)
-    resolved = await controller._resolve_user_by_fullname(db_session, "Несуществующий Пользователь")
+    resolved = await resolve_user_by_fullname(db_session, "Несуществующий Пользователь")
 
     assert resolved is None
 
@@ -153,7 +151,7 @@ async def test_set_nocm_false_skips_lookup(db_session):
 
 def test_build_sql_body_single_row():
     valid_rows = [{"id_active": 10, "id_location_old": 5, "active_number": "ULP0090952"}]
-    sql_lines = ParserController._build_move_actives_sql_body(
+    sql_lines = models_sql.move_actives(
         valid_rows, id_storage=7, id_consignment=3, id_user=2,
         reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0),
     )
@@ -171,7 +169,7 @@ def test_build_sql_body_single_row():
 
 def test_build_sql_body_with_design_number():
     valid_rows = [{"id_active": 430071, "id_location_old": 5, "active_number": "ULP0090952"}]
-    sql_lines = ParserController._build_move_actives_sql_body(
+    sql_lines = models_sql.move_actives(
         valid_rows, id_storage=78, id_consignment=3, id_user=2,
         reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0), id_design_number=74269,
     )
@@ -186,7 +184,7 @@ def test_build_sql_body_with_design_number():
 
 def test_build_sql_body_without_design_number_omits_clause():
     valid_rows = [{"id_active": 10, "id_location_old": 5, "active_number": "ULP0090952"}]
-    sql_lines = ParserController._build_move_actives_sql_body(
+    sql_lines = models_sql.move_actives(
         valid_rows, id_storage=7, id_consignment=3, id_user=2,
         reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0),
     )
@@ -197,7 +195,7 @@ def test_build_sql_body_without_design_number_omits_clause():
 
 def test_build_sql_body_active_number_comment_strips_newlines():
     valid_rows = [{"id_active": 10, "id_location_old": 5, "active_number": "ULP\n0090952\r"}]
-    sql_lines = ParserController._build_move_actives_sql_body(
+    sql_lines = models_sql.move_actives(
         valid_rows, id_storage=7, id_consignment=3, id_user=2,
         reason=DEFAULT_REASON, move_date=datetime(2026, 1, 1, 12, 0, 0),
     )
@@ -208,7 +206,7 @@ def test_build_sql_body_active_number_comment_strips_newlines():
 
 def test_build_sql_body_null_old_location():
     valid_rows = [{"id_active": 10, "id_location_old": None, "active_number": "ULP0090952"}]
-    sql_lines = ParserController._build_move_actives_sql_body(
+    sql_lines = models_sql.move_actives(
         valid_rows, id_storage=7, id_consignment=3, id_user=2,
         reason="", move_date=datetime(2026, 1, 1, 12, 0, 0),
     )

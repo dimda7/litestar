@@ -1,14 +1,15 @@
-"""Tests for ParserController._validate_and_build_is_default_rows / _build_is_default_sql_lines
-(controllers/parser.py) — the 'Изменить серийность в модели' button (models.is_default).
+"""Tests for validate_is_default_rows / models_sql.set_is_default
+(controllers/parser/is_default.py, sql_builders/models.py) — the 'Изменить серийность в модели' button (models.is_default).
 """
 
+from controllers.parser.is_default import validate_is_default_rows
+
 from models import Models
-from controllers.parser import ParserController
+from sql_builders import models as models_sql
 
 
 async def validate(db_session, rows):
-    controller = ParserController(owner=None)
-    return await controller._validate_and_build_is_default_rows(db_session, rows)
+    return await validate_is_default_rows(db_session, rows)
 
 
 def error_fields(errors: list[dict]) -> list[str]:
@@ -184,7 +185,7 @@ def test_build_sql_lines_false_before_true():
         {"id": 1, "is_default": True},
         {"id": 2, "is_default": False},
     ]
-    sql_lines = ParserController._build_is_default_sql_lines(valid_rows)
+    sql_lines = models_sql.set_is_default(valid_rows)
 
     assert sql_lines == [
         "UPDATE public.models SET is_default = FALSE WHERE id = 2;",
@@ -193,4 +194,4 @@ def test_build_sql_lines_false_before_true():
 
 
 def test_build_sql_lines_empty():
-    assert ParserController._build_is_default_sql_lines([]) == []
+    assert models_sql.set_is_default([]) == []

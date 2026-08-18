@@ -1,18 +1,11 @@
-import asyncio
 import json
 import logging
-import tempfile
-import time
-import uuid
 from datetime import datetime
-from pathlib import Path
 
-import openpyxl
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
-from litestar.datastructures import UploadFile
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Template, Response, Redirect
@@ -20,31 +13,14 @@ from litestar.response import Template, Response, Redirect
 from db_manager import get_session_maker
 from models import Orders
 from schemas import SelectSheetRequest
-from sql_utils import sql_escape
-from parser_storage import (
-    LOG_DIR,
-    load_data as _load_data,
-    save_data as _save_data,
-    cleanup_old_files as _cleanup_old_files,
-)
+import excel_upload
+from parser_storage import LOG_DIR
+from progress_tasks import progress_response, start_task
+from sql_builders import orders as orders_sql
 
 logger = logging.getLogger("order_parser")
 
 PREFIX = "order_parser"
-
-# Every row needs database queries, and on files of hundreds to thousands of
-# rows the operation takes seconds — progress is served through a separate poll
-# (see ptoir_parser.py).
-PROGRESS_TTL_SECONDS = 15 * 60
-_progress: dict[str, dict] = {}
-_tasks: dict[str, asyncio.Task] = {}
-
-
-def _cleanup_progress() -> None:
-    cutoff = time.time() - PROGRESS_TTL_SECONDS
-    stale = [tid for tid, state in _progress.items() if state["created_at"] < cutoff]
-    for tid in stale:
-        _progress.pop(tid, None)
 
 
 class OrderParserController(Controller):
@@ -68,8 +44,7 @@ class OrderParserController(Controller):
             pending_sheets = request.session.get(f"{PREFIX}_pending_sheets", [])
             pending_filename = request.session.get(f"{PREFIX}_pending_filename", "")
 
-        session_id = request.session.get(f"{PREFIX}_session_id", "")
-        stored = _load_data(session_id) if session_id else None
+        stored = excel_upload.stored_data(request, PREFIX)
 
         all_rows: list[dict] = stored["rows"] if stored else []
         headers: list[str] = stored["headers"] if stored else []
@@ -105,65 +80,8 @@ class OrderParserController(Controller):
 
     @post("/upload")
     async def upload(self, request: Request) -> Redirect:
-        form = await request.form()
-        upload_file: UploadFile | None = form.get("file")
-
-        if not upload_file or not upload_file.filename:
-            request.session[f"{PREFIX}_error"] = "Файл не выбран"
-            return Redirect("/order-parser")
-
-        suffix = Path(upload_file.filename).suffix.lower()
-        if suffix not in (".xlsx", ".xls"):
-            request.session[f"{PREFIX}_error"] = "Поддерживаются только .xlsx и .xls файлы"
-            return Redirect("/order-parser")
-
-        try:
-            _cleanup_old_files()
-
-            content = await upload_file.read()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-
-            wb = openpyxl.load_workbook(tmp_path, read_only=True)
-            sheet_names = wb.sheetnames
-            wb.close()
-
-            if len(sheet_names) > 1:
-                request.session[f"{PREFIX}_pending_file"] = tmp_path
-                request.session[f"{PREFIX}_pending_sheets"] = sheet_names
-                request.session[f"{PREFIX}_pending_filename"] = upload_file.filename
-                return Redirect("/order-parser?select_sheet=1")
-
-            wb = openpyxl.load_workbook(tmp_path, read_only=True)
-            ws = wb.active
-
-            rows: list[dict[str, str | None]] = []
-            headers: list[str] = []
-
-            for i, row in enumerate(ws.iter_rows(values_only=True)):
-                if i == 0:
-                    headers = [str(c) if c else f"col_{i}" for i, c in enumerate(row)]
-                    continue
-                if all(c is None or str(c).strip() == "" for c in row):
-                    continue
-                rows.append({headers[j]: row[j] for j in range(len(row))})
-
-            wb.close()
-            Path(tmp_path).unlink(missing_ok=True)
-
-            session_id = uuid.uuid4().hex
-            _save_data(session_id, {
-                "headers": headers,
-                "rows": rows,
-                "filename": upload_file.filename,
-            })
-            request.session[f"{PREFIX}_session_id"] = session_id
-
-            return Redirect("/order-parser")
-        except Exception as e:
-            request.session[f"{PREFIX}_error"] = f"Ошибка чтения файла: {e}"
-            return Redirect("/order-parser")
+        """Upload of an Excel file (.xlsx/.xls) — see excel_upload.handle_upload."""
+        return await excel_upload.handle_upload(request, PREFIX, "/order-parser", skip_blank_rows=True)
 
     @post("/select-sheet")
     async def select_sheet(
@@ -171,54 +89,8 @@ class OrderParserController(Controller):
         request: Request,
         data: SelectSheetRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
     ) -> Redirect:
-        sheet_name = data.sheet_name
-
-        tmp_path = request.session.get(f"{PREFIX}_pending_file", "")
-        filename = request.session.get(f"{PREFIX}_pending_filename", "")
-        sheet_names = request.session.get(f"{PREFIX}_pending_sheets", [])
-
-        if not tmp_path or not Path(tmp_path).exists():
-            request.session[f"{PREFIX}_error"] = "Временный файл истёк. Загрузите файл заново."
-            return Redirect("/order-parser")
-
-        if sheet_name not in sheet_names:
-            request.session[f"{PREFIX}_error"] = "Выбранный лист не найден в файле."
-            return Redirect("/order-parser")
-
-        try:
-            wb = openpyxl.load_workbook(tmp_path, read_only=True)
-            ws = wb[sheet_name]
-
-            rows: list[dict[str, str | None]] = []
-            headers: list[str] = []
-
-            for i, row in enumerate(ws.iter_rows(values_only=True)):
-                if i == 0:
-                    headers = [str(c) if c else f"col_{i}" for i, c in enumerate(row)]
-                    continue
-                if all(c is None or str(c).strip() == "" for c in row):
-                    continue
-                rows.append({headers[j]: row[j] for j in range(len(row))})
-
-            wb.close()
-            Path(tmp_path).unlink(missing_ok=True)
-
-            request.session.pop(f"{PREFIX}_pending_file", None)
-            request.session.pop(f"{PREFIX}_pending_sheets", None)
-            request.session.pop(f"{PREFIX}_pending_filename", None)
-
-            session_id = uuid.uuid4().hex
-            _save_data(session_id, {
-                "headers": headers,
-                "rows": rows,
-                "filename": f"{filename} [{sheet_name}]",
-            })
-            request.session[f"{PREFIX}_session_id"] = session_id
-
-            return Redirect("/order-parser")
-        except Exception as e:
-            request.session[f"{PREFIX}_error"] = f"Ошибка чтения листа: {e}"
-            return Redirect("/order-parser")
+        """Sheet choice for a multi-sheet Excel file — see excel_upload.handle_sheet_choice."""
+        return excel_upload.handle_sheet_choice(request, PREFIX, "/order-parser", data.sheet_name, skip_blank_rows=True)
 
     async def _validate_and_build_rows(
         self, db_session: AsyncSession, rows: list[dict],
@@ -300,21 +172,9 @@ class OrderParserController(Controller):
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
         rows: list[dict] = json.loads(data.get("rows", "[]"))
-        _cleanup_progress()
-        task_id = uuid.uuid4().hex
-        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
-                               "status": "running", "created_at": time.time()}
-        task = asyncio.ensure_future(self._run_generate(task_id, rows))
-        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
-        _tasks[task_id] = task
-        return Response(
-            content=json.dumps({"task_id": task_id}),
-            status_code=200,
-            media_type="application/json",
-        )
+        return start_task(len(rows), lambda progress: self._run_generate(progress, rows))
 
-    async def _run_generate(self, task_id: str, rows: list[dict]) -> None:
-        progress = _progress[task_id]
+    async def _run_generate(self, progress: dict, rows: list[dict]) -> None:
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
@@ -327,7 +187,7 @@ class OrderParserController(Controller):
             progress.update(status="error", errors=errors)
             return
 
-        sql_lines = self._build_sql_lines(valid_rows)
+        sql_lines = orders_sql.assign_parent_order(valid_rows)
         progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
 
     @post("/execute-sql/start")
@@ -337,21 +197,9 @@ class OrderParserController(Controller):
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
         rows: list[dict] = json.loads(data.get("rows", "[]"))
-        _cleanup_progress()
-        task_id = uuid.uuid4().hex
-        _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
-                               "status": "running", "created_at": time.time()}
-        task = asyncio.ensure_future(self._run_execute(task_id, rows))
-        task.add_done_callback(lambda t: _tasks.pop(task_id, None))
-        _tasks[task_id] = task
-        return Response(
-            content=json.dumps({"task_id": task_id}),
-            status_code=200,
-            media_type="application/json",
-        )
+        return start_task(len(rows), lambda progress: self._run_execute(progress, rows))
 
-    async def _run_execute(self, task_id: str, rows: list[dict]) -> None:
-        progress = _progress[task_id]
+    async def _run_execute(self, progress: dict, rows: list[dict]) -> None:
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
@@ -396,7 +244,7 @@ class OrderParserController(Controller):
             f"=== Execute assign parent order: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
             f"Rows updated: {len(valid_rows)}",
             "",
-            *self._build_sql_lines(valid_rows),
+            *orders_sql.assign_parent_order(valid_rows),
             "",
         ]
 
@@ -410,26 +258,4 @@ class OrderParserController(Controller):
 
     @get("/progress/{task_id:str}")
     async def get_progress(self, task_id: str) -> Response:
-        state = _progress.get(task_id)
-        if state is None:
-            return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Задача не найдена или устарела"}]}),
-                status_code=200,
-                media_type="application/json",
-            )
-        return Response(
-            content=json.dumps({k: v for k, v in state.items() if k != "created_at"}),
-            status_code=200,
-            media_type="application/json",
-        )
-
-    @staticmethod
-    def _build_sql_lines(valid_rows: list[tuple[int, int, str, str]]) -> list[str]:
-        sql_lines: list[str] = []
-        for child_id, parent_id, child_number, parent_number in valid_rows:
-            sql_lines.append(
-                f"INSERT INTO public.order_to_order (id_parent, id_child) VALUES ({parent_id}, {child_id}) "
-                f"ON CONFLICT (id_child) DO UPDATE SET id_parent = EXCLUDED.id_parent; "
-                f"-- '{sql_escape(child_number)}' -> '{sql_escape(parent_number)}'"
-            )
-        return sql_lines
+        return progress_response(task_id)

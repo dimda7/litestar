@@ -28,8 +28,9 @@ ENV PATH=/home/app/.local/bin:$PATH \
 
 # Only what is genuinely needed at runtime — no tests/, venv/, .idea/, docx and so on
 # (see images/Dockerfile.dockerignore for the full exclusion list)
-COPY app.py config.py db_manager.py db_profiles.py jira_client.py logging_config.py middleware.py models.py parser_storage.py schemas.py sql_utils.py ./
+COPY app.py config.py db_manager.py db_profiles.py excel_upload.py jira_client.py logging_config.py middleware.py models.py parser_storage.py progress_tasks.py schemas.py sql_utils.py ./
 COPY controllers ./controllers
+COPY sql_builders ./sql_builders
 COPY templates ./templates
 COPY static ./static
 
