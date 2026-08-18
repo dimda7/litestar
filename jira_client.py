@@ -2,15 +2,21 @@ import re
 
 import httpx
 
-from config import settings
+from config import JiraSettings, settings
 
 REQUEST_TIMEOUT_SECONDS = 15
 
 ISSUE_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
 
 
+def _jira() -> JiraSettings:
+    if settings.jira is None:
+        raise ValueError("Jira не настроена: заполните JIIRA_HOST/PORT/USER/PASSWORD в .env")
+    return settings.jira
+
+
 def _auth() -> tuple[str, str]:
-    return settings.jira.user, settings.jira.password
+    return _jira().user, _jira().password
 
 
 async def get_issue(issue_key: str) -> dict:
@@ -19,7 +25,7 @@ async def get_issue(issue_key: str) -> dict:
     if not ISSUE_KEY_RE.match(issue_key):
         raise ValueError(f"Некорректный номер задачи: '{issue_key}'")
 
-    url = f"{settings.jira.base_url}/rest/api/2/issue/{issue_key}"
+    url = f"{_jira().base_url}/rest/api/2/issue/{issue_key}"
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
         resp = await client.get(url, params={"fields": "attachment,description"}, auth=_auth())
 
@@ -44,7 +50,7 @@ async def download_attachment(content_url: str) -> tuple[bytes, str]:
     content_url must point at the configured Jira host — otherwise this endpoint
     becomes an open proxy to any address using our Jira credentials (SSRF).
     """
-    if not content_url.startswith(settings.jira.base_url):
+    if not content_url.startswith(_jira().base_url):
         raise ValueError("Недопустимый адрес вложения")
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True) as client:
