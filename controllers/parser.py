@@ -1097,11 +1097,12 @@ class ParserController(Controller):
     ) -> Response:
         """Запускает фоновую атомарную вставку строк в public.models, возвращает task_id для опроса прогресса."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
+        skip_errors = str(data.get("skip_errors", "")).strip().lower() == "true"
         _cleanup_progress()
         task_id = uuid.uuid4().hex
         _progress[task_id] = {"processed": 0, "total": len(rows), "phase": "validating",
                                "status": "running", "created_at": time.time()}
-        task = asyncio.ensure_future(self._run_insert_execute(task_id, rows))
+        task = asyncio.ensure_future(self._run_insert_execute(task_id, rows, skip_errors=skip_errors))
         task.add_done_callback(lambda t: _tasks.pop(task_id, None))
         _tasks[task_id] = task
         return Response(
@@ -1110,7 +1111,7 @@ class ParserController(Controller):
             media_type="application/json",
         )
 
-    async def _run_insert_execute(self, task_id: str, rows: list[dict]) -> None:
+    async def _run_insert_execute(self, task_id: str, rows: list[dict], skip_errors: bool = False) -> None:
         progress = _progress[task_id]
         try:
             session_maker = get_session_maker()
@@ -1121,8 +1122,8 @@ class ParserController(Controller):
                     progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
                     return
 
-                if errors:
-                    progress.update(status="error", errors=errors)
+                if errors and not skip_errors:
+                    progress.update(status="confirm_errors", errors=errors, valid_count=len(valid_rows))
                     return
 
                 if not valid_rows:
@@ -1162,7 +1163,10 @@ class ParserController(Controller):
             f.write("\n".join(log_lines))
         logger.info("SQL executed: %d rows inserted, log saved to %s", len(valid_rows), log_file)
 
-        progress.update(status="done", count=len(valid_rows), message=f"Успешно вставлено {len(valid_rows)} строк")
+        message = f"Успешно вставлено {len(valid_rows)} строк"
+        if errors:
+            message += f" (пропущено с ошибками: {len(errors)})"
+        progress.update(status="done", count=len(valid_rows), message=message, errors=errors)
 
     @post("/delete-rows/start")
     async def delete_rows_start(
