@@ -1,6 +1,7 @@
-# Действует на build context, указанный в docker-compose.yml (context: .., т.е. корень
-# репозитория). Имя файла соответствует конвенции Docker: "<Dockerfile>.dockerignore"
-# в корне контекста — так .dockerignore можно держать внутри images/, а не в корне репо.
+# Applies to the build context set in docker-compose.yml (context: .., i.e. the
+# repository root). The file name follows the Docker convention
+# "<Dockerfile>.dockerignore" in the context root, which is what lets the
+# .dockerignore live inside images/ rather than at the repository root.
 .git
 .gitignore
 .idea

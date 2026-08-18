@@ -1,5 +1,6 @@
-// Depends on static/js/api.js (getJson, throwIfUnauthorized): base.html loads
-// api.js first, and nothing here runs before a user event, so the order holds.
+// Uses getJson() and throwIfUnauthorized() from static/js/api.js. The <script>
+// order in base.html is not load-bearing: this file only declares functions, and
+// every call happens inside a user-event handler, long after both files parse.
 
 function jiraFindAttachments(issuePrefixId, issueNumId, fileInputId, fileNameId, listContainerId, descriptionId) {
     const prefix = document.getElementById(issuePrefixId).value.trim();

@@ -2,7 +2,9 @@
 #   docker compose -f images/docker-compose.yml up -d --build
 #
 # Requires an existing ../.env (see .env.example in the repo root) — without it
-# config.py fails at startup (DB_HOST, SESSION_SECRET and friends are required).
+# config.py fails at startup. It reads JIIRA_HOST/PORT/USER/PASSWORD and
+# SESSION_SECRET directly, so those are the mandatory ones; the DB_* variables
+# only seed config_data/db_profiles.json and every set of them is optional.
 
 # Without an explicit name the project would be named after the directory ("images")
 # and the container would become images-app-1
