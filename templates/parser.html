@@ -432,8 +432,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showProgress();
 
-        fetch('/parser/generate-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/generate-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -448,7 +447,7 @@
                     URL.revokeObjectURL(url);
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function executeSQL(skipErrors) {
@@ -463,8 +462,7 @@
         const formData = buildFormData();
         if (skipErrors) formData.append('skip_errors', 'true');
 
-        fetch('/parser/execute-sql/start', { method: 'POST', body: formData })
-            .then(resp => resp.json())
+        postForm('/parser/execute-sql/start', formData)
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'confirm_errors') {
@@ -486,7 +484,7 @@
                     }
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function showDeleteModal() {
@@ -507,8 +505,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showProgress();
 
-        fetch('/parser/delete-rows/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/delete-rows/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -523,7 +520,7 @@
                     URL.revokeObjectURL(url);
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function executeDelete() {
@@ -535,8 +532,7 @@
 
         showProgress();
 
-        fetch('/parser/execute-delete/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/execute-delete/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -546,7 +542,7 @@
                     location.reload();
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function showSerialNoneModal() {
@@ -592,8 +588,7 @@
 
     function pollProgress(taskId, onFinished) {
         progressPollTimer = setInterval(() => {
-            fetch('/parser/progress/' + taskId)
-                .then(resp => resp.json())
+            getJson('/parser/progress/' + taskId)
                 .then(state => {
                     if (state.status === 'running') {
                         updateProgress(state);
@@ -607,7 +602,7 @@
                     clearInterval(progressPollTimer);
                     progressPollTimer = null;
                     hideProgress();
-                    alert('Ошибка получения прогресса: ' + err);
+                    alert('Ошибка получения прогресса: ' + err.message);
                 });
         }, 400);
     }
@@ -618,8 +613,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showProgress();
 
-        fetch('/parser/serial-none/generate-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/serial-none/generate-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -634,7 +628,7 @@
                     URL.revokeObjectURL(url);
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function executeSerialNoneUpdate() {
@@ -646,8 +640,7 @@
 
         showProgress();
 
-        fetch('/parser/serial-none/execute-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/serial-none/execute-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -657,7 +650,7 @@
                     location.reload();
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function showMoveActivesModal() {
@@ -689,8 +682,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showProgress();
 
-        fetch('/parser/move-actives/generate-sql/start', { method: 'POST', body: buildMoveActivesFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/move-actives/generate-sql/start', buildMoveActivesFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -705,7 +697,7 @@
                     URL.revokeObjectURL(url);
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function executeMoveActives() {
@@ -717,8 +709,7 @@
 
         showProgress();
 
-        fetch('/parser/move-actives/execute-sql/start', { method: 'POST', body: buildMoveActivesFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/move-actives/execute-sql/start', buildMoveActivesFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -728,7 +719,7 @@
                     location.reload();
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function showChangeLcnModal() {
@@ -749,8 +740,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showProgress();
 
-        fetch('/parser/change-lcn/generate-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/change-lcn/generate-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -765,7 +755,7 @@
                     URL.revokeObjectURL(url);
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function executeChangeLcn() {
@@ -777,8 +767,7 @@
 
         showProgress();
 
-        fetch('/parser/change-lcn/execute-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/change-lcn/execute-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -788,7 +777,7 @@
                     location.reload();
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function showIsDefaultModal() {
@@ -809,8 +798,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showProgress();
 
-        fetch('/parser/is-default/generate-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/is-default/generate-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -825,7 +813,7 @@
                     URL.revokeObjectURL(url);
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function executeIsDefaultUpdate() {
@@ -837,8 +825,7 @@
 
         showProgress();
 
-        fetch('/parser/is-default/execute-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/is-default/execute-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -848,7 +835,7 @@
                     location.reload();
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function showMoveNoRelocateModal() {
@@ -869,8 +856,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showProgress();
 
-        fetch('/parser/move-no-relocate/generate-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/move-no-relocate/generate-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -885,7 +871,7 @@
                     URL.revokeObjectURL(url);
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 
     function executeMoveNoRelocate() {
@@ -897,8 +883,7 @@
 
         showProgress();
 
-        fetch('/parser/move-no-relocate/execute-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/parser/move-no-relocate/execute-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -908,7 +893,7 @@
                     location.reload();
                 }
             }))
-            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
     }
 </script>
 {% endif %}

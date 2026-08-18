@@ -26,7 +26,7 @@ def _is_fetch(scope: Scope) -> bool:
     return False
 
 
-def _reject(scope: Scope, location: str, message: str):
+def _reject(scope: Scope, location: str, message: str) -> JSONResponse | RedirectResponse:
     """Ответ неаутентифицированному запросу.
 
     Навигацию отправляем редиректом, а fetch — 401 с JSON: иначе fetch

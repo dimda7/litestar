@@ -16,13 +16,10 @@
             return formData;
         }
 
-        // POST формы с разбором ответа. Голый resp.json() падал с
-        // «Unexpected token '<'», когда сервер отдавал HTML: страницу логина
-        // после истечения сессии или страницу 500 — вместо причины
-        // пользователь видел ошибку парсера JSON.
-        async function postForm(url, formData) {
-            const resp = await fetch(url, { method: 'POST', body: formData });
-
+        // Разбор JSON-ответа. Голый resp.json() падал с «Unexpected token '<'»,
+        // когда сервер отдавал HTML: страницу логина после истечения сессии или
+        // страницу 500 — вместо причины пользователь видел ошибку парсера JSON.
+        async function readJsonResponse(resp) {
             if (resp.status === 401) {
                 let target = '/auth/login';
                 try { target = (await resp.json()).location || target; } catch (e) {}
@@ -39,6 +36,14 @@
             return data;
         }
 
+        async function postForm(url, formData) {
+            return readJsonResponse(await fetch(url, { method: 'POST', body: formData }));
+        }
+
+        async function getJson(url) {
+            return readJsonResponse(await fetch(url));
+        }
+
         function jiraFindAttachments(issuePrefixId, issueNumId, fileInputId, fileNameId, listContainerId, descriptionId) {
             const prefix = document.getElementById(issuePrefixId).value.trim();
             const num = document.getElementById(issueNumId).value.trim();
@@ -53,8 +58,7 @@
             container.textContent = 'Загрузка...';
             descBox.style.display = 'none';
 
-            fetch('/jira/attachments?issue=' + encodeURIComponent(issue))
-                .then(resp => resp.json())
+            getJson('/jira/attachments?issue=' + encodeURIComponent(issue))
                 .then(data => {
                     if (data.status === 'error') {
                         container.textContent = data.message;
@@ -82,7 +86,7 @@
                     });
                 })
                 .catch(err => {
-                    container.textContent = 'Ошибка запроса: ' + err;
+                    container.textContent = 'Ошибка запроса: ' + err.message;
                     container.style.color = '#c62828';
                 });
         }
