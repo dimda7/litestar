@@ -20,8 +20,8 @@ class JiraSettings:
 
 @dataclass(frozen=True)
 class Settings:
-    # Подключения к БД живут в config_data/db_profiles.json (см. db_profiles.py).
-    # Переменные DB_* нужны только для первичного засева этого файла.
+    # DB connections live in config_data/db_profiles.json (see db_profiles.py).
+    # The DB_* variables only seed that file on first start.
     jira: JiraSettings = field(default_factory=lambda: JiraSettings(
         host=environ["JIIRA_HOST"],
         port=int(environ["JIIRA_PORT"]),

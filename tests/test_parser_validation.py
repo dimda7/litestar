@@ -1,4 +1,4 @@
-"""Тесты FK/UNIQUE-валидации ParserController._validate_and_build_rows (controllers/parser.py)."""
+"""FK/UNIQUE validation tests for ParserController._validate_and_build_rows (controllers/parser.py)."""
 
 from models import Models
 from controllers.parser import ParserController
@@ -64,10 +64,10 @@ async def test_missing_car_place_reported(db_session):
 
 
 async def test_ambiguous_car_place_reported(db_session):
-    """Регрессия: car_place.name неуникален в БД -> раньше падало MultipleResultsFound."""
+    """Regression: car_place.name is not unique in the DB -> used to raise MultipleResultsFound."""
     await make_train_type(db_session, "Ласточка")
     await make_car_place(db_session, "Вагон 1")
-    await make_car_place(db_session, "Вагон 1")  # дубликат имени, другой id
+    await make_car_place(db_session, "Вагон 1")  # duplicate name, different id
     await make_design_number(db_session, "DN-001")
 
     errors, valid_rows = await validate(
@@ -136,7 +136,7 @@ async def test_unique_conflict_lcn_car_place_default_against_existing(db_session
                            id_design_number=dn1, is_default=True))
     await db_session.flush()
 
-    # Другая (train_type, design_number), но тот же (lcn, car_place) и is_default=True
+    # Different (train_type, design_number) but the same (lcn, car_place) and is_default=True
     errors, valid_rows = await validate(
         db_session, [make_row("Финист", "Вагон 1", "DN-002", lsn="M1.1", is_default=True)]
     )
@@ -144,7 +144,7 @@ async def test_unique_conflict_lcn_car_place_default_against_existing(db_session
     assert valid_rows == []
     assert error_fields(errors) == ["lcn"]
     assert "unique (lcn, car_place)" in errors[0]["message"]
-    assert tt2 and dn2  # использованы для построения непересекающегося full_tuple
+    assert tt2 and dn2  # used to build a non-overlapping full_tuple
 
 
 async def test_unique_conflict_lcn_car_place_default_within_batch(db_session):
@@ -174,7 +174,7 @@ async def test_unique_conflict_car_place_train_type_design_against_existing(db_s
                            id_design_number=dn_id, is_default=True))
     await db_session.flush()
 
-    # Тот же (car_place, train_type, design_number), но другой lcn и is_default=True
+    # Same (car_place, train_type, design_number) but a different lcn and is_default=True
     errors, valid_rows = await validate(
         db_session, [make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.2", is_default=True)]
     )
@@ -189,7 +189,7 @@ async def test_unique_conflict_car_place_train_type_design_within_batch(db_sessi
     cp_id = await make_car_place(db_session, "Вагон 1")
     dn_id = await make_design_number(db_session, "DN-001")
 
-    # Тот же (car_place, train_type, design_number), но разный lcn, оба is_default=True
+    # Same (car_place, train_type, design_number), different lcn, both is_default=True
     rows = [
         make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.1", is_default=True),
         make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.2", is_default=True),
@@ -203,7 +203,7 @@ async def test_unique_conflict_car_place_train_type_design_within_batch(db_sessi
 
 
 async def test_non_default_rows_skip_unique_default_checks(db_session):
-    """Проверки (lcn,car_place) и (car_place,train_type,design_number) действуют только при is_default=True."""
+    """The (lcn,car_place) and (car_place,train_type,design_number) checks only apply when is_default=True."""
     tt1 = await make_train_type(db_session, "Ласточка")
     tt2 = await make_train_type(db_session, "Финист")
     cp_id = await make_car_place(db_session, "Вагон 1")

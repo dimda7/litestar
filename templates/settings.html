@@ -334,8 +334,8 @@
         if (!profile) return;
 
         openDbModal('Изменение подключения', profile);
-        // Пароля в DB_PROFILES нет — он не рендерится в страницу; забираем
-        // отдельным запросом только для открываемого подключения.
+        // DB_PROFILES holds no password — it is never rendered into the page; it is
+        // fetched separately, and only for the connection being opened.
         postForm('/settings/db/password', buildDbFormData(profileId))
             .then(data => {
                 if (data.status === 'ok') document.getElementById('db-field-password').value = data.password;
@@ -347,9 +347,9 @@
         document.getElementById('db-modal').classList.remove('open');
     }
 
-    // Клик по подложке модалку не закрывает: промах мимо окна стирал
-    // заполненную форму подключения. Закрытие — только явное: «×»,
-    // «Отмена» или Escape.
+    // A backdrop click does not close the modal: missing the window wiped the
+    // filled-in connection form. Closing is explicit only — the "×" button,
+    // "Отмена", or Escape.
     document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape') closeDbModal();
     });

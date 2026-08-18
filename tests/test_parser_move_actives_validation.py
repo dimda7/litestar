@@ -1,12 +1,13 @@
-"""Тесты валидации ParserController._validate_and_build_move_rows / _build_move_actives_sql_body (controllers/parser.py).
+"""Validation tests for ParserController._validate_and_build_move_rows / _build_move_actives_sql_body (controllers/parser.py).
 
-Резолв активов по lcn ('SELECT ... WHERE lcn::text IN :lcns') использует
-Postgres-специфичный `::text`-каст на ltree-колонке — SQLite (тестовая БД)
-такой синтаксис не парсит вовсе (не просто "0 строк", а syntax error).
-Поэтому здесь покрыто всё, что происходит ДО этого запроса (резолв
-склад/партия/пользователь, парсинг lsn через _validate_and_build_serial_none_rows,
-сборка SQL-тела) — как и для аналогичного happy-path в train_parser.py (см.
-checkpoint.md, Фаза 9). Сам запрос проверен вручную на реальной БД grom-tk.
+Resolving assets by lcn ('SELECT ... WHERE lcn::text IN :lcns') uses the
+Postgres-specific `::text` cast on an ltree column — SQLite (the test DB) does
+not parse that syntax at all (a syntax error, not merely "0 rows"). So what is
+covered here is everything happening BEFORE that query (resolving
+storage/consignment/user, parsing lsn via _validate_and_build_serial_none_rows,
+building the SQL body) — same as for the equivalent happy path in
+train_parser.py (see checkpoint.md, phase 9). The query itself was verified by
+hand against the real grom-tk database.
 """
 
 from datetime import datetime
@@ -127,7 +128,7 @@ async def test_set_nocm_resolves_design_number(db_session):
 
     errors, valid_rows, _, _, _, id_design_number = await validate(db_session, [{"lsn": "M9.6.5"}], set_nocm=True)
 
-    assert error_fields(errors) == ["lcn"]  # нет поездов этого типа — но NOCM успел зарезолвиться
+    assert error_fields(errors) == ["lcn"]  # no trains of this type — but NOCM did resolve
     assert id_design_number == dn_id
 
 
@@ -147,7 +148,7 @@ async def test_set_nocm_false_skips_lookup(db_session):
     errors, valid_rows, _, _, _, id_design_number = await validate(db_session, [{"lsn": "M9.6.5"}], set_nocm=False)
 
     assert id_design_number is None
-    assert error_fields(errors) == ["lcn"]  # NOCM не резолвился, но и не мешал — ошибка только по поездам
+    assert error_fields(errors) == ["lcn"]  # NOCM did not resolve, but did not interfere either — the error is only about trains
 
 
 def test_build_sql_body_single_row():

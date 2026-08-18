@@ -1,4 +1,4 @@
-"""Тесты FK-валидации DesignNumberParserController (controllers/design_number_parser.py)."""
+"""FK validation tests for DesignNumberParserController (controllers/design_number_parser.py)."""
 
 import pytest
 

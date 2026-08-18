@@ -13,15 +13,15 @@ from litestar.response import Response, Template
 
 logger = logging.getLogger("sql_console")
 
-# execution_id -> задача, выполняющая запрос, пока он не завершится
+# execution_id -> the task running the query until it finishes
 _running_tasks: dict[str, asyncio.Task] = {}
 
 
 def _split_sql_statements(script: str) -> list[str]:
-    """Разбивает скрипт на отдельные операторы по ';' вне строковых литералов.
+    """Split a script into statements on ';' outside string literals.
 
-    Простой посимвольный разбор без поддержки dollar-quoted строк ($$...$$)
-    и экранированных кавычек — достаточно для обычных SELECT/INSERT/UPDATE/DELETE.
+    A simple character scan with no support for dollar-quoted strings ($$...$$)
+    or escaped quotes — enough for ordinary SELECT/INSERT/UPDATE/DELETE.
     """
     statements: list[str] = []
     current: list[str] = []

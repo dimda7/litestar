@@ -8,27 +8,27 @@ import db_profiles
 
 logger = logging.getLogger("db_manager")
 
-# Идентификатор активного подключения (uuid из db_profiles.json). Пустая строка —
-# ещё не разрешён; get_active_profile() подставит первое подключение из файла.
+# Id of the active connection (a uuid from db_profiles.json). An empty string
+# means unresolved; get_active_profile() falls back to the first connection.
 _active_profile: str = ""
 _engines: dict[str, AsyncEngine] = {}
 _session_makers: dict[str, async_sessionmaker[AsyncSession]] = {}
 
-# Ставится в True только после явного выбора БД (страница /auth/db-select или
-# Настройки). Пока False — миддлварь гонит любой запрос на выбор БД, логин
-# по fdw_users иначе физически не по чему проверять (у каждой БД свои
-# пользователи).
+# Set to True only after a database has been chosen explicitly (the
+# /auth/db-select page or Settings). While False the middleware sends every
+# request to the database picker: there is physically nothing to validate a
+# login against in fdw_users, since each database has its own users.
 _connection_established: bool = False
 
-# Номер «эпохи»: растёт каждый раз, когда приложение начинает смотреть в другую
-# БД. Активное подключение общее на весь процесс, а сессии — у каждого свои,
-# поэтому без этого счётчика переключение выбрасывало из системы только того,
-# кто его выполнил: остальные продолжали работать в новой БД с логином,
-# проверенным по fdw_users старой.
+# Epoch counter: incremented whenever the app starts looking at a different
+# database. The active connection is process-wide while sessions are per user,
+# so without this counter a switch logged out only whoever triggered it —
+# everyone else kept working in the new database with a login that had been
+# validated against the old one's fdw_users.
 _target_epoch: int = 0
 
-# Таймаут ожидания свободного соединения из пула / установления TCP-соединения.
-# Без него зависший пул (например, исчерпанный pgbouncer) блокирует запрос навсегда.
+# Timeout for waiting on a free pooled connection / establishing the TCP one.
+# Without it a stuck pool (an exhausted pgbouncer, say) blocks a request forever.
 POOL_TIMEOUT_SECONDS = 10
 
 
@@ -49,10 +49,10 @@ def _get_session_maker(profile: str) -> async_sessionmaker[AsyncSession]:
 
 
 def get_active_profile() -> str:
-    """Идентификатор активного подключения.
+    """Id of the active connection.
 
-    Пока явного выбора не было, активным считается первое подключение из
-    файла — константы «профиля по умолчанию» больше нет.
+    Until something is chosen explicitly, the first connection in the file
+    counts as active — there is no "default profile" constant any more.
     """
     global _active_profile
 
@@ -64,7 +64,7 @@ def get_active_profile() -> str:
 
 
 def get_active_label() -> str:
-    """Отображаемое имя активного подключения (id пользователю не нужен)."""
+    """Display name of the active connection (the user has no use for the id)."""
     active = db_profiles.get(get_active_profile())
     return active.name if active else ""
 
@@ -78,7 +78,7 @@ def get_target_epoch() -> int:
 
 
 def bump_target_epoch() -> None:
-    """Объявляет все выданные сессии недействительными — БД сменилась."""
+    """Invalidate every issued session — the database has changed."""
     global _target_epoch
 
     _target_epoch += 1
@@ -86,11 +86,11 @@ def bump_target_epoch() -> None:
 
 
 def set_active_profile(profile: str) -> bool:
-    """Делает подключение активным.
+    """Make a connection the active one.
 
-    Возвращает True, если активное подключение реально изменилось (было
-    другим) — вызывающий код использует это, чтобы решить, сбрасывать ли
-    текущую сессию логина (у разных БД разные пользователи).
+    Returns True if the active connection actually changed — callers use that
+    to decide whether to drop the current login session, since different
+    databases have different users.
     """
     global _active_profile, _connection_established
 
@@ -109,10 +109,10 @@ def set_active_profile(profile: str) -> bool:
 
 
 async def forget_engine(profile: str) -> None:
-    """Выбрасывает закэшированный движок — параметры подключения изменились.
+    """Discard the cached engine — the connection parameters changed.
 
-    Без этого правка host/пароля не подействует: следующий запрос возьмёт из
-    кэша движок, собранный по старому URL.
+    Without this an edit to the host or password has no effect: the next
+    request picks up the cached engine built from the old URL.
     """
     engine = _engines.pop(profile, None)
     _session_makers.pop(profile, None)
@@ -121,7 +121,7 @@ async def forget_engine(profile: str) -> None:
 
 
 async def test_connection(profile: str) -> tuple[bool, str]:
-    """Пробное подключение без переключения активного соединения."""
+    """Trial connection that leaves the active connection untouched."""
     stored = db_profiles.get(profile)
     if stored is None:
         return False, f"Неизвестное подключение к БД: {profile}"
@@ -129,7 +129,7 @@ async def test_connection(profile: str) -> tuple[bool, str]:
 
 
 async def test_url(url: str) -> tuple[bool, str]:
-    """Пробное подключение по произвольному URL — для ещё не сохранённых параметров."""
+    """Trial connection to an arbitrary URL — for parameters not yet saved."""
     engine = create_async_engine(
         url,
         pool_pre_ping=True,
@@ -152,7 +152,7 @@ async def provide_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 def get_session_maker() -> async_sessionmaker[AsyncSession]:
-    """Для фоновых задач вне DI (например, длительный парсинг с отчётом о прогрессе)."""
+    """For background tasks outside DI (a long parse reporting progress, say)."""
     return _get_session_maker(get_active_profile())
 
 

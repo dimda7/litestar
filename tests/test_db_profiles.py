@@ -13,7 +13,7 @@ ENV_VARS = [
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    """Изолированный каталог хранения + пустое окружение вместо реального .env."""
+    """An isolated storage directory and an empty environment instead of real .env."""
     monkeypatch.setattr(db_profiles, "CONFIG_DATA_DIR", tmp_path)
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -57,7 +57,7 @@ def test_seed_gives_each_profile_its_own_id(store, monkeypatch):
 
 def test_seed_skips_incomplete_env_set(store, monkeypatch):
     set_env(monkeypatch, "")
-    monkeypatch.setenv("DB_HOST_PROD", "prod-host")  # остальных переменных набора нет
+    monkeypatch.setenv("DB_HOST_PROD", "prod-host")  # the other variables of the set are missing
 
     profiles = db_profiles.load()
 

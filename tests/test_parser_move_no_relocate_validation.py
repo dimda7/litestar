@@ -1,8 +1,8 @@
-"""Тесты валидации ParserController._validate_and_build_move_no_relocate_rows /
+"""Validation tests for ParserController._validate_and_build_move_no_relocate_rows /
 _build_move_no_relocate_sql_lines / _check_lcn_collisions (controllers/parser.py).
 
-Используются кнопкой 'Переместить активы без relocate' — активы находятся
-через lsn/lcn (как 'set serial=none lcn'), lcn меняется у actives.
+Used by the 'Переместить активы без relocate' button — assets are located by
+lsn/lcn (as in 'set serial=none lcn') and the lcn changes on actives.
 """
 
 from controllers.parser import ParserController
@@ -154,10 +154,10 @@ def test_build_sql_lines_multiple_pairs():
 
 
 def test_build_sql_lines_chained_rename_is_collision_safe():
-    """Цепочка: A ('1.1.6' -> '1.1.6.4') и B ('1.1.6.4' -> '1.1.6.4.1') —
-    новый lcn A совпадает со старым lcn B. Временный 'Z'-префикс в первом шаге
-    гарантирует, что на момент второго шага среди старых/временных значений
-    нет дублей с финальными new_lcn."""
+    """Chain: A ('1.1.6' -> '1.1.6.4') and B ('1.1.6.4' -> '1.1.6.4.1') —
+    A's new lcn equals B's old one. The temporary 'Z' prefix in the first step
+    guarantees that by the second step no old or temporary value collides with
+    a final new_lcn."""
     valid_rows = [
         {"old_lcn": "1.1.6", "new_lcn": "1.1.6.4"},
         {"old_lcn": "1.1.6.4", "new_lcn": "1.1.6.4.1"},
@@ -187,6 +187,6 @@ def test_build_sql_lines_empty():
 
 
 async def test_check_lcn_collisions_empty_pair_list_skips_query(db_session):
-    """pair_list=[] не должен трогать БД вовсе (lcn::text недоступен в SQLite)."""
+    """pair_list=[] must not touch the DB at all (lcn::text is unavailable in SQLite)."""
     errors = await ParserController._check_lcn_collisions(db_session, [])
     assert errors == []

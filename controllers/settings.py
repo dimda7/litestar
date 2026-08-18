@@ -23,10 +23,10 @@ def _json(status: str, message: str, **extra: object) -> Response:
 
 
 def _save_failed(e: OSError) -> Response:
-    """Файл подключений не записался (права, место на диске, ro-монтирование).
+    """The connections file could not be written (permissions, disk space, ro mount).
 
-    Без этой ветки ошибка уходила в общий обработчик 500, который отдаёт
-    HTML-страницу, а JS страницы настроек ждёт JSON.
+    Without this branch the error fell through to the generic 500 handler,
+    which renders an HTML page, while the Settings page JS expects JSON.
     """
     logger.error("DB profiles file write failed: %s", e, exc_info=e)
     return _json("error", f"Не удалось сохранить файл подключений: {e}")
@@ -41,10 +41,10 @@ class SettingsController(Controller):
 
     @get("/")
     async def settings_page(self, request: Request) -> Template:
-        """Страница настроек."""
-        # Пароли в контекст не кладём: страница целиком уходит в исходник,
-        # кеш браузера и логи прокси. Модалка правки запрашивает пароль
-        # одного подключения отдельным запросом.
+        """The Settings page."""
+        # Passwords stay out of the context: the whole page ends up in view
+        # source, the browser cache and proxy logs. The edit modal fetches one
+        # connection's password in a separate request.
         profiles = [
             {"id": p.id, "name": p.name, "host": p.host, "port": p.port,
              "user": p.user, "dbname": p.dbname}
@@ -77,7 +77,7 @@ class SettingsController(Controller):
         request: Request,
         data: DBProfileRequest = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Пароль одного подключения — для предзаполнения формы правки."""
+        """One connection's password — to prefill the edit form."""
         profile = db_profiles.get(data.profile)
         if profile is None:
             return _json("error", "Подключение не найдено")
@@ -89,7 +89,7 @@ class SettingsController(Controller):
         request: Request,
         data: DBProfileFormRequest = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Проверка ещё не сохранённых параметров — кнопка внутри формы."""
+        """Test parameters that are not saved yet — the button inside the form."""
         ok, message = await db_manager.test_url(_form_url(data))
         return _json("ok" if ok else "error", message)
 
@@ -106,7 +106,7 @@ class SettingsController(Controller):
         changed = db_manager.set_active_profile(data.profile)
 
         if changed:
-            # У другой БД свои пользователи — текущий логин для неё не годится.
+            # Another database has its own users — the current login is no good there.
             request.clear_session()
 
         profile = db_profiles.get(data.profile)
@@ -158,20 +158,21 @@ class SettingsController(Controller):
         except OSError as e:
             return _save_failed(e)
 
-        # Закэшированный движок собран по старому URL — выбрасываем, иначе
-        # правка host/пароля не подействует.
+        # The cached engine was built from the old URL — drop it, or an edit to
+        # the host or password has no effect.
         await db_manager.forget_engine(data.profile)
 
-        # Смена host/port/database означает другую БД с другими пользователями:
-        # выданная старой БД сессия для неё не годится. Правка имени, логина
-        # или пароля из системы не выбрасывает.
+        # Changing host/port/database means a different database with different
+        # users: a session issued by the old one is no good there. Editing the
+        # name, user or password does not log anyone out.
         relogin = (
             not db_profiles.targets_same_database(existing, updated)
             and data.profile == db_manager.get_active_profile()
         )
         if relogin:
-            # Сессии остальных пользователей тоже выданы старой БД — их логин
-            # в новой не проверялся, поэтому обнуляем эпоху целиком.
+            # Everyone else's sessions were issued by the old database too and
+            # their logins were never checked against the new one, so bump the
+            # epoch for all of them.
             db_manager.bump_target_epoch()
             request.clear_session()
 

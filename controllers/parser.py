@@ -34,23 +34,23 @@ from parser_storage import (
 
 logger = logging.getLogger("parser")
 
-# Валидация "set serial='none' lcn" дёргает запрос к БД на каждую уникальную
-# id_train_type, на больших файлах это идёт секундами — прогресс отдаётся
-# через отдельный опрос, чтобы не держать один HTTP-запрос открытым всё это время.
+# Validating "set serial='none' lcn" issues a database query per unique
+# id_train_type, which on large files takes seconds — progress is served through
+# a separate poll rather than holding one HTTP request open all that time.
 PROGRESS_TTL_SECONDS = 15 * 60
 _progress: dict[str, dict] = {}
-# asyncio хранит только слабую ссылку на fire-and-forget задачи — без явного
-# хранения задача может быть собрана GC до завершения.
+# asyncio only keeps a weak reference to fire-and-forget tasks — without
+# storing it explicitly the task can be garbage collected before it finishes.
 _tasks: dict[str, asyncio.Task] = {}
 
-# Модельный lcn вида 'M9.6.5': цифры после буквенного префикса и до первой
-# точки — id_train_type, остаток пути (после первой точки) переносится как есть.
+# A model lcn like 'M9.6.5': the digits after the letter prefix and before the
+# first dot are id_train_type; the rest of the path is carried over as is.
 _MODEL_LCN_RE = re.compile(r"^\D*(\d+)(?:\.(.*))?$")
 
-# Excel-даты в остальных парсерах проекта вводятся по московскому времени, в
-# БД (relocate.date/date_current) хранятся в UTC — тот же сдвиг, что и в
-# ptoir_parser.py (MSK_OFFSET). Здесь дата не берётся из файла, поэтому сдвиг
-# применяется один раз к "сейчас" на весь батч перемещения.
+# Excel dates in the project's other parsers are entered in Moscow time while
+# the database (relocate.date/date_current) stores UTC — the same shift as in
+# ptoir_parser.py (MSK_OFFSET). Here no date comes from the file, so the shift is
+# applied once to "now" for the whole move batch.
 MOVE_TZ_SHIFT = timedelta(hours=3)
 
 
@@ -62,7 +62,7 @@ def _cleanup_progress() -> None:
 
 
 def _parse_model_lcn(lcn: str) -> tuple[int, str] | None:
-    """Извлекает (id_train_type, остаток_пути) из lcn вида 'M9.6.5' -> (9, '6.5'); 'M9' -> (9, '')."""
+    """Extract (id_train_type, rest_of_path) from an lcn like 'M9.6.5' -> (9, '6.5'); 'M9' -> (9, '')."""
     match = _MODEL_LCN_RE.match(lcn)
     if not match:
         return None
@@ -121,10 +121,10 @@ class ParserController(Controller):
 
     @post("/upload")
     async def upload(self, request: Request) -> Redirect:
-        """Загрузка Excel-файла (.xlsx/.xls).
+        """Upload of an Excel file (.xlsx/.xls).
 
-        Парсит файл, извлекает заголовки и строки.
-        Если файл содержит несколько листов, перенаправляет на выбор листа.
+        Parses the file and extracts headers and rows.
+        If the file holds several sheets, redirects to the sheet picker.
         """
         form = await request.form()
         upload_file: UploadFile | None = form.get("file")
@@ -190,9 +190,9 @@ class ParserController(Controller):
         request: Request,
         data: SelectSheetRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
     ) -> Redirect:
-        """Выбор листа Excel из.multi-sheet файла.
+        """Sheet choice for a multi-sheet Excel file.
 
-        Парсит указанный лист и сохраняет данные для дальнейшей обработки.
+        Parses the chosen sheet and stores the data for further processing.
         """
         sheet_name = data.sheet_name
 
@@ -363,11 +363,12 @@ class ParserController(Controller):
     async def _validate_and_build_serial_none_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки Excel для 'set serial=none lcn'.
+        """Validate the Excel rows for 'set serial=none lcn'.
 
-        lcn вида 'M9.6.5': 9 — id_train_type, '6.5' — остаток пути. Для каждого
-        поезда с этим id_train_type подставляем его id вместо 'M9' и получаем
-        список lcn активов ('lcn_trains'), которым нужно проставить serial_number='none'.
+        In an lcn like 'M9.6.5', 9 is id_train_type and '6.5' is the rest of the
+        path. For every train of that id_train_type its own id replaces 'M9',
+        yielding the list of asset lcns ('lcn_trains') that need
+        serial_number='none'.
         """
         errors: list[dict] = []
         valid_rows: list[dict] = []
@@ -426,14 +427,14 @@ class ParserController(Controller):
     async def _validate_and_build_move_no_relocate_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки Excel для 'Переместить активы без relocate'.
+        """Validate the Excel rows for 'Переместить активы без relocate'.
 
-        Каждая строка задаёт старый и новый модельный lcn ('Старый lsn' ->
-        'lsn', оба вида 'M9.1.6') для одной и той же позиции. По id_train_type
-        (должен совпадать у обоих) находятся все поезда этого типа, для
-        каждого строится пара реальных lcn активов (старый -> новый).
-        Дублирующиеся/пересекающиеся строки файла схлопываются в одну пару;
-        одинаковый старый lcn с разными новыми — конфликт (ошибка).
+        Each row gives the old and the new model lcn ('Старый lsn' -> 'lsn',
+        both like 'M9.1.6') for one and the same position. The id_train_type
+        (which must match on both) finds every train of that type, and for each
+        a pair of real asset lcns is built (old -> new). Duplicate or
+        overlapping file rows collapse into one pair; the same old lcn with
+        different new ones is a conflict (an error).
         """
         errors: list[dict] = []
         pairs: dict[str, str] = {}
@@ -526,15 +527,15 @@ class ParserController(Controller):
 
     @staticmethod
     async def _check_lcn_collisions(db_session: AsyncSession, pair_list: list[dict]) -> list[dict]:
-        """Ищет активы, уже занимающие целевой new_lcn пары и не входящие в файл.
+        """Find assets already holding a pair's target new_lcn that are not in the file.
 
-        Двухфазный UPDATE (см. _build_two_phase_lcn_update_lines) безопасен для
-        цепочек ВНУТРИ одного батча (A->B, B->C), но не спасает, если целевой
-        new_lcn уже занят активом, которого в файле вообще нет — тогда
-        UniqueViolationError вылезет прямо в середине выполнения без понятной
-        причины. Отдельный метод (не часть _validate_and_build_move_no_relocate_rows)
-        — использует lcn::text, Postgres-специфичный каст, который не
-        поддерживается тестовой SQLite-БД (см. test_parser_change_lcn_validation.py).
+        The two-phase UPDATE (see _build_two_phase_lcn_update_lines) is safe for
+        chains WITHIN one batch (A->B, B->C), but does not help when the target
+        new_lcn is already taken by an asset the file never mentions — then a
+        UniqueViolationError surfaces mid-execution with no clear cause. It is a
+        separate method (not part of _validate_and_build_move_no_relocate_rows)
+        because it uses lcn::text, a Postgres-specific cast the SQLite test
+        database does not support (see test_parser_change_lcn_validation.py).
         """
         if not pair_list:
             return []
@@ -557,14 +558,14 @@ class ParserController(Controller):
     async def _validate_and_build_change_model_lcn_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки Excel для 'изменить lcn в модели' (таблица public.models).
+        """Validate the Excel rows for 'изменить lcn в модели' (the public.models table).
 
-        Колонка 'id' — models.id (та же схема, что у листов "Удалить из
-        моделей"/"Добавить в модели" в этом же файле); 'lsn'/'lcn' — новое
-        значение models.lcn. Необязательная 'Старый lsn'/'Старый lcn' сверяется
-        с текущим models.lcn — защита от устаревшего/не того файла; в
-        обновлении не участвует (matching всегда по стабильному id, а не по
-        тексту lcn).
+        The 'id' column is models.id (the same scheme as the "Удалить из
+        моделей"/"Добавить в модели" sheets in this very file); 'lsn'/'lcn' is
+        the new models.lcn value. The optional 'Старый lsn'/'Старый lcn' is
+        checked against the current models.lcn — a guard against a stale or wrong
+        file; it takes no part in the update (matching always goes through the
+        stable id, never the lcn text).
         """
         errors: list[dict] = []
         valid_rows: list[dict] = []
@@ -643,19 +644,18 @@ class ParserController(Controller):
 
     @staticmethod
     def _build_two_phase_lcn_update_lines(valid_rows: list[dict], extra_set: str = "") -> list[str]:
-        """Двухфазный UPDATE lcn: старое -> временное ('Z'+старое) -> новое.
+        """Two-phase lcn UPDATE: old -> temporary ('Z'+old) -> new.
 
-        Файл часто содержит цепочки (новый lcn одной пары совпадает со старым
-        lcn другой — например, дочерняя позиция сдвигается вслед за
-        родительской). Обновление в одну FROM(VALUES...)-инструкцию падает с
-        UniqueViolationError на actives_lcn_key: пока не все строки
-        переставлены, промежуточное состояние содержит дубликат. Временный
-        префикс 'Z' гарантированно не пересекается с реальными lcn (train_id,
-        'M'-модельные, 'S'-складские) — после первого прохода ни один активный
-        lcn не совпадает со старым/новым значением другой пары.
+        Files often contain chains (one pair's new lcn equals another pair's old
+        one — a child position moving after its parent, say). Updating in a
+        single FROM(VALUES...) statement fails with UniqueViolationError on
+        actives_lcn_key: until every row has moved, the intermediate state holds
+        a duplicate. The temporary 'Z' prefix cannot collide with real lcns
+        (train_id, 'M' model ones, 'S' storage ones) — after the first pass no
+        live lcn matches another pair's old or new value.
 
-        extra_set — дополнительные ", колонка = значение" в финальном UPDATE
-        (например, сброс id_actves_parent/id_actives_root при перемещении).
+        extra_set holds additional ", column = value" clauses for the final
+        UPDATE (resetting id_actves_parent/id_actives_root on a move, say).
         """
         if not valid_rows:
             return []
@@ -671,21 +671,21 @@ class ParserController(Controller):
 
     @staticmethod
     def _build_move_no_relocate_sql_lines(valid_rows: list[dict]) -> list[str]:
-        """Тот же двухфазный UPDATE lcn, что и в 'Изменить lcn в модели' по
-        смыслу, но здесь — actives (без смены id_location и без relocate)."""
+        """The same two-phase lcn UPDATE as in 'Изменить lcn в модели' in spirit,
+        but on actives here (no id_location change and no relocate)."""
         return ParserController._build_two_phase_lcn_update_lines(valid_rows)
 
     @staticmethod
     def _build_change_lcn_sql_lines(valid_rows: list[dict]) -> list[str]:
-        """Двухфазный UPDATE public.models.lcn, сопоставление по models.id.
+        """Two-phase UPDATE of public.models.lcn, matching on models.id.
 
-        В отличие от actives-варианта, здесь matching идёт по стабильному id
-        (models.id не меняется, в отличие от lcn), а не по тексту lcn — сам id
-        уже однозначно определяет строку. 'Z'-префикс всё равно нужен: lcn
-        входит в составной UNIQUE (id_train_type, lcn, id_car_place,
-        id_design_number, is_default), и порядок построчной обработки одного
-        UPDATE не гарантирован — без временного значения возможен
-        UniqueViolationError на цепочках (см. _build_two_phase_lcn_update_lines).
+        Unlike the actives variant, matching goes through the stable id
+        (models.id does not change, lcn does) rather than the lcn text — the id
+        alone identifies the row. The 'Z' prefix is still needed: lcn is part of
+        a composite UNIQUE (id_train_type, lcn, id_car_place, id_design_number,
+        is_default), and the per-row processing order within one UPDATE is not
+        guaranteed — without a temporary value chains can raise
+        UniqueViolationError (see _build_two_phase_lcn_update_lines).
         """
         if not valid_rows:
             return []
@@ -700,13 +700,14 @@ class ParserController(Controller):
     async def _validate_and_build_is_default_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки Excel для 'Изменить серийность в модели' (models.is_default).
+        """Validate the Excel rows for 'Изменить серийность в модели' (models.is_default).
 
-        Колонка 'id' — models.id, 'isdefault' — новое значение (true/false/1/0/да/нет,
-        как в _validate_is_serial_1c design_number_parser.py). При переключении в true
-        дополнительно проверяются оба частичных UNIQUE-индекса models на is_default=true
-        (см. _validate_and_build_rows) — иначе конфликт вылезет как голый
-        UniqueViolationError прямо при выполнении, а не как понятная построчная ошибка.
+        The 'id' column is models.id and 'isdefault' the new value
+        (true/false/1/0/да/нет, as in _validate_is_serial_1c in
+        design_number_parser.py). Switching to true additionally checks both
+        partial UNIQUE indexes on models over is_default=true (see
+        _validate_and_build_rows) — otherwise the conflict surfaces as a bare
+        UniqueViolationError during execution instead of a clear per-row error.
         """
         errors: list[dict] = []
 
@@ -734,9 +735,9 @@ class ParserController(Controller):
         )
         models_by_id = {m[0]: m for m in models_result.all()}
 
-        # Первый проход: парсинг колонок и дедуп по id — не смотрит на текущие
-        # default-множества, чтобы порядок строк файла не влиял на результат
-        # (важно для второго прохода, см. ниже).
+        # First pass: parse the columns and dedupe by id — it does not look at the
+        # current default sets, so the order of the file's rows cannot influence the
+        # result (which matters for the second pass, see below).
         parsed: dict[int, dict] = {}
         order: list[int] = []
 
@@ -777,13 +778,13 @@ class ParserController(Controller):
             parsed[model_id] = {"row": row_num, "is_default": is_default}
             order.append(model_id)
 
-        # Второй проход: UNIQUE-коллизии is_default=true (см. _validate_and_build_rows).
-        # Модели из этого же файла учитываются по НОВОМУ значению из файла, а не по
-        # текущему в БД — иначе файл, который одновременно снимает старый default и
-        # ставит новый на то же место (lcn, car_place) / (car_place, train_type,
-        # design_number), давал бы ложный конфликт из-за произвольного порядка строк
-        # (тот же случай, для которого _build_is_default_sql_lines сортирует FALSE
-        # перед TRUE).
+        # Second pass: UNIQUE collisions on is_default=true (see
+        # _validate_and_build_rows). Models from this same file count by their NEW
+        # value from the file, not the current one in the database — otherwise a file
+        # that clears the old default and sets a new one at the same (lcn, car_place)
+        # or (car_place, train_type, design_number) would raise a false conflict from
+        # the arbitrary row order (the same case that makes _build_is_default_sql_lines
+        # sort FALSE before TRUE).
         existing_default_lcn_car: dict[tuple, int] = {}
         existing_default_car_type_design: dict[tuple, int] = {}
         for mid, m in models_by_id.items():
@@ -828,12 +829,12 @@ class ParserController(Controller):
 
     @staticmethod
     def _build_is_default_sql_lines(valid_rows: list[dict]) -> list[str]:
-        """FALSE-строки идут перед TRUE: частичный UNIQUE-индекс (WHERE is_default=true)
+        """FALSE rows go before TRUE ones: the partial UNIQUE index (WHERE is_default=true)
 
-        проверяется построчно по мере выполнения отдельных UPDATE в одной транзакции,
-        а не в конце — если файл одновременно снимает старый default и ставит новый на
-        то же место (lcn, car_place) или (car_place, train_type, design_number), снятие
-        обязано выполниться раньше установки.
+        is checked row by row as the individual UPDATEs run inside one transaction
+        rather than at the end — so if a file clears the old default and sets a new one
+        at the same (lcn, car_place) or (car_place, train_type, design_number), the
+        clearing must run before the setting.
         """
         ordered = sorted(valid_rows, key=lambda vr: vr["is_default"])
         return [
@@ -843,11 +844,11 @@ class ParserController(Controller):
 
     @staticmethod
     def _merge_serial_none_lcns(valid_rows: list[dict]) -> list[str]:
-        """Объединяет lcn_trains всех строк файла в один список без дублей.
+        """Merge the lcn_trains of every file row into one duplicate-free list.
 
-        Разные строки Excel с одинаковым lsn (или разными lsn, дающими
-        пересекающиеся lcn) иначе давали бы несколько одинаковых/пересекающихся
-        UPDATE-запросов подряд — вместо этого один запрос на все строки файла.
+        Different Excel rows with the same lsn (or different lsns yielding
+        overlapping lcns) would otherwise produce several identical or
+        overlapping UPDATEs in a row — this makes it one query for the whole file.
         """
         seen: set[str] = set()
         merged: list[str] = []
@@ -868,7 +869,7 @@ class ParserController(Controller):
 
     @staticmethod
     async def _resolve_user_by_fullname(db_session: AsyncSession, fullname: str) -> int | None:
-        """Ищет fdw_users по ФИО, построенному так же, как session['fullname'] в auth.py:
+        """Look up fdw_users by the full name built exactly as session['fullname'] in auth.py:
 
         ' '.join(filter(None, [lastname, firstname, middlename])) or username.
         """
@@ -884,20 +885,21 @@ class ParserController(Controller):
         storage_name: str, consignment_name: str, user_fullname: str, set_nocm: bool,
         progress: dict | None = None,
     ) -> tuple[list[dict], list[dict], int | None, int | None, int | None, int | None]:
-        """Валидирует строки Excel для 'Переместить активы' (аналог move_active).
+        """Validate the Excel rows for 'Переместить активы' (the move_active equivalent).
 
-        Активы определяются через lsn/lcn — по той же логике, что и кнопка
-        "set serial='none' lcn" (_validate_and_build_serial_none_rows): из
-        модельного lcn ('M9.6.5') находятся все поезда нужного типа и их lcn
-        активов, затем среди них ищутся реально существующие активы. Строк,
-        для которых актива по lcn не нашлось, просто не будет в результате —
-        не ошибка (позиция могла быть уже снята с части поездов).
+        Assets are located through lsn/lcn by the same logic as the
+        "set serial='none' lcn" button (_validate_and_build_serial_none_rows):
+        a model lcn ('M9.6.5') yields every train of that type and their asset
+        lcns, among which the assets that actually exist are then looked up.
+        Rows with no asset at their lcn simply do not appear in the result —
+        not an error (the position may already have been removed from some
+        trains).
 
-        Склад/партия/пользователь — общие для всего файла (заданы один раз в
-        модалке). set_nocm — флажок "Установить позицию ТМЦ = 'NOCM'": если
-        включён, id_design_number всех перемещаемых активов резолвится по
-        design_number.number == 'NOCM' и дополнительно проставляется в UPDATE.
-        Возвращает (errors, valid_rows, id_storage, id_consignment, id_user, id_design_number).
+        Storage, consignment and user are shared by the whole file (set once in
+        the modal). set_nocm is the "Установить позицию ТМЦ = 'NOCM'" checkbox:
+        when on, id_design_number for every moved asset is resolved through
+        design_number.number == 'NOCM' and additionally written by the UPDATE.
+        Returns (errors, valid_rows, id_storage, id_consignment, id_user, id_design_number).
         """
         errors: list[dict] = []
         valid_rows: list[dict] = []
@@ -967,18 +969,18 @@ class ParserController(Controller):
         valid_rows: list[dict], id_storage: int, id_consignment: int, id_user: int,
         reason: str, move_date: datetime, id_design_number: int | None = None,
     ) -> list[str]:
-        """Строит DO-блок перемещения активов на склад (аналог move_active).
+        """Build the DO block moving assets into storage (the move_active equivalent).
 
-        Один destination-склад на весь батч (в отличие от исходного скрипта,
-        где 'Куда' бралось по строкам) — упрощает счётчик lcn до одной
-        переменной вместо словаря по id склада. lcn выдаётся из storage.last_lcn
-        под FOR UPDATE и пишется обратно в конце DO-блока (в отличие от
-        исходного move_active, который инкрементировал счётчик только в памяти
-        Python и никогда не сохранял его обратно в БД — повторный запуск
-        выдавал бы те же номера lcn повторно).
+        One destination storage for the whole batch (unlike the original script,
+        where 'Куда' was taken per row) — which reduces the lcn counter to a
+        single variable instead of a dict keyed by storage id. The lcn is taken
+        from storage.last_lcn under FOR UPDATE and written back at the end of the
+        DO block (unlike the original move_active, which incremented the counter
+        only in Python memory and never saved it back — a rerun would hand out
+        the same lcn numbers again).
 
-        id_design_number (флажок "Установить позицию ТМЦ = 'NOCM'") — если
-        задан, дополнительно проставляется в том же UPDATE actives.
+        id_design_number (the "Установить позицию ТМЦ = 'NOCM'" checkbox), when
+        set, is additionally written by the same UPDATE on actives.
         """
         total = len(valid_rows)
         date_str = move_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -1057,7 +1059,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновую генерацию SQL-файла вставки строк в models, возвращает task_id для опроса прогресса."""
+        """Start background generation of the SQL file inserting rows into models; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1095,7 +1097,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновую атомарную вставку строк в public.models, возвращает task_id для опроса прогресса."""
+        """Start the background atomic insert of rows into public.models; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         skip_errors = str(data.get("skip_errors", "")).strip().lower() == "true"
         _cleanup_progress()
@@ -1174,7 +1176,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновую генерацию SQL-файла удаления строк из models, возвращает task_id для опроса прогресса."""
+        """Start background generation of the SQL file deleting rows from models; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1205,7 +1207,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновое атомарное удаление строк из public.models, возвращает task_id для опроса прогресса."""
+        """Start the background atomic delete of rows from public.models; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1269,7 +1271,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновую генерацию SQL-файла 'set serial=none lcn', возвращает task_id для опроса прогресса."""
+        """Start background generation of the 'set serial=none lcn' SQL file; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1307,7 +1309,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновое атомарное обновление serial_number='none', возвращает task_id для опроса прогресса."""
+        """Start the background atomic update of serial_number='none'; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1342,10 +1344,9 @@ class ParserController(Controller):
                     progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
                     return
 
-                # Одна общая UPDATE на объединённый (без дублей) список lcn всех
-                # строк файла — вместо запроса на каждую строку, что при
-                # одинаковых/пересекающихся lsn давало несколько идентичных
-                # UPDATE подряд.
+                # One shared UPDATE over the merged, duplicate-free list of lcns from
+                # every file row — instead of a query per row, which with identical or
+                # overlapping lsns produced several identical UPDATEs in a row.
                 progress.update(processed=0, total=1, phase="executing")
                 try:
                     lcns = self._merge_serial_none_lcns(valid_rows)
@@ -1386,7 +1387,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновую генерацию SQL-файла 'изменить lcn в модели', возвращает task_id для опроса прогресса."""
+        """Start background generation of the 'изменить lcn в модели' SQL file; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1425,7 +1426,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновое атомарное изменение lcn у моделей, возвращает task_id для опроса прогресса."""
+        """Start the background atomic lcn change on models; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1462,9 +1463,9 @@ class ParserController(Controller):
 
                 progress.update(processed=0, total=1, phase="executing")
                 try:
-                    # Двухфазный UPDATE (см. _build_change_lcn_sql_lines) — оба шага
-                    # обязаны выполниться в одной транзакции, иначе после первого шага
-                    # строки models временно останутся с 'Z'-префиксом в lcn.
+                    # Two-phase UPDATE (see _build_change_lcn_sql_lines) — both steps must
+                    # run in one transaction, or after the first step the models rows are
+                    # left carrying the temporary 'Z' prefix in lcn.
                     sql_lines = self._build_change_lcn_sql_lines(valid_rows)
                     await session.execute(text(sql_lines[0]))
                     result = await session.execute(text(sql_lines[1]))
@@ -1501,7 +1502,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновую генерацию SQL-файла 'Изменить серийность в модели', возвращает task_id."""
+        """Start background generation of the 'Изменить серийность в модели' SQL file; returns a task_id."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1540,7 +1541,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновое атомарное изменение is_default у моделей, возвращает task_id."""
+        """Start the background atomic is_default change on models; returns a task_id."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1576,9 +1577,9 @@ class ParserController(Controller):
                     progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}])
                     return
 
-                # FALSE-строки перед TRUE (см. _build_is_default_sql_lines) — по одному
-                # UPDATE на модель, каждый в своей транзакции-шаге, чтобы порядок был
-                # предсказуем для партиционного UNIQUE-индекса is_default=true.
+                # FALSE rows before TRUE ones (see _build_is_default_sql_lines) — one
+                # UPDATE per model, each its own transaction step, so the order stays
+                # predictable for the partial UNIQUE index over is_default=true.
                 sql_lines = self._build_is_default_sql_lines(valid_rows)
                 progress.update(processed=0, total=len(sql_lines), phase="executing")
                 try:
@@ -1617,7 +1618,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновую генерацию SQL-файла 'Переместить активы без relocate', возвращает task_id."""
+        """Start background generation of the 'Переместить активы без relocate' SQL file; returns a task_id."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1637,8 +1638,8 @@ class ParserController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                # Та же валидация/парсинг пар lcn, что и у 'Изменить lcn в модели'
-                # (Старый lsn -> lsn, обе колонки резолвятся как в 'set serial=none lcn').
+                # The same lcn pair validation and parsing as 'Изменить lcn в модели'
+                # (Старый lsn -> lsn, both columns resolved as in 'set serial=none lcn').
                 errors, valid_rows = await self._validate_and_build_move_no_relocate_rows(session, rows, progress=progress)
                 if not errors:
                     errors.extend(await self._check_lcn_collisions(session, valid_rows))
@@ -1660,7 +1661,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновое атомарное перемещение активов без relocate, возвращает task_id."""
+        """Start the background atomic asset move without relocate; returns a task_id."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         _cleanup_progress()
         task_id = uuid.uuid4().hex
@@ -1699,8 +1700,8 @@ class ParserController(Controller):
 
                 progress.update(processed=0, total=1, phase="executing")
                 try:
-                    # Двухфазный UPDATE, как в change-lcn, но дополнительно сбрасывает
-                    # id_actves_parent/id_actives_root; id_location и relocate не трогаются.
+                    # Two-phase UPDATE as in change-lcn, but additionally resetting
+                    # id_actves_parent/id_actives_root; id_location and relocate are untouched.
                     sql_lines = self._build_move_no_relocate_sql_lines(valid_rows)
                     await session.execute(text(sql_lines[0]))
                     result = await session.execute(text(sql_lines[1]))
@@ -1737,7 +1738,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновую генерацию SQL-файла перемещения активов, возвращает task_id для опроса прогресса."""
+        """Start background generation of the asset move SQL file; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         reason = str(data.get("reason", "") or "")
         storage_name = str(data.get("storage_name", "") or "")
@@ -1795,7 +1796,7 @@ class ParserController(Controller):
         request: Request,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        """Запускает фоновое атомарное перемещение активов, возвращает task_id для опроса прогресса."""
+        """Start the background atomic asset move; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         reason = str(data.get("reason", "") or "")
         storage_name = str(data.get("storage_name", "") or "")
@@ -1849,12 +1850,12 @@ class ParserController(Controller):
                     )
                 )
                 try:
-                    # DO $$ ... $$ с несколькими операторами внутри нельзя выполнить
-                    # через обычный execute() (asyncpg не готовит несколько команд в
-                    # одном prepared statement) — тот же приём, что и в create_actives/
-                    # create_named_actives: сырое соединение, session.rollback() ниже
-                    # откатывает и его, т.к. сессия уже открыла транзакцию раньше
-                    # (запросы валидации).
+                    # DO $$ ... $$ containing several statements cannot go through an
+                    # ordinary execute() (asyncpg will not prepare several commands in one
+                    # prepared statement) — the same trick as in create_actives and
+                    # create_named_actives: a raw connection, which session.rollback()
+                    # below also rolls back, since the session opened a transaction earlier
+                    # (the validation queries).
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)

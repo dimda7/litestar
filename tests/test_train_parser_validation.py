@@ -1,11 +1,10 @@
-"""Тесты FK-валидации TrainParserController._validate_train_rows (controllers/train_parser.py).
+"""FK validation tests for TrainParserController._validate_train_rows (controllers/train_parser.py).
 
-Покрыты только ветки, не доходящие до `text("... FROM public.models WHERE lcn::text = ...")`:
-эта часть использует Postgres-специфичный оператор приведения типа `::text`, который
-SQLite не умеет парсить (см. tests/conftest.py про ATTACH DATABASE ... AS public для
-остальных запросов). Полный прогон happy-path с реальным разрешением car_place_id
-и id_actives_parent требует настоящего Postgres (например, testcontainers) — не
-покрыт этими тестами намеренно, а не по недосмотру.
+Only the branches that stop short of `text("... FROM public.models WHERE lcn::text = ...")`
+are covered: that part uses the Postgres-specific `::text` cast, which SQLite cannot parse
+at all (see tests/conftest.py on ATTACH DATABASE ... AS public for the other queries). A full
+happy-path run with real car_place_id and id_actives_parent resolution needs a real Postgres
+(testcontainers, say) — left uncovered here deliberately, not by oversight.
 """
 
 from controllers.train_parser import TrainParserController
@@ -38,7 +37,7 @@ async def test_empty_itemnum_reported_without_touching_db(db_session):
 
 
 async def test_unknown_design_number_reported(db_session):
-    """dn_row is None -> continue до раw-SQL с id_car_place, поэтому SQLite тут достаточно."""
+    """dn_row is None -> continue before the raw SQL with id_car_place, so SQLite suffices here."""
     errors, valid_rows = await validate(db_session, [make_row(itemnum="DN-999", lsn="5.1")])
 
     assert valid_rows == []
@@ -50,8 +49,8 @@ async def test_multiple_rows_mixed_empty_and_unknown(db_session):
     await make_design_number(db_session, "DN-001", id_unit_type=7)
 
     rows = [
-        make_row(itemnum="DN-001", lsn=""),  # пустой lsn -> row 1
-        make_row(itemnum="DN-999", lsn="5.1"),  # design_number не найден -> row 2
+        make_row(itemnum="DN-001", lsn=""),  # empty lsn -> row 1
+        make_row(itemnum="DN-999", lsn="5.1"),  # design_number not found -> row 2
     ]
     errors, valid_rows = await validate(db_session, rows)
 

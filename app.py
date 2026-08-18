@@ -34,19 +34,19 @@ configure_logging(level=settings.log_level)
 
 session_config = CookieBackendConfig(secret=settings.session_secret)
 
-# Отдельный секрет не заводим: settings.session_secret уже хранится в .env как
-# случайная hex-строка и используется здесь для HMAC-подписи CSRF-токена
-# (другое криптографическое назначение, чем шифрование сессионной куки).
+# No separate secret: settings.session_secret is already stored in .env as a
+# random hex string, and is used here to HMAC-sign the CSRF token (a different
+# cryptographic purpose than encrypting the session cookie).
 csrf_config = CSRFConfig(secret=settings.session_secret.hex())
 
 
 def not_found_handler(request: Request, exc: Exception) -> Template:
-    """Кастомная страница 404."""
+    """Custom 404 page."""
     return Template(template_name="errors/404.html", status_code=404)
 
 
 def server_error_handler(request: Request, exc: Exception) -> Template:
-    """Кастомная страница 500. Полная ошибка уходит в лог, пользователю — без деталей."""
+    """Custom 500 page. The full error goes to the log, the user gets no details."""
     logging.getLogger("app").error("Unhandled error on %s %s", request.method, request.url, exc_info=exc)
     return Template(template_name="errors/500.html", status_code=500)
 
@@ -56,7 +56,7 @@ class HomeController(Controller):
 
     @get("/")
     async def home(self, request: Request) -> Template:
-        """Главная страница."""
+        """Home page."""
         user_id = request.session.get("user_id")
         fullname = request.session.get("fullname", "")
         return Template(
@@ -113,9 +113,9 @@ if __name__ == "__main__":
 
     import uvicorn
     uvicorn.run(
-        "app:app",  # формат "имя_файла:имя_переменной_приложения"
+        "app:app",  # format is "module_name:app_variable_name"
         host="0.0.0.0",
         port=settings.server_port,
-        # reload=False  # <--- ВАЖНО: оставьте выключенным при отладке в PyCharm!
+        # reload=False  # <--- IMPORTANT: keep this off when debugging in PyCharm!
     )
 

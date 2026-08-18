@@ -1,4 +1,4 @@
-"""Тесты валидации OrderParserController._validate_and_build_rows (controllers/order_parser.py)."""
+"""Validation tests for OrderParserController._validate_and_build_rows (controllers/order_parser.py)."""
 
 from controllers.order_parser import OrderParserController
 from tests.conftest import make_order

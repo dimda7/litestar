@@ -32,8 +32,9 @@ logger = logging.getLogger("order_parser")
 
 PREFIX = "order_parser"
 
-# Каждая строка требует запросов к БД, на файлах в сотни-тысячи строк операция
-# идёт секундами — прогресс отдаётся через отдельный опрос (см. ptoir_parser.py).
+# Every row needs database queries, and on files of hundreds to thousands of
+# rows the operation takes seconds — progress is served through a separate poll
+# (see ptoir_parser.py).
 PROGRESS_TTL_SECONDS = 15 * 60
 _progress: dict[str, dict] = {}
 _tasks: dict[str, asyncio.Task] = {}
@@ -223,12 +224,12 @@ class OrderParserController(Controller):
         self, db_session: AsyncSession, rows: list[dict],
         progress: dict | None = None,
     ) -> tuple[list[dict], list[tuple[int, int, str, str]]]:
-        """Валидирует строки Excel для присвоения родительского ЗН.
+        """Validate the Excel rows for assigning a parent work order.
 
-        Возвращает (errors, valid_rows), где valid_rows — список кортежей
+        Returns (errors, valid_rows), where valid_rows is a list of tuples
         (child_id, parent_id, child_number, parent_number).
-        Если передан progress-словарь, каждые несколько строк в него пишется
-        (processed, total, phase="validating") для опроса с фронтенда.
+        When a progress dict is passed, (processed, total, phase="validating")
+        is written into it every few rows for the frontend to poll.
         """
         errors: list[dict] = []
         valid_rows: list[tuple[int, int, str, str]] = []

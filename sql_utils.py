@@ -1,3 +1,3 @@
 def sql_escape(value: str) -> str:
-    """Экранирует одинарные кавычки для подстановки строки в SQL-литерал."""
+    """Escape single quotes so the string can be inlined into an SQL literal."""
     return value.replace("'", "''")

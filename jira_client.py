@@ -14,7 +14,7 @@ def _auth() -> tuple[str, str]:
 
 
 async def get_issue(issue_key: str) -> dict:
-    """Вложения и описание задачи Jira: {attachments: [{id, filename, size, content_url}, ...], description}."""
+    """Jira issue attachments and description: {attachments: [{id, filename, size, content_url}, ...], description}."""
     issue_key = issue_key.strip()
     if not ISSUE_KEY_RE.match(issue_key):
         raise ValueError(f"Некорректный номер задачи: '{issue_key}'")
@@ -39,10 +39,10 @@ async def get_issue(issue_key: str) -> dict:
 
 
 async def download_attachment(content_url: str) -> tuple[bytes, str]:
-    """Скачивает вложение по content_url из list_attachments. Возвращает (содержимое, mime_type).
+    """Download an attachment by the content_url from list_attachments. Returns (content, mime_type).
 
-    content_url обязан вести на настроенный Jira-хост — иначе этот эндпоинт
-    превращается в открытый прокси на произвольный адрес через наши Jira-креды (SSRF).
+    content_url must point at the configured Jira host — otherwise this endpoint
+    becomes an open proxy to any address using our Jira credentials (SSRF).
     """
     if not content_url.startswith(settings.jira.base_url):
         raise ValueError("Недопустимый адрес вложения")

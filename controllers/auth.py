@@ -17,7 +17,7 @@ from schemas import DbSelectRequest, LoginRequest
 
 
 def _visible_profiles() -> list[dict[str, str | int]]:
-    """Подключения для экрана до логина — без паролей."""
+    """Connections for the pre-login screen — without passwords."""
     return [
         {"id": p.id, "name": p.name, "host": p.host, "port": p.port, "dbname": p.dbname}
         for p in db_profiles.load()
@@ -29,7 +29,7 @@ class AuthController(Controller):
 
     @get("/db-select")
     async def db_select_page(self, request: Request) -> Template:
-        """Выбор подключения к БД перед логином — у каждой БД свои пользователи."""
+        """Pick a database before logging in — each one has its own users."""
         return Template(
             template_name="db_select.html",
             context={"error": None, "db_profiles": _visible_profiles()},
@@ -41,7 +41,7 @@ class AuthController(Controller):
         request: Request,
         data: DbSelectRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
     ) -> Template | Redirect:
-        """Проверяет подключение к выбранной БД и делает её активной."""
+        """Test the chosen database connection and make it the active one."""
         if db_profiles.get(data.profile) is None:
             return Template(
                 template_name="db_select.html",
@@ -56,14 +56,14 @@ class AuthController(Controller):
             )
 
         db_manager.set_active_profile(data.profile)
-        # Логин проверяется по fdw_users в только что выбранной БД — старая
-        # сессия (если была от другой БД) для неё не годится.
+        # The login is validated against fdw_users in the database just chosen —
+        # an older session (from a different database) is no good for it.
         request.clear_session()
         return Redirect("/auth/login")
 
     @get("/login")
     async def login_page(self, request: Request) -> Template | Redirect:
-        """Отображение страницы входа."""
+        """Render the login page."""
         if request.session.get("user_id"):
             return Redirect("/")
         return Template(template_name="login.html", context={"error": None})
@@ -75,9 +75,9 @@ class AuthController(Controller):
         db_session: AsyncSession,
         data: LoginRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
     ) -> Template | Redirect:
-        """Аутентификация пользователя.
+        """Authenticate the user.
 
-        Проверяет логин и пароль, устанавливает сессию при успехе.
+        Checks the username and password, and sets the session on success.
         """
         username = data.username
         password = data.password
@@ -118,6 +118,6 @@ class AuthController(Controller):
 
     @get("/logout")
     async def logout(self, request: Request) -> Redirect:
-        """Выход из системы. Очищает сессию."""
+        """Log out. Clears the session."""
         request.clear_session()
         return Redirect("/auth/login")

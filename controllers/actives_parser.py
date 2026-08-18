@@ -43,27 +43,28 @@ logger = logging.getLogger("actives_parser")
 PREFIX = "actives_parser"
 
 ACTIVE_NUMBER_COUNTER_DESCRIPTION = "Номер следующего актива"
-# active_number должен быть ровно такой длины: буквенный префикс (Тип актива) + цифры
-# счётчика, дополненные нулями слева между префиксом и числом до общей длины.
+# active_number must be exactly this long: a letter prefix (asset type) plus the
+# counter digits, zero-padded on the left between prefix and number to that length.
 ACTIVE_NUMBER_LENGTH = 10
 
-# Дата исторической миграции учёта пробега: перемещения актива до неё влияют на
-# пересчитываемый mileage_start.milage, пробег поездов суммируется до неё включительно.
+# Date of the historical mileage accounting migration: asset moves before it feed
+# the recomputed mileage_start.milage, and train mileage is summed up to it inclusive.
 MILEAGE_RECOUNT_CUTOFF = date(2022, 5, 13)
-# relocate.date хранится без таймзоны (UTC); для сравнения с датой отсечки
-# приводится к московскому времени, как в старом peewee-скрипте.
+# relocate.date is stored without a timezone (UTC); for comparison against the
+# cutoff it is converted to Moscow time, as in the old peewee script.
 MILEAGE_TZ_SHIFT = timedelta(hours=3)
-# counter_type счётчика пробега в counter_active
+# counter_type of the mileage counter in counter_active
 MILEAGE_COUNTER_TYPE_ID = 3
 
-# Таблицы, ссылающиеся на actives по FK: наличие хотя бы одной связанной записи
-# блокирует удаление актива (строгий DELETE — удаляются только активы без истории).
-# counter_active и mileage_start здесь нет намеренно: строку counter_active создаёт
-# триггер actives_trgger при каждом INSERT актива (счётчик есть у всех активов,
-# блокировка по нему запретила бы удаление вообще), поэтому обе таблицы удаляются
-# вместе с активом. ptoir тоже удаляется вместе с активом (с его ptoir_level_warning),
-# как и «пустые» заказы актива — но заказ со связанными записями хотя бы в одной из
-# ORDERS_DEPENDENCY_CHECKS блокирует удаление (проверяется отдельно).
+# Tables referencing actives by FK: a single related record blocks deleting the
+# asset (a strict DELETE — only assets without history are removed).
+# counter_active and mileage_start are deliberately absent: the counter_active row
+# is created by the actives_trgger trigger on every asset INSERT (every asset has a
+# counter, so blocking on it would forbid deletion outright), which is why both
+# tables are deleted along with the asset. ptoir goes with the asset too (together
+# with its ptoir_level_warning), as do the asset's "empty" orders — but an order
+# with related records in any of ORDERS_DEPENDENCY_CHECKS blocks the deletion
+# (checked separately).
 DELETE_ACTIVES_BLOCKERS: list[tuple[str, object]] = [
     ("relocate", Relocate.id_active),
     ("relocate (root)", Relocate.id_root_active),
@@ -74,9 +75,9 @@ DELETE_ACTIVES_BLOCKERS: list[tuple[str, object]] = [
     ("mileage_history_actives", MileageHistoryActives.id_actives),
 ]
 
-# Таблицы, ссылающиеся на orders по FK (сняты с information_schema реальной БД):
-# заказ актива удаляется вместе с ним только если во всех этих таблицах пусто —
-# иначе это заказ с реальными рабочими данными, и актив блокируется.
+# Tables referencing orders by FK (taken from information_schema of the real DB):
+# an asset's order is deleted along with it only when all of these are empty —
+# otherwise the order carries real working data and the asset is blocked.
 ORDERS_DEPENDENCY_CHECKS: list[tuple[str, str]] = [
     ("consumption_rate_order", "id_order"),
     ("counter_order", "id_order"),
@@ -100,24 +101,24 @@ ORDERS_DEPENDENCY_CHECKS: list[tuple[str, str]] = [
     ("relocate", "id_order"),
 ]
 
-# Модельный lcn вида 'M9.1.6.4': цифры после буквенного префикса и до первой
-# точки — id_train_type, остаток пути (после первой точки) переносится как есть.
-# Тот же паттерн, что и в parser.py (_parse_model_lcn) — не переиспользуется
-# оттуда напрямую, т.к. контроллеры проекта самодостаточны (см. остальные модули).
+# A model lcn like 'M9.1.6.4': the digits after the letter prefix and before the
+# first dot are id_train_type; the rest of the path is carried over as is.
+# The same pattern as in parser.py (_parse_model_lcn) — not reused from there
+# directly, since the project's controllers are self-contained (see other modules).
 _MODEL_LCN_RE = re.compile(r"^\D*(\d+)(?:\.(.*))?$")
 
 
 def _parse_model_lcn(lcn: str) -> tuple[int, str] | None:
-    """Извлекает (id_train_type, остаток_пути) из lcn вида 'M9.6.5' -> (9, '6.5'); 'M9' -> (9, '')."""
+    """Extract (id_train_type, rest_of_path) from an lcn like 'M9.6.5' -> (9, '6.5'); 'M9' -> (9, '')."""
     match = _MODEL_LCN_RE.match(lcn)
     if not match:
         return None
     return int(match.group(1)), match.group(2) or ""
 
 
-# Как и в train_parser: валидация строк ТМЦ дёргает несколько запросов к БД на
-# строку, на больших файлах это идёт секундами — прогресс отдаётся через
-# отдельный опрос, чтобы не держать один HTTP-запрос открытым всё это время.
+# As in train_parser: validating material rows issues several database queries per
+# row, and on large files that takes seconds — progress is served through a separate
+# poll rather than holding one HTTP request open all that time.
 PROGRESS_TTL_SECONDS = 15 * 60
 _progress: dict[str, dict] = {}
 _tasks: dict[str, asyncio.Task] = {}
@@ -458,7 +459,7 @@ class ActivesParserController(Controller):
 
     @post("/design-number/generate-sql/start")
     async def design_number_generate_sql_start(self, request: Request) -> Response:
-        """Запускает фоновую генерацию SQL-файла обновления id_design_number, возвращает task_id."""
+        """Start background generation of the id_design_number update SQL file; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -510,7 +511,7 @@ class ActivesParserController(Controller):
 
     @post("/design-number/execute/start")
     async def design_number_execute_start(self, request: Request) -> Response:
-        """Запускает фоновое обновление id_design_number в БД, возвращает task_id."""
+        """Start the background id_design_number update in the database; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -593,7 +594,7 @@ class ActivesParserController(Controller):
 
     @post("/serial-number/generate-sql/start")
     async def serial_number_generate_sql_start(self, request: Request) -> Response:
-        """Запускает фоновую генерацию SQL-файла обновления serial_number, возвращает task_id."""
+        """Start background generation of the serial_number update SQL file; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -645,7 +646,7 @@ class ActivesParserController(Controller):
 
     @post("/serial-number/execute/start")
     async def serial_number_execute_start(self, request: Request) -> Response:
-        """Запускает фоновое обновление serial_number в БД, возвращает task_id."""
+        """Start the background serial_number update in the database; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -729,23 +730,24 @@ class ActivesParserController(Controller):
     async def _validate_recount_mileage(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки файла «пересчитать пробег» (замена update_milage_start + recount_counter).
+        """Validate the rows of a "пересчитать пробег" file (replaces update_milage_start + recount_counter).
 
-        Для каждого актива по истории relocate считает поправку total к mileage_start.milage:
-        перемещения до MILEAGE_RECOUNT_CUTOFF со склада на поезд прибавляют пробег этого
-        поезда (mileage_train.mileage_average за период от перемещения до отсечки), с поезда
-        на склад — вычитают. Сами значения milage_const и counter_active.value здесь не
-        вычисляются — они читаются/считаются в БД в момент выполнения SQL
-        (см. _build_recount_mileage_sql_body).
+        For each asset it computes a total correction to mileage_start.milage from the
+        relocate history: moves before MILEAGE_RECOUNT_CUTOFF from storage onto a train
+        add that train's mileage (mileage_train.mileage_average over the period from the
+        move to the cutoff), moves from a train into storage subtract it. The
+        milage_const and counter_active.value values themselves are not computed here —
+        they are read and computed in the database when the SQL runs (see
+        _build_recount_mileage_sql_body).
 
-        Необязательная колонка 'milage_const' (замена update_milage_start_const): непустое
-        ненулевое значение перед пересчётом записывается в mileage_start.milage_const;
-        для актива без записи mileage_start она создаётся (INSERT) — тогда отсутствие
-        записи не считается ошибкой. Значение 0 игнорируется, как в старом скрипте.
-        Заголовки колонок сопоставляются без учёта регистра и краевых пробелов (в реальных
-        файлах встречается 'mileage_const\\xa0'), допустимы альтернативные написания:
-        колонка актива — 'Актив' или 'active_number', константа — milage_const или
-        mileage_const.
+        The optional 'milage_const' column (replaces update_milage_start_const): a
+        non-empty, non-zero value is written into mileage_start.milage_const before the
+        recount; for an asset without a mileage_start row one is created (INSERT), in
+        which case a missing row is not an error. A value of 0 is ignored, as in the old
+        script. Column headers are matched case-insensitively and ignoring edge
+        whitespace (real files contain 'mileage_const\\xa0'), and alternative spellings
+        are accepted: the asset column may be 'Актив' or 'active_number', the constant
+        milage_const or mileage_const.
         """
         actives_repo = ActivesRepository(session=db_session)
         mileage_start_repo = MileageStartRepository(session=db_session)
@@ -816,8 +818,8 @@ class ActivesParserController(Controller):
                 errors.append({"row": row_num, "field": "Актив",
                                 "message": f"Несколько записей mileage_start для актива '{active_number}' — неоднозначно"})
                 continue
-            # Без milage_const запись mileage_start обязана существовать; с ним она
-            # будет создана в SQL (INSERT), поэтому отсутствие — не ошибка.
+            # Without milage_const the mileage_start row must exist; with it the row is
+            # created by the SQL (INSERT), so a missing one is not an error.
             if not mileage_start_rows and milage_const is None:
                 errors.append({"row": row_num, "field": "Актив",
                                 "message": f"Запись mileage_start не найдена для актива '{active_number}'"})
@@ -855,8 +857,8 @@ class ActivesParserController(Controller):
                     continue
                 if (relocate_date + MILEAGE_TZ_SHIFT).date() >= MILEAGE_RECOUNT_CUTOFF:
                     continue
-                # Учитываются только перемещения склад<->поезд; поезд->поезд и
-                # склад->склад пробег не меняют (как в старом скрипте).
+                # Only storage<->train moves count; train->train and storage->storage
+                # do not change mileage (as in the old script).
                 if id_train_old is not None and id_train_new is None:
                     train_id, sign = id_train_old, -1
                 elif id_train_old is None and id_train_new is not None:
@@ -888,15 +890,15 @@ class ActivesParserController(Controller):
 
     @staticmethod
     def _build_recount_mileage_sql_body(valid_rows: list[dict]) -> list[str]:
-        """Строит SQL пересчёта пробега (без BEGIN/COMMIT), общий для скачивания и выполнения.
+        """Build the mileage recount SQL (without BEGIN/COMMIT), shared by download and execution.
 
-        Порядок обязателен: сначала запись milage_const из файла (UPDATE, либо INSERT
-        для активов без mileage_start), затем UPDATE mileage_start.milage — он читает
-        milage_const в момент выполнения и должен видеть уже новое значение, затем
-        UPDATE counter_active: пересчёт счётчика через function_get_mileage() читает
-        mileage_start.milage. Всё в одной транзакции, поэтому скачанный и выполненный
-        позже файл не разойдётся с БД. Для поездов (id_unit_type=1) счётчик не
-        пересчитывается (как в старом скрипте).
+        The order is mandatory: first the milage_const from the file (UPDATE, or INSERT
+        for assets without mileage_start), then UPDATE mileage_start.milage — which
+        reads milage_const at execution time and must already see the new value — then
+        UPDATE counter_active, whose recount through function_get_mileage() reads
+        mileage_start.milage. All in one transaction, so a file downloaded and run later
+        cannot drift from the database. For trains (id_unit_type=1) the counter is not
+        recomputed (as in the old script).
         """
         sql_lines: list[str] = []
         for vr in valid_rows:
@@ -931,7 +933,7 @@ class ActivesParserController(Controller):
 
     @post("/recount-mileage/generate-sql/start")
     async def recount_mileage_generate_sql_start(self, request: Request) -> Response:
-        """Запускает фоновую генерацию SQL-файла пересчёта пробега, возвращает task_id."""
+        """Start background generation of the mileage recount SQL file; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -980,7 +982,7 @@ class ActivesParserController(Controller):
 
     @post("/recount-mileage/execute/start")
     async def recount_mileage_execute_start(self, request: Request) -> Response:
-        """Запускает фоновый атомарный пересчёт пробега в БД, возвращает task_id."""
+        """Start the background atomic mileage recount in the database; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -1028,10 +1030,10 @@ class ActivesParserController(Controller):
                 sql_body = "\n".join(sql_lines)
 
                 try:
-                    # ВАЖНО: как и в create-actives — session.rollback() ниже откатывает и этот
-                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
-                    # (запросы репозиториев внутри _validate_recount_mileage). Не убирайте
-                    # обращения к session до этой точки.
+                    # IMPORTANT: as in create-actives, session.rollback() below also rolls this
+                    # raw call back only because the session opened a real transaction earlier
+                    # (the repository queries inside _validate_recount_mileage). Do not remove
+                    # the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)
@@ -1066,17 +1068,17 @@ class ActivesParserController(Controller):
     async def _validate_create_actives_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки ТМЦ и строит план создания активов (замена add_active_spcial).
+        """Validate the material rows and build the asset creation plan (replaces add_active_spcial).
 
-        valid_rows — один элемент на каждый создаваемый актив ('Количество' раскрыто построчно),
-        каждому активу соответствует своя собственная запись location.
+        valid_rows holds one element per asset to create ('Количество' expanded row by
+        row), and each asset gets its own location record.
 
-        Текущие значения storage.last_lcn и iterator_number_last.number здесь намеренно не
-        читаются для использования в SQL — только для проверки, что счётчик существует.
-        Сами значения читаются и блокируются (FOR UPDATE) внутри DO-блока в момент его
-        выполнения (см. _build_create_actives_sql_body), а не снимаются снапшотом на
-        Python-стороне при валидации — иначе к моменту реального запуска (особенно для
-        скачанного и выполненного позже файла) значение в БД могло уже уйти вперёд.
+        The current storage.last_lcn and iterator_number_last.number are deliberately not
+        read here for use in the SQL — only to check that the counter exists. The values
+        themselves are read and locked (FOR UPDATE) inside the DO block when it runs (see
+        _build_create_actives_sql_body) rather than snapshotted on the Python side during
+        validation — otherwise by the time of the real run (especially for a file
+        downloaded and executed later) the value in the database could have moved on.
         """
         storage_repo = StorageRepository(session=db_session)
         storage_place_repo = StoragePlaceRepository(session=db_session)
@@ -1102,8 +1104,8 @@ class ActivesParserController(Controller):
             })
             return errors, valid_rows
 
-        # Колонка ТМЦ: в новых файлах называется 'АРТИКУЛ', в старых —
-        # 'Номер ТМЦ (DU,KP,A2V)'; матчится без регистра и краевых пробелов.
+        # The material column is called 'АРТИКУЛ' in newer files and
+        # 'Номер ТМЦ (DU,KP,A2V)' in older ones; matched ignoring case and edge spaces.
         tmc_column: str | None = next(
             (k for k in (rows[0] if rows else {})
              if str(k).strip().lower() in ("артикул", "номер тмц (du,kp,a2v)")),
@@ -1210,20 +1212,22 @@ class ActivesParserController(Controller):
 
     @staticmethod
     def _build_create_actives_sql_body(valid_rows: list[dict]) -> list[str]:
-        """Строит тело SQL-скрипта создания активов из ТМЦ (без BEGIN/COMMIT).
+        """Build the body of the script creating assets from materials (without BEGIN/COMMIT).
 
-        Каждому активу создаётся своя собственная запись location (materials не используется).
-        Общий для «Скачать SQL-файл» и «Выполнить в базе данных». Все счётчики читаются и
-        расходуются внутри самого DO-блока в момент его выполнения, а не на Python-стороне
-        при генерации:
-        - id для location/actives — через nextval() (как в train_parser);
-        - storage.last_lcn и iterator_number_last.number — через
-          `SELECT ... INTO var ... FOR UPDATE`, локальный инкремент переменной и `UPDATE`
-          этой же переменной в БД в конце того же блока (FOR UPDATE держит блокировку строки
-          до конца транзакции, что защищает от гонки при параллельном выполнении).
-        Без этого скачанный, но выполненный позже файл (или два запуска подряд) мог бы разъехаться
-        со значением в БД: id из nextval() всегда уникален сам по себе, а last_lcn/number —
-        обычные integer-колонки, и старый код на peewee вычислял их один раз на Python-стороне.
+        Every asset gets its own location record (materials is not used). Shared by
+        "Скачать SQL-файл" and "Выполнить в базе данных". All counters are read and
+        consumed inside the DO block itself as it runs, not on the Python side during
+        generation:
+        - ids for location/actives come from nextval() (as in train_parser);
+        - storage.last_lcn and iterator_number_last.number come from
+          `SELECT ... INTO var ... FOR UPDATE`, are incremented locally, and the same
+          variable is written back with `UPDATE` at the end of that block (FOR UPDATE
+          holds the row lock until the transaction ends, which rules out a race on
+          concurrent runs).
+        Without this a file downloaded but executed later (or two runs in a row) could
+        drift from the value in the database: an id from nextval() is always unique on its
+        own, while last_lcn/number are ordinary integer columns, and the old peewee code
+        computed them once on the Python side.
         """
         total_actives = len(valid_rows)
         storage_ids = sorted({vr["id_storage"] for vr in valid_rows})
@@ -1262,8 +1266,8 @@ class ActivesParserController(Controller):
             act_ref = f"act_ids[{i}]"
             sp_val = str(vr["id_storage_place"]) if vr["id_storage_place"] is not None else "NULL"
 
-            # Инкременты не трогают строку location, но переставлены перед обоими INSERT,
-            # чтобы location и actives всегда шли соседними строками одной парой.
+            # The increments do not touch the location row, but are moved ahead of both
+            # INSERTs so location and actives always sit next to each other as one pair.
             lcn_var = f"lcn_{vr['id_storage']}"
             body_lines.append(f"    {lcn_var} := {lcn_var} + 1;")
             body_lines.append("    active_num := active_num + 1;")
@@ -1275,9 +1279,9 @@ class ActivesParserController(Controller):
 
             sn_val = f"'{sql_escape(vr['serial_number'])}'" if vr["serial_number"] else "NULL"
             sa_val = f"'{sql_escape(vr['special_account'])}'" if vr["special_account"] else "NULL"
-            # Номер актива фиксированной длины ACTIVE_NUMBER_LENGTH: буквенный префикс +
-            # цифры счётчика, дополненные нулями слева до нужной ширины (валидация выше
-            # гарантирует len(type_active) < ACTIVE_NUMBER_LENGTH, так что ширина > 0).
+            # An asset number of fixed length ACTIVE_NUMBER_LENGTH: the letter prefix plus
+            # the counter digits, zero-padded on the left to the required width (validation
+            # above guarantees len(type_active) < ACTIVE_NUMBER_LENGTH, so the width > 0).
             number_width = ACTIVE_NUMBER_LENGTH - len(vr["type_active"])
             active_number_expr = (
                 f"'{sql_escape(vr['type_active'])}' || lpad(active_num::text, {number_width}, '0')"
@@ -1307,36 +1311,32 @@ class ActivesParserController(Controller):
     async def _validate_create_active_from_model_rows(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict], int]:
-        """Валидирует строки для 'Создать актив из модели lcn'.
+        """Validate the rows for 'Создать актив из модели lcn'.
 
-        lsn вида 'M9.1.6.4': 9 — id_train_type, первый сегмент пути ('1') —
-        car_number, весь путь после id_train_type ('1.6.4') — остаток для
-        построения реального lcn актива на конкретном поезде. id_car_place
-        берётся из public.models по тому же lcn (WHERE id_train_type=... AND
-        lcn::text=lsn) — тот же принцип поиска, что и в train_parser.py при
-        создании нового поезда.
+        In an lsn like 'M9.1.6.4': 9 is id_train_type, the first path segment ('1') is
+        car_number, and the whole path after id_train_type ('1.6.4') is the remainder used
+        to build the real asset lcn on a specific train. id_car_place is taken from
+        public.models by that same lcn (WHERE id_train_type=... AND lcn::text=lsn) — the
+        same lookup principle train_parser.py uses when creating a new train.
 
-        Один и тот же lcn часто встречается в нескольких строках models с
-        разными id_design_number (альтернативные позиции ТМЦ для одного и
-        того же места в модели) — на практике id_car_place у них обычно
-        совпадает, is_default при этом может быть false у ВСЕХ строк сразу
-        (см. проверено на реальной БД: 'M9.2.5.4' — 2 строки, обе
-        is_default=false, но с одинаковым id_car_place). Поэтому сначала
-        берутся все различные id_car_place без фильтра по is_default; если
-        значение одно — используется оно. Только если car_place реально
-        расходится между строками, в ход идёт is_default=true как тай-брейк;
-        если и после него неоднозначность не снята — ошибка по строке.
+        One lcn often appears in several models rows with different id_design_number
+        (alternative material positions for the same place in the model) — in practice
+        their id_car_place usually matches, and is_default may be false on ALL of the rows
+        at once (verified against the real database: 'M9.2.5.4' has 2 rows, both
+        is_default=false but with the same id_car_place). So all distinct id_car_place
+        values are collected first, without filtering on is_default; if there is only one,
+        it is used. Only when car_place genuinely differs between rows does is_default=true
+        come in as a tie-break; if that still leaves it ambiguous, the row is an error.
 
-        Количество создаваемых активов на позицию — НЕ из колонки файла, а
-        количество поездов этого id_train_type (public.train): на каждый
-        поезд создаётся свой актив со своей location (id_type_location=2,
-        id_train, car_number, id_car_place). Строки с одинаковым/пересекающимся
-        lsn используют общий кэш поездов по типу (как в
-        _validate_and_build_serial_none_rows в parser.py).
+        The number of assets created per position does NOT come from a column in the file
+        but from the number of trains of that id_train_type (public.train): each train gets
+        its own asset with its own location (id_type_location=2, id_train, car_number,
+        id_car_place). Rows with identical or overlapping lsn share one cache of trains by
+        type (as in _validate_and_build_serial_none_rows in parser.py).
 
-        Активы, чей вычисленный lcn уже занят существующим активом (позиция уже
-        заполнена на части поездов парка), молча пропускаются — не ошибка
-        валидации, обычный случай частичного заполнения по парку. Возвращает
+        Assets whose computed lcn is already taken by an existing one (the position is
+        already filled on some of the fleet) are skipped silently — not a validation error
+        but the ordinary case of partial fleet coverage. Returns
         (errors, valid_rows, skipped_count).
         """
         errors: list[dict] = []
@@ -1438,11 +1438,11 @@ class ActivesParserController(Controller):
             if len(distinct_places) == 1:
                 id_car_place = next(iter(distinct_places))
             else:
-                # Одному lcn может соответствовать несколько строк models с разными
-                # id_design_number (альтернативные позиции) — если они расходятся и по
-                # id_car_place, приоритет у строки с is_default=true. is_default=true
-                # не гарантирован на каждый lcn (см. случай выше, где обе строки не
-                # default, но совпадают по car_place — туда мы уже не попадаем).
+                # One lcn may map to several models rows with different id_design_number
+                # (alternative positions) — when those also differ on id_car_place, the row
+                # with is_default=true wins. is_default=true is not guaranteed for every lcn
+                # (see the case above where both rows are non-default but agree on
+                # car_place — that path never reaches here).
                 default_places = {r[0] for r in model_rows if r[1]}
                 if len(default_places) == 1:
                     id_car_place = next(iter(default_places))
@@ -1471,9 +1471,9 @@ class ActivesParserController(Controller):
                                 "message": f"Поезда с id_train_type={id_train_type} не найдены"})
                 continue
 
-            # Серийник из файла применяется только когда для позиции создаётся ровно
-            # один актив (один поезд этого типа) — иначе один и тот же серийный номер
-            # продублировался бы на разные активы (как в _validate_create_actives_rows).
+            # The serial number from the file is applied only when exactly one asset is
+            # created for the position (a single train of that type) — otherwise the same
+            # serial would be duplicated across assets (as in _validate_create_actives_rows).
             serial_raw = str(row.get("Серийный номер") or "").strip()
             serial_number = serial_raw if len(train_ids) == 1 else "none"
 
@@ -1493,8 +1493,8 @@ class ActivesParserController(Controller):
         if not candidates:
             return errors, [], 0
 
-        # Батч-проверка занятости целевого lcn (один запрос на все строки файла, не на
-        # строку) + дедуп дублей внутри батча — оба случая молча пропускаются, не ошибка.
+        # A batched check of target lcn occupancy (one query for the whole file rather than
+        # per row) plus deduplication within the batch — both are skipped silently, not errors.
         all_lcns = [c["lcn"] for c in candidates]
         stmt = text(
             "SELECT lcn::text FROM public.actives WHERE lcn::text IN :lcns"
@@ -1515,12 +1515,12 @@ class ActivesParserController(Controller):
 
     @staticmethod
     def _build_create_active_from_model_sql_body(valid_rows: list[dict]) -> list[str]:
-        """Строит тело SQL создания активов по модельным позициям (без BEGIN/COMMIT).
+        """Build the SQL creating assets from model positions (without BEGIN/COMMIT).
 
-        В отличие от _build_create_actives_sql_body здесь нет складского счётчика
-        (storage.last_lcn под FOR UPDATE) — реальный lcn каждого актива уже
-        детерминирован моделью (id_train + путь из lsn), поэтому FOR UPDATE нужен
-        только на общий счётчик номеров активов iterator_number_last.
+        Unlike _build_create_actives_sql_body there is no storage counter here
+        (storage.last_lcn under FOR UPDATE) — each asset's real lcn is already determined
+        by the model (id_train plus the path from lsn), so FOR UPDATE is only needed on the
+        shared asset number counter iterator_number_last.
         """
         total = len(valid_rows)
 
@@ -1578,18 +1578,18 @@ class ActivesParserController(Controller):
     async def _validate_delete_actives(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки файла «удалить активы» (строгий DELETE).
+        """Validate the rows of an "удалить активы" file (a strict DELETE).
 
-        Удаляются только активы без истории: если на актив ссылается хотя бы одна
-        запись из DELETE_ACTIVES_BLOCKERS (ПТОиР, перемещения, заказы и т.д.) —
-        ошибка по строке, актив не удаляется. Проверка блокировок батчами: один запрос
-        на таблицу для всех активов файла, а не по запросу на строку.
+        Only assets without history are removed: if a single record from
+        DELETE_ACTIVES_BLOCKERS (maintenance, moves, orders and so on) references the
+        asset, the row is an error and the asset stays. Blockers are checked in batches:
+        one query per table for all the file's assets, not one query per row.
         """
         actives_repo = ActivesRepository(session=db_session)
 
         errors: list[dict] = []
         batch_numbers: set[str] = set()
-        # id_active -> данные строки; после батч-проверки блокировок остаются валидные
+        # id_active -> the row's data; the valid ones remain after the batched blocker check
         candidates: dict[int, dict] = {}
 
         active_column: str | None = next(
@@ -1650,9 +1650,9 @@ class ActivesParserController(Controller):
                         })
 
         if candidates:
-            # Заказы актива (напрямую по id_active или через его ПТОиР) удаляются вместе
-            # с ним, но только «пустые»: заказ со связанными записями хотя бы в одной из
-            # ORDERS_DEPENDENCY_CHECKS — это реальная рабочая история, актив блокируется.
+            # An asset's orders (directly by id_active or through its maintenance record)
+            # are deleted with it, but only the "empty" ones: an order with related records
+            # in any of ORDERS_DEPENDENCY_CHECKS is real working history, and blocks the asset.
             ids = list(candidates)
             order_rows = (await db_session.execute(
                 select(Orders.id, Orders.id_active, Ptoir.id_active)
@@ -1688,22 +1688,23 @@ class ActivesParserController(Controller):
 
     @staticmethod
     def _build_delete_actives_sql_body(valid_rows: list[dict]) -> list[str]:
-        """Строит SQL удаления активов (без BEGIN/COMMIT), общий для скачивания и выполнения.
+        """Build the asset deletion SQL (without BEGIN/COMMIT), shared by download and execution.
 
-        На каждый актив: его «пустые» заказы (напрямую и через ПТОиР — валидация
-        гарантирует отсутствие у них связанных записей), ptoir_level_warning его ПТОиР
-        и сами ptoir, строки counter_active (их создаёт триггер при INSERT актива)
-        и mileage_start (FK нет — иначе осиротеют), сам актив, затем его location —
-        но только если на неё больше никто не ссылается (другие actives, materials,
-        relocate); проверка NOT EXISTS выполняется в момент выполнения SQL, уже после
-        удаления актива. Заказы удаляются до ptoir из-за FK orders.id_ptoir -> ptoir.
+        Per asset: its "empty" orders (directly and through maintenance — validation
+        guarantees they have no related records), the ptoir_level_warning of its
+        maintenance records and the ptoir rows themselves, the counter_active rows (created
+        by the trigger on asset INSERT) and mileage_start (no FK — they would be orphaned
+        otherwise), the asset itself, and then its location — but only when nothing else
+        references it any more (other actives, materials, relocate); the NOT EXISTS check
+        runs when the SQL executes, after the asset is already gone. Orders are deleted
+        before ptoir because of the FK orders.id_ptoir -> ptoir.
 
-        DELETE из counter_active запрещён DBA-триггером tr_abort_delete
-        (dba.fn_abort_delete, безусловный RAISE) — без его временного отключения
-        удалить актив невозможно в принципе: счётчик создаётся у каждого актива
-        автоматически, а FK counter_active->actives блокирует удаление самого актива.
-        Триггер отключается только в рамках этой транзакции (ALTER TABLE берёт
-        ACCESS EXCLUSIVE до конца транзакции) и требует прав владельца таблицы.
+        DELETE from counter_active is forbidden by the DBA trigger tr_abort_delete
+        (dba.fn_abort_delete, an unconditional RAISE) — without disabling it temporarily an
+        asset cannot be deleted at all: every asset gets a counter automatically, and the FK
+        counter_active->actives blocks deleting the asset itself. The trigger is disabled
+        only within this transaction (ALTER TABLE takes ACCESS EXCLUSIVE until it ends) and
+        requires table owner privileges.
         """
         sql_lines: list[str] = [
             "ALTER TABLE public.counter_active DISABLE TRIGGER tr_abort_delete;"
@@ -1735,7 +1736,7 @@ class ActivesParserController(Controller):
 
     @post("/delete-actives/generate-sql/start")
     async def delete_actives_generate_sql_start(self, request: Request) -> Response:
-        """Запускает фоновую генерацию SQL-файла удаления активов, возвращает task_id."""
+        """Start background generation of the asset deletion SQL file; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -1784,7 +1785,7 @@ class ActivesParserController(Controller):
 
     @post("/delete-actives/execute/start")
     async def delete_actives_execute_start(self, request: Request) -> Response:
-        """Запускает фоновое атомарное удаление активов, возвращает task_id."""
+        """Start the background atomic asset deletion; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -1832,10 +1833,10 @@ class ActivesParserController(Controller):
                 sql_body = "\n".join(sql_lines)
 
                 try:
-                    # ВАЖНО: как и в create-actives — session.rollback() ниже откатывает и этот
-                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
-                    # (запросы репозиториев внутри _validate_delete_actives). Не убирайте
-                    # обращения к session до этой точки.
+                    # IMPORTANT: as in create-actives, session.rollback() below also rolls this
+                    # raw call back only because the session opened a real transaction earlier
+                    # (the repository queries inside _validate_delete_actives). Do not remove
+                    # the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)
@@ -1870,12 +1871,12 @@ class ActivesParserController(Controller):
     async def _validate_create_named_actives(
         self, db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
-        """Валидирует строки создания именных активов (номер актива задан в файле).
+        """Validate the rows creating named assets (the asset number comes from the file).
 
-        В отличие от создания активов из ТМЦ здесь не нужен счётчик
-        iterator_number_last: active_number берётся из колонки 'Актив' и не должен
-        существовать в БД. Каждая строка — один актив со своей записью location;
-        lcn по-прежнему выдаётся из storage.last_lcn в момент выполнения SQL.
+        Unlike creating assets from materials, no iterator_number_last counter is needed
+        here: active_number is taken from the 'Актив' column and must not already exist in
+        the database. Each row is one asset with its own location record; the lcn is still
+        handed out from storage.last_lcn when the SQL runs.
         """
         actives_repo = ActivesRepository(session=db_session)
         storage_repo = StorageRepository(session=db_session)
@@ -1973,12 +1974,12 @@ class ActivesParserController(Controller):
 
     @staticmethod
     def _build_create_named_actives_sql_body(valid_rows: list[dict]) -> list[str]:
-        """Строит тело SQL создания именных активов (без BEGIN/COMMIT).
+        """Build the body of the named asset creation SQL (without BEGIN/COMMIT).
 
-        Как в _build_create_actives_sql_body: id для location/actives — через nextval(),
-        storage.last_lcn читается и блокируется FOR UPDATE внутри DO-блока в момент
-        выполнения. Отличие — active_number подставляется литералом из файла, счётчик
-        iterator_number_last не используется.
+        As in _build_create_actives_sql_body: ids for location/actives come from nextval(),
+        and storage.last_lcn is read and locked FOR UPDATE inside the DO block as it runs.
+        The difference is that active_number is inlined as a literal from the file and the
+        iterator_number_last counter is not used.
         """
         total_actives = len(valid_rows)
         storage_ids = sorted({vr["id_storage"] for vr in valid_rows})
@@ -2025,7 +2026,7 @@ class ActivesParserController(Controller):
 
     @post("/create-named-actives/generate-sql/start")
     async def create_named_actives_generate_sql_start(self, request: Request) -> Response:
-        """Запускает фоновую генерацию SQL-файла создания именных активов, возвращает task_id."""
+        """Start background generation of the named asset creation SQL file; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -2074,7 +2075,7 @@ class ActivesParserController(Controller):
 
     @post("/create-named-actives/execute/start")
     async def create_named_actives_execute_start(self, request: Request) -> Response:
-        """Запускает фоновое атомарное создание именных активов, возвращает task_id."""
+        """Start the background atomic creation of named assets; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -2122,10 +2123,10 @@ class ActivesParserController(Controller):
                 sql_body = "\n".join(sql_lines)
 
                 try:
-                    # ВАЖНО: как и в create-actives — session.rollback() ниже откатывает и этот
-                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
-                    # (запросы репозиториев внутри _validate_create_named_actives). Не убирайте
-                    # обращения к session до этой точки.
+                    # IMPORTANT: as in create-actives, session.rollback() below also rolls this
+                    # raw call back only because the session opened a real transaction earlier
+                    # (the repository queries inside _validate_create_named_actives). Do not
+                    # remove the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)
@@ -2159,7 +2160,7 @@ class ActivesParserController(Controller):
 
     @post("/create-actives/generate-sql/start")
     async def create_actives_generate_sql_start(self, request: Request) -> Response:
-        """Запускает фоновую генерацию SQL-файла создания активов из ТМЦ, возвращает task_id."""
+        """Start background generation of the SQL file creating assets from materials; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -2209,7 +2210,7 @@ class ActivesParserController(Controller):
 
     @post("/create-actives/execute/start")
     async def create_actives_execute_start(self, request: Request) -> Response:
-        """Запускает фоновую атомарную вставку активов из ТМЦ, возвращает task_id."""
+        """Start the background atomic insert of assets from materials; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -2237,13 +2238,13 @@ class ActivesParserController(Controller):
 
     @staticmethod
     def _reconstruct_created_active_numbers(valid_rows: list[dict], counter_after: int) -> list[str]:
-        """Восстанавливает номера созданных активов по конечному значению счётчика.
+        """Reconstruct the created assets' numbers from the counter's final value.
 
-        DO-блок выдаёт номера строго по порядку valid_rows (active_num инкрементируется
-        на каждый актив), поэтому по значению счётчика после выполнения номера
-        восстанавливаются детерминированно. Значение counter_after нужно читать в той же
-        транзакции, что и DO-блок — FOR UPDATE ещё держит строку счётчика, и параллельный
-        запуск не мог вклиниться между.
+        The DO block hands out numbers strictly in valid_rows order (active_num is
+        incremented per asset), so the numbers can be reconstructed deterministically from
+        the counter value after execution. counter_after must be read in the same
+        transaction as the DO block — FOR UPDATE still holds the counter row, so no
+        concurrent run could have slipped in between.
         """
         counter_before = counter_after - len(valid_rows)
         numbers: list[str] = []
@@ -2254,7 +2255,7 @@ class ActivesParserController(Controller):
 
     @staticmethod
     def _build_created_actives_xlsx(rows: list[tuple[str, str | None]]) -> str:
-        """Собирает xlsx (active_number, serial_number) и возвращает его в base64."""
+        """Build an xlsx of (active_number, serial_number) and return it base64-encoded."""
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.append(["active_number", "serial_number"])
@@ -2288,10 +2289,10 @@ class ActivesParserController(Controller):
                 sql_body = "\n".join(sql_lines)
 
                 try:
-                    # ВАЖНО: как и в train_parser — session.rollback() ниже откатывает и этот
-                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
-                    # (запросы репозиториев внутри _validate_create_actives_rows). Не убирайте
-                    # обращения к session до этой точки.
+                    # IMPORTANT: as in train_parser, session.rollback() below also rolls this
+                    # raw call back only because the session opened a real transaction earlier
+                    # (the repository queries inside _validate_create_actives_rows). Do not
+                    # remove the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)
@@ -2310,8 +2311,8 @@ class ActivesParserController(Controller):
 
                 progress["processed"] = 1
 
-                # Серийники читаются из БД (а не из файла) — отчёт отражает реально
-                # созданные записи
+                # Serial numbers are read from the database rather than the file, so the
+                # report reflects the records actually created
                 db_rows = (await session.execute(
                     text("SELECT active_number, serial_number FROM public.actives "
                          "WHERE active_number = ANY(:nums)"),
@@ -2343,7 +2344,7 @@ class ActivesParserController(Controller):
 
     @post("/create-active-from-model/generate-sql/start")
     async def create_active_from_model_generate_sql_start(self, request: Request) -> Response:
-        """Запускает фоновую генерацию SQL-файла создания активов из модели lcn, возвращает task_id."""
+        """Start background generation of the SQL file creating assets from a model lcn; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -2394,7 +2395,7 @@ class ActivesParserController(Controller):
 
     @post("/create-active-from-model/execute/start")
     async def create_active_from_model_execute_start(self, request: Request) -> Response:
-        """Запускает фоновую атомарную вставку активов из модели lcn, возвращает task_id."""
+        """Start the background atomic insert of assets from a model lcn; returns a task_id."""
         session_id = request.session.get(f"{PREFIX}_session_id", "")
         stored = _load_data(session_id) if session_id else None
         if not stored:
@@ -2444,10 +2445,10 @@ class ActivesParserController(Controller):
                 sql_body = "\n".join(sql_lines)
 
                 try:
-                    # ВАЖНО: как и в create-actives — session.rollback() ниже откатывает и этот
-                    # «сырой» вызов только потому, что сессия уже открыла транзакцию раньше
-                    # (запросы репозиториев внутри _validate_create_active_from_model_rows).
-                    # Не убирайте обращения к session до этой точки.
+                    # IMPORTANT: as in create-actives, session.rollback() below also rolls this
+                    # raw call back only because the session opened a real transaction earlier
+                    # (the repository queries inside _validate_create_active_from_model_rows).
+                    # Do not remove the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)

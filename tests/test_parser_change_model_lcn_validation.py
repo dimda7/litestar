@@ -1,17 +1,17 @@
-"""Тесты валидации ParserController._validate_and_build_change_model_lcn_rows /
-_build_change_lcn_sql_lines (controllers/parser.py) — кнопка 'Изменить lcn в модели'.
+"""Validation tests for ParserController._validate_and_build_change_model_lcn_rows /
+_build_change_lcn_sql_lines (controllers/parser.py) — the 'Изменить lcn в модели' button.
 
-Меняет lcn в таблице public.models, сопоставление по models.id (колонка 'id'
-в файле), а не по активам.
+Changes lcn in public.models, matching on models.id (the 'id' column in the
+file) rather than on assets.
 
-Резолв модели по id ('SELECT lcn::text FROM public.models WHERE id = :id')
-использует Postgres-специфичный `::text`-каст на ltree-колонке — SQLite
-(тестовая БД) такой синтаксис не парсит вовсе (не "0 строк", а syntax error).
-Поэтому здесь покрыто всё, что происходит ДО этого запроса (парсинг колонок,
-формат id, дубликаты внутри файла, пустые значения) — та же ситуация, что и с
-happy-path в train_parser.py (см. checkpoint.md, Фаза 9) и с резолвом активов
-в других кнопках этой же страницы. Сам запрос и полный happy-path проверены
-вручную на реальной БД grom-tk.
+Resolving a model by id ('SELECT lcn::text FROM public.models WHERE id = :id')
+uses the Postgres-specific `::text` cast on an ltree column — SQLite (the test
+DB) does not parse that syntax at all (a syntax error, not "0 rows"). So what is
+covered here is everything happening BEFORE that query (column parsing, id
+format, duplicates within the file, empty values) — the same situation as the
+happy path in train_parser.py (see checkpoint.md, phase 9) and as asset
+resolution in the other buttons of this page. The query itself and the full
+happy path were verified by hand against the real grom-tk database.
 """
 
 from controllers.parser import ParserController

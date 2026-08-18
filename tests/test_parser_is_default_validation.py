@@ -1,5 +1,5 @@
-"""Тесты ParserController._validate_and_build_is_default_rows / _build_is_default_sql_lines
-(controllers/parser.py) — кнопка 'Изменить серийность в модели' (models.is_default).
+"""Tests for ParserController._validate_and_build_is_default_rows / _build_is_default_sql_lines
+(controllers/parser.py) — the 'Изменить серийность в модели' button (models.is_default).
 """
 
 from models import Models
@@ -162,8 +162,8 @@ async def test_batch_conflict_two_rows_same_slot(db_session):
 
 
 async def test_batch_freed_slot_reused_is_not_a_conflict(db_session):
-    """Один файл снимает старый default и ставит новый на то же место (lcn, car_place) —
-    не должно быть ложного конфликта, т.к. старый одновременно снимается тем же батчем."""
+    """One file clears the old default and sets a new one at the same (lcn, car_place) —
+    there must be no false conflict, since the old one is cleared by the same batch."""
     old_id = await make_model(db_session, id_train_type=1, lcn="M1.1", id_car_place=1,
                                id_design_number=1, is_default=True)
     new_id = await make_model(db_session, id_train_type=2, lcn="M1.1", id_car_place=1,

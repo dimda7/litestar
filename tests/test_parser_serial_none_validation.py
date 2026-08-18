@@ -1,4 +1,4 @@
-"""Тесты валидации ParserController._validate_and_build_serial_none_rows и _parse_model_lcn (controllers/parser.py)."""
+"""Validation tests for ParserController._validate_and_build_serial_none_rows and _parse_model_lcn (controllers/parser.py)."""
 
 from controllers.parser import ParserController, _parse_model_lcn
 from tests.conftest import make_train

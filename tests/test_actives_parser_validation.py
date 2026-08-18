@@ -134,17 +134,17 @@ async def test_recount_mileage_total_from_relocate_history(db_session):
     await db_session.flush()
 
     db_session.add_all([
-        # склад -> поезд до отсечки: пробег поезда прибавляется
+        # storage -> train before the cutoff: the train's mileage is added
         Relocate(id_active=active_id, id_location_old=loc_storage.id,
                  id_location_new=loc_train.id, date=datetime(2022, 1, 10, 8, 0)),
-        # перемещение после отсечки — игнорируется
+        # a move after the cutoff is ignored
         Relocate(id_active=active_id, id_location_old=loc_train.id,
                  id_location_new=loc_storage.id, date=datetime(2023, 1, 1, 8, 0)),
         MileageTrain(id_train=5, mileage_average=10, date_average=date(2022, 2, 1)),
         MileageTrain(id_train=5, mileage_average=15, date_average=date(2022, 3, 1)),
-        # после отсечки — не суммируется
+        # after the cutoff — not summed
         MileageTrain(id_train=5, mileage_average=99, date_average=date(2022, 6, 1)),
-        # чужой поезд — не суммируется
+        # a different train — not summed
         MileageTrain(id_train=7, mileage_average=50, date_average=date(2022, 2, 1)),
     ])
     await db_session.flush()
@@ -170,7 +170,7 @@ def test_recount_mileage_sql_body_order_and_trains():
     assert "UPDATE public.mileage_start SET milage = COALESCE(milage_const, 0) + (25)" in lines[0]
     assert "WHERE id_active = 10" in lines[0]
     assert "UPDATE public.mileage_start" in lines[1] and "(-5)" in lines[1]
-    # счётчик пересчитывается только для не-поездов и только после mileage_start
+    # the counter is recomputed only for non-trains, and only after mileage_start
     assert "UPDATE public.counter_active" in lines[2]
     assert "function_get_mileage" in lines[2]
     assert "id_active = 10" in lines[2]
@@ -178,7 +178,7 @@ def test_recount_mileage_sql_body_order_and_trains():
 
 async def test_recount_mileage_const_column_update_and_insert(db_session):
     await make_recount_active(db_session, "UL0000001")
-    # актива без mileage_start с заданным milage_const — не ошибка, будет INSERT
+    # an asset without mileage_start but with milage_const set is not an error — INSERT follows
     await make_recount_active(db_session, "UL0000002", with_mileage_start=False)
 
     rows = [
@@ -209,7 +209,7 @@ async def test_recount_mileage_const_zero_and_empty_ignored(db_session):
 
 
 async def test_recount_mileage_const_header_with_nbsp_and_e_spelling(db_session):
-    # реальный файл: заголовок 'mileage_const\xa0' — через 'e' и с неразрывным пробелом
+    # a real file: the header 'mileage_const\xa0' — spelled with 'e' and a non-breaking space
     await make_recount_active(db_session, "UL0000001")
 
     rows = [{"Актив": "UL0000001", "mileage_const\xa0": 295544}]
@@ -230,7 +230,7 @@ async def test_recount_mileage_const_invalid_value(db_session):
 
 
 async def test_recount_mileage_const_missing_mileage_start_without_const(db_session):
-    # без milage_const отсутствие mileage_start остаётся ошибкой
+    # without milage_const a missing mileage_start is still an error
     await make_recount_active(db_session, "UL0000001", with_mileage_start=False)
 
     rows = [{"Актив": "UL0000001", "milage_const": ""}]
@@ -250,11 +250,11 @@ def test_recount_mileage_sql_body_const_first():
     lines = ActivesParserController._build_recount_mileage_sql_body(valid_rows)
 
     assert len(lines) == 6
-    # блок milage_const идёт первым: UPDATE для существующей записи, INSERT для новой
+    # the milage_const block comes first: UPDATE for an existing row, INSERT for a new one
     assert "SET milage_const = 500" in lines[0] and "WHERE id_active = 10" in lines[0]
     assert lines[1].startswith("INSERT INTO public.mileage_start")
     assert "VALUES (20, 700, 700, true)" in lines[1]
-    # затем пересчёт milage и счётчиков
+    # then the milage and counter recount
     assert "SET milage = COALESCE(milage_const, 0) + (25)" in lines[2]
     assert "SET milage = COALESCE(milage_const, 0) + (0)" in lines[3]
     assert "UPDATE public.counter_active" in lines[4]
@@ -347,10 +347,10 @@ def test_create_named_actives_sql_body():
     assert sql.count("INSERT INTO public.location") == 2
     assert sql.count("INSERT INTO public.actives") == 2
     assert "'SPD452390'" in sql and "'SPD452391'" in sql
-    # lcn выдаётся из storage.last_lcn с блокировкой и возвращается обратно
+    # the lcn is handed out from storage.last_lcn under a lock and written back
     assert "SELECT last_lcn INTO lcn_3 FROM public.storage WHERE id = 3 FOR UPDATE;" in sql
     assert "UPDATE public.storage SET last_lcn = lcn_3 WHERE id = 3;" in sql
-    # счётчик номеров активов не используется — номера заданы в файле
+    # the asset number counter is unused — the numbers come from the file
     assert "iterator_number_last" not in sql
 
 
@@ -384,12 +384,12 @@ async def test_delete_actives_not_found_and_duplicate(db_session):
 
 
 async def make_order_dependency_tables(db_session) -> None:
-    """Создаёт в SQLite минимальные версии таблиц-зависимостей заказов.
+    """Create minimal versions of the order dependency tables in SQLite.
 
-    Продовые таблицы из ORDERS_DEPENDENCY_CHECKS не нужны как ORM-модели —
-    валидация ходит в них сырыми SELECT'ами, поэтому для тестов достаточно
-    таблиц из одной колонки. Таблицы, уже описанные в models.py (relocate,
-    order_to_actives), пропускаются.
+    The production tables from ORDERS_DEPENDENCY_CHECKS are not needed as ORM
+    models — validation reaches them with raw SELECTs, so single-column tables
+    are enough for the tests. Tables already described in models.py (relocate,
+    order_to_actives) are skipped.
     """
     from sqlalchemy import text as sql_text
     from controllers.actives_parser import ORDERS_DEPENDENCY_CHECKS
@@ -412,8 +412,8 @@ async def test_delete_actives_blocked_by_dependencies(db_session):
     blocked_relocate = await make_active(db_session, "SPD1077357")
     db_session.add_all([
         Relocate(id_active=blocked_relocate, date=datetime(2023, 1, 1)),
-        # счётчик (создаётся триггером у каждого актива), ПТОиР и пустой заказ
-        # на этот ПТОиР удаление НЕ блокируют
+        # the counter (created by a trigger on every asset), the maintenance record and
+        # an empty order against it do NOT block the deletion
         CounterActive(id_active=ok_id, id_counter_type=3, date=datetime(2023, 1, 1), value=0),
     ])
     ptoir_ok = Ptoir(number_ptoir="ТО1", id_active=ok_id)
@@ -438,7 +438,7 @@ async def test_delete_actives_blocked_by_order_with_dependencies(db_session):
     order = Orders(order_number="З-2", id_active=blocked_id)
     db_session.add(order)
     await db_session.flush()
-    # у заказа есть трудозатраты — актив блокируется
+    # the order has labour costs — the asset is blocked
     await db_session.execute(sql_text(
         f"INSERT INTO public.labor_costs (id_order) VALUES ({order.id})"))
 
@@ -468,11 +468,11 @@ def test_delete_actives_sql_body():
     lines = ActivesParserController._build_delete_actives_sql_body(valid_rows)
     sql = "\n".join(lines)
 
-    # обрамление: DBA-триггер tr_abort_delete отключается на время транзакции
+    # framing: the DBA trigger tr_abort_delete is disabled for the transaction
     assert lines[0] == "ALTER TABLE public.counter_active DISABLE TRIGGER tr_abort_delete;"
     assert lines[-1] == "ALTER TABLE public.counter_active ENABLE TRIGGER tr_abort_delete;"
-    # актив с location: orders + ptoir_level_warning + ptoir + counter_active +
-    # mileage_start + actives + location с guard'ом; без location — шесть строк
+    # an asset with a location: orders + ptoir_level_warning + ptoir + counter_active +
+    # mileage_start + actives + a guarded location; without a location, six statements
     assert len(lines) == 15
     assert "DELETE FROM public.orders WHERE id_active = 10 OR id_ptoir IN" in lines[1]
     assert "DELETE FROM public.ptoir_level_warning WHERE id_ptoir IN" in lines[2]
@@ -535,7 +535,7 @@ def test_reconstruct_created_active_numbers():
     valid_rows = [{"type_active": "SPV"}, {"type_active": "SPV"}, {"type_active": "SPD"}]
     numbers = ActivesParserController._reconstruct_created_active_numbers(valid_rows, counter_after=103)
 
-    # ACTIVE_NUMBER_LENGTH = 10: префикс + цифры, дополненные нулями
+    # ACTIVE_NUMBER_LENGTH = 10: the prefix plus zero-padded digits
     assert numbers == ["SPV0000101", "SPV0000102", "SPD0000103"]
 
 

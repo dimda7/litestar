@@ -9,7 +9,7 @@ BACKUP_COUNT = 5
 
 
 def configure_logging(level: str = "INFO") -> None:
-    """Настраивает по логгеру-файлу с ротацией для каждого модуля + вывод в консоль."""
+    """Configure one rotating file logger per module, plus console output."""
     handlers = {
         "console": {
             "class": "logging.StreamHandler",

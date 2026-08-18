@@ -14,11 +14,11 @@ SESSION_TIMEOUT = 3600  # 1 hour in seconds
 
 
 def _is_fetch(scope: Scope) -> bool:
-    """Запрос сделан из JS (fetch/XHR), а не переходом по странице.
+    """The request came from JS (fetch/XHR) rather than a page navigation.
 
-    Браузер помечает навигацию `Sec-Fetch-Mode: navigate`, а fetch() —
-    `cors`/`same-origin`. Отсутствие заголовка (старый браузер, curl) считаем
-    навигацией: редирект для неё безопаснее, чем JSON.
+    Browsers mark navigations `Sec-Fetch-Mode: navigate` and fetch() as
+    `cors`/`same-origin`. A missing header (old browser, curl) counts as a
+    navigation: a redirect is the safer answer there than JSON.
     """
     for name, value in scope.get("headers") or ():
         if name == b"sec-fetch-mode":
@@ -27,11 +27,11 @@ def _is_fetch(scope: Scope) -> bool:
 
 
 def _reject(scope: Scope, location: str, message: str) -> JSONResponse | RedirectResponse:
-    """Ответ неаутентифицированному запросу.
+    """Answer an unauthenticated request.
 
-    Навигацию отправляем редиректом, а fetch — 401 с JSON: иначе fetch
-    молча идёт по редиректу и получает HTML страницы логина, на котором
-    `resp.json()` падает с «Unexpected token '<'» вместо внятной ошибки.
+    Navigations get a redirect, fetch gets a 401 with JSON: otherwise fetch
+    silently follows the redirect and receives the login page's HTML, where
+    `resp.json()` dies with "Unexpected token '<'" instead of a clear error.
     """
     if _is_fetch(scope):
         return JSONResponse(
@@ -52,10 +52,11 @@ class AuthMiddleware:
 
         raw_path = scope.get("raw_path", b"")
         path = raw_path.decode() if isinstance(raw_path, bytes) else scope.get("path", "")
-        # ASGI-транспорт в тестах (и потенциально другие) кладёт в raw_path
-        # путь вместе со строкой запроса, хотя по спеке её там быть не должно —
-        # без явного среза сравнения с EXCLUDE_PATHS/DB_SELECT_PATH ломаются
-        # для любого пути с query-параметрами (например, /jira/attachments?issue=...).
+        # The ASGI transport used in tests (and potentially others) puts the
+        # query string into raw_path, although the spec says it does not belong
+        # there — without stripping it explicitly, the EXCLUDE_PATHS and
+        # DB_SELECT_PATH comparisons break for any path carrying query params
+        # (e.g. /jira/attachments?issue=...).
         path = path.split("?", 1)[0]
         session = scope.get("session", {})
 
@@ -67,8 +68,8 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # У каждой БД свои пользователи/пароли — логин физически не по чему
-        # проверять, пока не выбрано конкретное подключение.
+        # Every database has its own users/passwords — there is physically
+        # nothing to validate a login against until a connection is chosen.
         if not db_manager.has_active_connection():
             response = _reject(scope, DB_SELECT_PATH, "Не выбрано подключение к базе данных")
             await response(scope, receive, send)
@@ -83,9 +84,10 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
 
-        # Сессия выдана по пользователям той БД, которая была активна на момент
-        # входа. Если с тех пор приложение перевели на другую базу, логин в ней
-        # ничего не значит — тот же user_id там принадлежит другому человеку.
+        # The session was issued against the users of whichever database was
+        # active at login time. If the app has since been pointed at a different
+        # database, that login means nothing there — the same user_id belongs to
+        # a different person.
         if session.get("db_epoch") != db_manager.get_target_epoch():
             session.clear()
             response = _reject(scope, "/auth/login", "База данных сменилась — войдите заново")

@@ -27,13 +27,13 @@ from parser_storage import (
 
 logger = logging.getLogger("train_parser")
 
-# Валидация построчно дёргает несколько запросов к БД, на больших файлах
-# (тысячи строк) это идёт секундами — прогресс отдаётся через отдельный
-# опрос, чтобы не держать один HTTP-запрос открытым всё это время.
+# Validation issues several database queries per row, and on large files
+# (thousands of rows) that takes seconds — progress is served through a
+# separate poll rather than holding one HTTP request open all that time.
 PROGRESS_TTL_SECONDS = 15 * 60
 _progress: dict[str, dict] = {}
-# asyncio хранит только слабую ссылку на fire-and-forget задачи — без явного
-# хранения задача может быть собрана GC до завершения.
+# asyncio only keeps a weak reference to fire-and-forget tasks — without
+# storing it explicitly the task can be garbage collected before it finishes.
 _tasks: dict[str, asyncio.Task] = {}
 
 
@@ -45,7 +45,7 @@ def _cleanup_progress() -> None:
 
 
 def _lcn_to_model(lsn: str, id_train_type: int) -> str:
-    """Конвертирует LSN из Excel в формат model lcn: 'M{id_train_type}.{lsn_path}'."""
+    """Convert an Excel LSN into the model lcn format: 'M{id_train_type}.{lsn_path}'."""
     parts = lsn.split(".")
     if len(parts) == 1:
         return f"M{id_train_type}"
@@ -53,7 +53,7 @@ def _lcn_to_model(lsn: str, id_train_type: int) -> str:
 
 
 def _lcn_to_lcn(lsn: str, id_train: int) -> str:
-    """Конвертирует LSN из Excel в формат actives lcn: '{id_train}.{lsn_path}'."""
+    """Convert an Excel LSN into the actives lcn format: '{id_train}.{lsn_path}'."""
     parts = lsn.split(".")
     if len(parts) == 1:
         return str(id_train)
@@ -61,7 +61,7 @@ def _lcn_to_lcn(lsn: str, id_train: int) -> str:
 
 
 def _lcn_to_prelcn(lsn: str) -> str:
-    """Получает родительский LCN, убирая последний сегмент."""
+    """Return the parent LCN by dropping the last segment."""
     parts = lsn.split(".")
     if len(parts) <= 1:
         return ""
@@ -69,7 +69,7 @@ def _lcn_to_prelcn(lsn: str) -> str:
 
 
 def _parse_car_number(position: str) -> int | None:
-    """Парсит номер вагона из колонки position: '+100_(01)' → 1."""
+    """Parse the car number out of the position column: '+100_(01)' -> 1."""
     if not position:
         return None
     import re
@@ -80,7 +80,7 @@ def _parse_car_number(position: str) -> int | None:
 
 
 def _parse_count_car(lsn: str) -> int | None:
-    """Извлекает count_car — второй сегмент lsn последней строки файла ('361.5.9.4' -> 5)."""
+    """Extract count_car — the second lsn segment of the file's last row ('361.5.9.4' -> 5)."""
     parts = lsn.split(".")
     if len(parts) < 2:
         return None
@@ -107,9 +107,9 @@ class TrainParserController(Controller):
             if lsn and active_number:
                 key_actives[lsn] = active_number
 
-        # Первая строка файла — главный актив поезда (lsn из одного сегмента,
-        # например '361'). У него самого id_actives_root = NULL, у всех
-        # остальных активов — active_number главного (не наоборот).
+        # The file's first row is the train's head asset (a single-segment lsn,
+        # '361' for instance). Its own id_actives_root is NULL, while every other
+        # asset carries the head's active_number (not the other way round).
         root_active_number = str(rows[0].get("Актив", "") or "").strip() if rows else ""
 
         if progress is not None:
@@ -231,7 +231,7 @@ class TrainParserController(Controller):
 
     @post("/upload")
     async def upload(self, request: Request) -> Redirect:
-        """Загрузка Excel-файла со структурой поезда."""
+        """Upload of the Excel file holding the train structure."""
         form = await request.form()
         upload_file: UploadFile | None = form.get("file")
 
@@ -284,7 +284,7 @@ class TrainParserController(Controller):
     async def _resolve_type_and_series(
         db_session: AsyncSession, train_type_name: str,
     ) -> tuple[int | None, int | None, str | None]:
-        """Резолвит id_type_train и его серию (train_type.id_train_series). Возвращает (id_type_train, id_train_series, ошибка)."""
+        """Resolve id_type_train and its series (train_type.id_train_series). Returns (id_type_train, id_train_series, error)."""
         result = await db_session.execute(
             select(TrainType.id, TrainType.id_train_series).where(TrainType.name == train_type_name)
         )
@@ -301,12 +301,12 @@ class TrainParserController(Controller):
         id_train: int, id_type_train: int, train_name: str, valid_rows: list[dict], id_train_series: int,
         count_car: int | None = None,
     ) -> list[str]:
-        """Строит тело SQL-скрипта вставки поезда (без BEGIN/COMMIT).
+        """Build the body of the train insert script (without BEGIN/COMMIT).
 
-        Общий для «Скачать SQL-файл» (оборачивается в BEGIN;...COMMIT; и
-        отдаётся как файл) и «Выполнить в базе данных» (выполняется как один
-        multi-statement запрос в рамках уже открытой сессии) — оба пути
-        строят один и тот же SQL, чтобы не расходиться в поведении.
+        Shared by "Скачать SQL-файл" (wrapped in BEGIN;...COMMIT; and served as
+        a file) and "Выполнить в базе данных" (run as a single multi-statement
+        query inside the already open session) — both paths build the same SQL
+        so their behaviour cannot drift apart.
         """
         now = datetime.utcnow().replace(microsecond=0)
         today = date.today()
@@ -315,12 +315,12 @@ class TrainParserController(Controller):
         sql_lines.append(f"INSERT INTO public.train (id, id_train_type, name, is_active, is_delete) VALUES ({id_train}, {id_type_train}, '{sql_escape(train_name)}', true, false);")
         sql_lines.append(f"INSERT INTO public.mileage_train (id_train, milage, mileage_average, date, date_average) VALUES ({id_train}, 0, 0, '{now}', '{today}');")
 
-        # id_location/id_actives не считаются заранее как max(id)+1 — этот
-        # снимок мог устареть к моменту выполнения и вызывать конфликт PK.
-        # Вместо этого id получают из sequence прямо в скрипте. Один
-        # nextval() на переменную раздувал DECLARE до тысяч строк (id1..idN)
-        # — вместо этого одним запросом набираем массив id сразу на все
-        # строки и обращаемся к нему по индексу (loc_ids[i]).
+        # id_location/id_actives are not precomputed as max(id)+1 — that snapshot
+        # could go stale by execution time and collide on the PK. The ids come
+        # from the sequence inside the script instead. One nextval() per variable
+        # blew DECLARE up to thousands of lines (id1..idN), so a single query
+        # collects an array of ids for all rows at once, indexed into as
+        # loc_ids[i].
         body_lines: list[str] = []
 
         for idx, vr in enumerate(valid_rows, start=1):
@@ -385,7 +385,7 @@ class TrainParserController(Controller):
 
     @post("/generate-sql/start")
     async def generate_sql_start(self, request: Request) -> Response:
-        """Запускает фоновую генерацию SQL-файла, возвращает task_id для опроса прогресса."""
+        """Start background SQL file generation; returns a task_id to poll for progress."""
         form = await request.form()
         train_name = str(form.get("train_name", "")).strip()
         train_type_name = str(form.get("train_type_name", "")).strip()
@@ -432,9 +432,9 @@ class TrainParserController(Controller):
                     progress.update(status="error", errors=[{"row": 0, "field": "train_type", "message": series_error}])
                     return
 
-                # id_train резервируется сразу через nextval — а не max(id)+1 — чтобы
-                # к моменту реального запуска скачанного файла значение не могло
-                # оказаться занятым другим поездом, созданным за это время.
+                # id_train is reserved through nextval rather than max(id)+1, so that
+                # by the time the downloaded file is actually run the value cannot have
+                # been taken by another train created in the meantime.
                 id_train = (await session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
 
                 errors, valid_rows = await self._validate_train_rows(session, rows, id_type_train, id_train, progress=progress)
@@ -446,11 +446,11 @@ class TrainParserController(Controller):
             progress.update(status="error", errors=errors)
             return
 
-        # Без явной транзакции каждая строка автокоммитится отдельно — при
-        # ошибке где-то в середине (например, psql без ON_ERROR_STOP) часть
-        # данных уже вставится, а остальные — нет, или (хуже) продолжат
-        # выполняться и привяжутся не к тому train.id. BEGIN/COMMIT делает
-        # весь файл одной атомарной операцией: либо всё, либо ничего.
+        # Without an explicit transaction every statement autocommits on its own —
+        # an error halfway through (psql without ON_ERROR_STOP, say) leaves some
+        # data inserted and the rest not, or worse, lets the remainder run and
+        # attach to the wrong train.id. BEGIN/COMMIT makes the whole file one
+        # atomic operation: all of it or none.
         count_car = _parse_count_car(str(rows[-1].get("lsn", "") or "").strip()) if rows else None
         sql_lines = ["BEGIN;"]
         sql_lines.extend(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
@@ -460,7 +460,7 @@ class TrainParserController(Controller):
 
     @post("/execute/start")
     async def execute_start(self, request: Request) -> Response:
-        """Запускает фоновую атомарную вставку поезда в БД, возвращает task_id для опроса прогресса."""
+        """Start the background atomic train insert; returns a task_id to poll for progress."""
         form = await request.form()
         train_name = str(form.get("train_name", "")).strip()
         train_type_name = str(form.get("train_type_name", "")).strip()
@@ -498,7 +498,7 @@ class TrainParserController(Controller):
         )
 
     async def _run_execute(self, task_id: str, train_name: str, train_type_name: str, rows: list[dict]) -> None:
-        """Атомарная вставка данных поезда в БД (train, mileage, location, actives, counter_active)."""
+        """Atomic insert of the train data (train, mileage, location, actives, counter_active)."""
         progress = _progress[task_id]
         try:
             session_maker = get_session_maker()
@@ -508,9 +508,9 @@ class TrainParserController(Controller):
                     progress.update(status="error", errors=[{"row": 0, "field": "train_type", "message": series_error}])
                     return
 
-                # Как и в generate_sql — резервируем id_train через nextval, а не
-                # max(id)+1, чтобы не столкнуться с чужим поездом, вставленным
-                # конкурентно между вычислением id и его использованием ниже.
+                # As in generate_sql, id_train is reserved through nextval rather than
+                # max(id)+1, so it cannot collide with another train inserted
+                # concurrently between computing the id and using it below.
                 id_train = (await session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
 
                 errors, valid_rows = await self._validate_train_rows(session, rows, id_type_train, id_train, progress=progress)
@@ -523,26 +523,26 @@ class TrainParserController(Controller):
                     progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для вставки"}])
                     return
 
-                # DO $$ ... $$ выполняется одним запросом целиком — прогресс
-                # внутри него не отследить, поэтому фаза "executing" просто
-                # показывает, что идёт запись, без пошагового процента.
+                # DO $$ ... $$ runs as one whole query — progress inside it cannot be
+                # tracked, so the "executing" phase merely signals that writing is
+                # under way, without a step-by-step percentage.
                 progress.update(processed=0, total=1, phase="executing")
 
-                # Тот же SQL, что и в generate_sql (без BEGIN/COMMIT — транзакцией
-                # управляет сама сессия), выполняется одним multi-statement запросом
-                # через «сырое» соединение: DO $$ ... $$ с несколькими операторами
-                # внутри нельзя выполнить через обычный execute() с параметрами
-                # (asyncpg не готовит несколько команд в одном prepared statement).
+                # The same SQL as in generate_sql (without BEGIN/COMMIT — the session
+                # owns the transaction) is run as a single multi-statement query over the
+                # raw connection: DO $$ ... $$ containing several statements cannot go
+                # through an ordinary parameterised execute(), because asyncpg will not
+                # prepare several commands in one prepared statement.
                 count_car = _parse_count_car(str(rows[-1].get("lsn", "") or "").strip()) if rows else None
                 sql_body = "\n".join(self._build_sql_body(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
 
                 try:
-                    # ВАЖНО: session.rollback() ниже откатывает и этот «сырой» вызов
-                    # только потому, что сессия уже открыла реальную транзакцию на
-                    # соединении раньше (select TrainType.id, nextval(), запросы внутри
-                    # _validate_train_rows). Если когда-нибудь этот блок станет первым
-                    # обращением к БД — транзакция не будет открыта и rollback
-                    # ничего не отменит. Не убирайте обращения к session до этой точки.
+                    # IMPORTANT: session.rollback() below also rolls this raw call back
+                    # only because the session already opened a real transaction on the
+                    # connection earlier (select TrainType.id, nextval(), the queries
+                    # inside _validate_train_rows). If this block ever becomes the first
+                    # database access, no transaction will be open and the rollback will
+                    # undo nothing. Do not remove the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)

@@ -4,110 +4,111 @@ import msgspec
 
 
 class GenerateSQLRequest(msgspec.Struct):
-    """Запрос на генерацию SQL для вставки строк в grom.models."""
+    """Request to generate SQL inserting rows into grom.models."""
 
     rows: str
-    """JSON-массив строк из Excel. Каждая строка — объект с ключами model, position, itemnum, lsn/lcn, isdefault."""
+    """JSON array of Excel rows. Each row is an object with the keys model, position, itemnum, lsn/lcn, isdefault."""
 
     headers: str
-    """JSON-массив заголовков столбцов из Excel."""
+    """JSON array of column headers from Excel."""
 
 
 class DeleteRowsRequest(msgspec.Struct):
-    """Запрос на генерацию SQL для удаления строк из grom.models."""
+    """Request to generate SQL deleting rows from grom.models."""
 
     rows: str
-    """JSON-массив объектов с полем id — идентификаторы строк для удаления."""
+    """JSON array of objects with an id field — the rows to delete."""
 
 
 class SelectSheetRequest(msgspec.Struct):
-    """Запрос на выбор листа Excel."""
+    """Request selecting an Excel sheet."""
 
     sheet_name: str
-    """Имя листа Excel для обработки."""
+    """Name of the Excel sheet to process."""
 
 
 class SQLError(msgspec.Struct):
-    """Ошибка валидации строки."""
+    """A row validation error."""
 
     row: int
-    """Номер строки с ошибкой (0 — общая ошибка)."""
+    """Number of the offending row (0 means a general error)."""
 
     field: str
-    """Поле, вызвавшее ошибку ('*' — вся строка)."""
+    """Field that caused the error ('*' means the whole row)."""
 
     message: str
-    """Описание ошибки."""
+    """Description of the error."""
 
 
 class GenerateSQLResponse(msgspec.Struct):
-    """Ответ при генерации SQL-файла."""
+    """Response for SQL file generation."""
 
     status: str
-    """Статус операции: 'ok' или 'error'."""
+    """Operation status: 'ok' or 'error'."""
 
     sql: Optional[str] = None
-    """Сгенерированный SQL-код."""
+    """The generated SQL."""
 
     count: Optional[int] = None
-    """Количество SQL-запросов."""
+    """Number of SQL statements."""
 
     errors: Optional[list[SQLError]] = None
-    """Список ошибок валидации."""
+    """List of validation errors."""
 
 
 class ExecuteSQLResponse(msgspec.Struct):
-    """Ответ при выполнении SQL в БД."""
+    """Response for executing SQL against the database."""
 
     status: str
-    """Статус операции: 'ok' или 'error'."""
+    """Operation status: 'ok' or 'error'."""
 
     count: Optional[int] = None
-    """Количество вставленных/удалённых строк."""
+    """Number of rows inserted or deleted."""
 
     message: Optional[str] = None
-    """Сообщение о результате."""
+    """Result message."""
 
     errors: Optional[list[SQLError]] = None
-    """Список ошибок."""
+    """List of errors."""
 
 
 class LoginRequest(msgspec.Struct):
-    """Запрос на аутентификацию."""
+    """Authentication request."""
 
     username: str
-    """Имя пользователя."""
+    """User name."""
 
     password: str
-    """Пароль."""
+    """Password."""
 
 
 class DesignNumberSelectSheetRequest(msgspec.Struct):
-    """Запрос на выбор листа Excel для design_number парсера."""
+    """Request selecting an Excel sheet for the design_number parser."""
 
     sheet_name: str
-    """Имя листа Excel."""
+    """Name of the Excel sheet."""
 
 
 class DBProfileRequest(msgspec.Struct):
-    """Запрос на проверку/переключение/удаление подключения к БД."""
+    """Request to test, switch to, or delete a database connection."""
 
     profile: str
-    """Идентификатор подключения (uuid из db_profiles.json)."""
+    """Connection id (a uuid from db_profiles.json)."""
 
 
 class DbSelectRequest(msgspec.Struct):
-    """Запрос выбора БД на странице /auth/db-select (перед логином)."""
+    """Database choice made on /auth/db-select, before logging in."""
 
     profile: str
-    """Идентификатор подключения."""
+    """Connection id."""
 
 
 class DBProfileFormRequest(msgspec.Struct):
-    """Поля формы подключения к БД (добавление и проверка непосохранённых параметров).
+    """Fields of the DB connection form (adding, and testing unsaved parameters).
 
-    Порт приходит строкой: разбор и диапазон проверяет db_profiles, чтобы
-    ошибка вернулась общим JSON-контрактом, а не 400-й от валидатора Litestar.
+    The port arrives as a string: db_profiles parses it and checks the range,
+    so the error comes back through the shared JSON contract rather than as a
+    400 from Litestar's validator.
     """
 
     name: str
@@ -119,6 +120,6 @@ class DBProfileFormRequest(msgspec.Struct):
 
 
 class DBProfileUpdateRequest(DBProfileFormRequest):
-    """Те же поля плюс идентификатор изменяемого подключения."""
+    """The same fields plus the id of the connection being edited."""
 
     profile: str = ""

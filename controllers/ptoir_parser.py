@@ -33,17 +33,18 @@ logger = logging.getLogger("ptoir_parser")
 
 PREFIX = "ptoir_parser"
 
-# Excel-даты вводятся по московскому времени, в БД date_activation/zero_point_value
-# хранятся в UTC (см. старую функцию update_ptoir) — поэтому везде сдвиг на 3 часа.
+# Excel dates are entered in Moscow time while date_activation/zero_point_value
+# are stored in UTC (see the old update_ptoir function) — hence the 3 hour shift
+# everywhere.
 MSK_OFFSET = timedelta(hours=3)
 
-# Каждая строка требует нескольких запросов к БД, на файлах в тысячи строк
-# операция идёт секундами-минутами — прогресс отдаётся через отдельный опрос,
-# чтобы не держать один HTTP-запрос открытым всё это время.
+# Every row needs several database queries, and on files of thousands of rows
+# the operation takes seconds to minutes — progress is served through a separate
+# poll rather than holding one HTTP request open all that time.
 PROGRESS_TTL_SECONDS = 15 * 60
 _progress: dict[str, dict] = {}
-# asyncio хранит только слабую ссылку на fire-and-forget задачи — без явного
-# хранения задача может быть собрана GC до завершения.
+# asyncio only keeps a weak reference to fire-and-forget tasks — without
+# storing it explicitly the task can be garbage collected before it finishes.
 _tasks: dict[str, asyncio.Task] = {}
 
 
@@ -231,12 +232,12 @@ class PtoirParserController(Controller):
         self, db_session: AsyncSession, rows: list[dict],
         progress: dict | None = None,
     ) -> tuple[list[dict], list[tuple[int, datetime, int, int, int]]]:
-        """Валидирует строки Excel для запуска ПТОиР.
+        """Validate the Excel rows for a maintenance (ПТОиР) run.
 
-        Возвращает (errors, valid_rows), где valid_rows — список кортежей
+        Returns (errors, valid_rows), where valid_rows is a list of tuples
         (id_ptoir, date_activation, interval, id_level_warning, zero_point_value).
-        Если передан progress-словарь, каждые несколько строк в него пишется
-        (processed, total, phase="validating") для опроса с фронтенда.
+        When a progress dict is passed, (processed, total, phase="validating")
+        is written into it every few rows for the frontend to poll.
         """
         errors: list[dict] = []
         valid_rows: list[tuple[int, datetime, int, int, int]] = []

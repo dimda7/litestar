@@ -1,4 +1,4 @@
-"""Тесты валидации PtoirParserController._validate_and_build_rows (controllers/ptoir_parser.py)."""
+"""Validation tests for PtoirParserController._validate_and_build_rows (controllers/ptoir_parser.py)."""
 
 from datetime import datetime
 
@@ -61,7 +61,7 @@ async def test_missing_counter_type_reported(db_session):
 async def test_missing_level_warning_reported(db_session):
     ct_id = await make_counter_type(db_session, "Пробег")
     await make_ptoir(db_session, "ТО0001")
-    # ptoir_level_warning для этого ПТОиР и типа счетчика не создан
+    # no ptoir_level_warning exists for this ПТОиР and counter type
 
     errors, valid_rows = await validate(db_session, [make_row()])
 

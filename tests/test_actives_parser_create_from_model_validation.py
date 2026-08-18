@@ -140,7 +140,7 @@ def test_build_sql_body_single_active():
             "loc_ids[1], 'none', '700.1.6.4'::ltree);") in sql
     assert "UPDATE public.iterator_number_last SET number = active_num" in sql
     assert lines[-1] == "END $$;"
-    # в отличие от create-actives здесь нет складского счётчика storage.last_lcn
+    # unlike create-actives, there is no storage.last_lcn counter here
     assert "storage" not in sql.lower()
 
 

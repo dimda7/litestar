@@ -14,9 +14,9 @@ logger = logging.getLogger("active_hierarchy")
 
 PREVIEW_LIMIT = 1000
 
-# Верхний актив (id_actves_parent) — родитель на уровень выше по lcn;
-# Головной актив (id_actives_root) — вершина дерева (первый уровень lcn).
-# Активы на складах (lcn начинается с 'S') не трогаются.
+# The upper asset (id_actves_parent) is the parent one lcn level above;
+# the head asset (id_actives_root) is the top of the tree (first lcn level).
+# Assets in storage (lcn starting with 'S') are left alone.
 HIERARCHY_KINDS: dict[str, dict[str, str]] = {
     "parent": {
         "column": "id_actves_parent",

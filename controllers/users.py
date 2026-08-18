@@ -18,7 +18,7 @@ class UsersController(Controller):
         page: int = 1,
         per_page: int = 25,
     ) -> Template:
-        """Список пользователей с пагинацией."""
+        """Paginated list of users."""
         per_page = min(per_page, 200)
         page = max(page, 1)
 

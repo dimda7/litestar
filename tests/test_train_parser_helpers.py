@@ -1,4 +1,4 @@
-"""Тесты чистых функций разбора LSN/position в controllers/train_parser.py."""
+"""Tests for the pure LSN/position parsing functions in controllers/train_parser.py."""
 
 from controllers.train_parser import (
     _lcn_to_model,

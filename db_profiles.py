@@ -12,8 +12,8 @@ logger = logging.getLogger("db_manager")
 CONFIG_DATA_DIR = Path(__file__).parent / "config_data"
 FILENAME = "db_profiles.json"
 
-# Наборы переменных .env, из которых засевается файл при первом запуске.
-# Дальше .env в жизни подключений не участвует.
+# Sets of .env variables the file is seeded from on first start.
+# After that .env plays no part in the life of the connections.
 SEED_ENV_SETS: list[tuple[str, str]] = [
     ("grom-tk", ""),
     ("grom-prod", "_PROD"),
@@ -40,8 +40,8 @@ class DBProfile:
 
 
 def build_url(host: str, port: str | int, user: str, password: str, dbname: str) -> str:
-    """URL подключения. Логин и пароль экранируются: набранный в форме пароль
-    вида `p@ss:w/ord` иначе разбирается как часть хоста."""
+    """Connection URL. User and password are percent-encoded: a password typed
+    as `p@ss:w/ord` would otherwise be parsed as part of the host."""
     return (
         f"postgresql+asyncpg://{quote(user, safe='')}:{quote(password, safe='')}"
         f"@{host}:{port}/{dbname}"
@@ -53,7 +53,7 @@ def _path() -> Path:
 
 
 def _validate(name: str, host: str, port: str | int, user: str, dbname: str) -> int:
-    """Проверяет поля подключения и возвращает нормализованный порт."""
+    """Validate the connection fields and return the normalised port."""
     for label, value in (("Name", name), ("Host", host), ("Username", user), ("Database", dbname)):
         if not str(value).strip():
             raise ValueError(f"Поле «{label}» не может быть пустым")
@@ -70,7 +70,7 @@ def _validate(name: str, host: str, port: str | int, user: str, dbname: str) -> 
 
 
 def _seed_from_env() -> list[DBProfile]:
-    """Профили из .env. Набор с отсутствующей/битой переменной пропускается."""
+    """Profiles from .env. A set with a missing or broken variable is skipped."""
     profiles: list[DBProfile] = []
     for name, suffix in SEED_ENV_SETS:
         values = {
@@ -96,18 +96,18 @@ def _seed_from_env() -> list[DBProfile]:
 
 
 def _write(profiles: list[DBProfile]) -> None:
-    """Атомарная запись с правами 0600.
+    """Atomic write with mode 0600.
 
-    Пишем во временный файл рядом и подменяем через os.replace(): прямая
-    перезапись оставила бы обрезанный файл, если процесс умрёт между
-    усечением и записью, а читать его потом некому — приложение отдавало бы
-    500 на каждой странице, включая экран выбора БД.
+    Writes to a temporary file alongside and swaps it in with os.replace():
+    overwriting in place would leave a truncated file if the process died
+    between truncation and write, and nothing could read it afterwards — the
+    app would 500 on every page, including the database picker.
     """
     CONFIG_DATA_DIR.mkdir(exist_ok=True)
     payload = json.dumps([asdict(p) for p in profiles], ensure_ascii=False, indent=2)
 
     tmp_path = _path().with_suffix(".json.tmp")
-    # В файле лежат пароли — создаём сразу с 0600, а не по umask.
+    # The file holds passwords — create it 0600 outright rather than by umask.
     fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(payload)
@@ -115,24 +115,25 @@ def _write(profiles: list[DBProfile]) -> None:
 
 
 def load() -> list[DBProfile]:
-    """Список подключений. При первом обращении засевается из .env.
+    """The list of connections, seeded from .env on first access.
 
-    Файл читается каждый раз: воркер один (uvicorn без --workers), файл
-    крошечный, а отсутствие кэша снимает рассинхрон между страницами.
+    The file is read every time: there is a single worker (uvicorn without
+    --workers), the file is tiny, and having no cache rules out pages
+    disagreeing about the list.
     """
     path = _path()
     if not path.exists():
         seeded = _seed_from_env()
         if not seeded:
-            # Не пишем пустой файл: иначе поправленный .env уже не засеется.
+            # Do not write an empty file: a fixed .env would never seed again.
             return []
         _write(seeded)
         return seeded
 
-    # Битый файл не должен ронять приложение: без подключений остаётся
-    # рабочим экран /auth/db-select, где видно, что список пуст. Засев из
-    # .env здесь не запускаем — файл существует, и перезаписать его значило
-    # бы потерять содержимое, которое ещё можно починить руками.
+    # A corrupt file must not take the app down: with no connections the
+    # /auth/db-select screen still works and shows that the list is empty. No
+    # seeding from .env here — the file exists, and overwriting it would lose
+    # content that can still be repaired by hand.
     try:
         return [DBProfile(**item) for item in json.loads(path.read_text(encoding="utf-8"))]
     except (json.JSONDecodeError, TypeError, ValueError) as e:
@@ -141,11 +142,11 @@ def load() -> list[DBProfile]:
 
 
 def targets_same_database(a: DBProfile, b: DBProfile) -> bool:
-    """Ведут ли записи в одну и ту же БД.
+    """Whether both records point at the same database.
 
-    Имя, логин и пароль не в счёт: смена пароля оставляет пользователя в той
-    же базе, а смена host/port/database — уже другая база с другими
-    пользователями.
+    Name, user and password do not count: changing a password leaves the user
+    in the same database, while changing host/port/database means a different
+    one with different users.
     """
     return (a.host, a.port, a.dbname) == (b.host, b.port, b.dbname)
 
@@ -191,10 +192,10 @@ def update(
 
 
 def delete(profile_id: str, active_id: str) -> None:
-    """Удаляет подключение.
+    """Delete a connection.
 
-    active_id передаётся параметром, а не читается из db_manager: тот сам
-    зависит от этого модуля, и обратный импорт замкнул бы цикл.
+    active_id is passed in rather than read from db_manager: that module
+    already depends on this one, so the reverse import would close a cycle.
     """
     profiles = load()
     if not any(p.id == profile_id for p in profiles):

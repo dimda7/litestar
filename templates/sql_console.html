@@ -219,9 +219,9 @@
         cancelBtn.style.cursor = 'not-allowed';
         statusEl.textContent = 'Отправка сигнала отмены...';
 
-        // Отмена — короткая административная операция (сигнал pg_cancel_backend),
-        // а не сам запрос, поэтому у неё есть собственный таймаут: если сервер
-        // не ответил за разумное время, интерфейс не должен виснуть молча.
+        // Cancelling is a short administrative operation (a pg_cancel_backend signal)
+        // rather than the query itself, so it has its own timeout: if the server does
+        // not answer within a reasonable time, the UI must not hang silently.
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 12000);
 
