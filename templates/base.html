@@ -16,16 +16,23 @@
             return formData;
         }
 
+        // 401 от AuthMiddleware приходит на любой fetch, а не только на тот,
+        // что ждёт JSON: скачивание вложения возвращает blob и через
+        // readJsonResponse не проходит, но перелогина требует так же.
+        async function throwIfUnauthorized(resp) {
+            if (resp.status !== 401) return;
+
+            let target = '/auth/login';
+            try { target = (await resp.json()).location || target; } catch (e) {}
+            window.location = target;
+            throw new Error('Сессия завершена — выполняется переход на страницу входа');
+        }
+
         // Разбор JSON-ответа. Голый resp.json() падал с «Unexpected token '<'»,
         // когда сервер отдавал HTML: страницу логина после истечения сессии или
         // страницу 500 — вместо причины пользователь видел ошибку парсера JSON.
         async function readJsonResponse(resp) {
-            if (resp.status === 401) {
-                let target = '/auth/login';
-                try { target = (await resp.json()).location || target; } catch (e) {}
-                window.location = target;
-                throw new Error('Сессия завершена — выполняется переход на страницу входа');
-            }
+            await throwIfUnauthorized(resp);
 
             if (!(resp.headers.get('content-type') || '').includes('application/json')) {
                 throw new Error('сервер ответил ' + resp.status + ' без JSON, подробности в log/app.log');
@@ -97,7 +104,8 @@
             container.textContent = 'Скачивание «' + filename + '»...';
 
             fetch('/jira/attachments/download?content_url=' + encodeURIComponent(contentUrl))
-                .then(resp => {
+                .then(async resp => {
+                    await throwIfUnauthorized(resp);
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
                     return resp.blob();
                 })
@@ -110,7 +118,7 @@
                     container.style.display = 'none';
                 })
                 .catch(err => {
-                    container.textContent = 'Ошибка загрузки файла: ' + err;
+                    container.textContent = 'Ошибка загрузки файла: ' + err.message;
                     container.style.color = '#c62828';
                 });
         }
