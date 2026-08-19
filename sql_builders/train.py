@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from sql_utils import sql_escape
 
@@ -14,7 +14,8 @@ def insert_train(
     query inside the already open session) — both paths build the same SQL
     so their behaviour cannot drift apart.
     """
-    now = datetime.utcnow().replace(microsecond=0)
+    # naive UTC, as mileage_train.date is 'timestamp without time zone'
+    now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
     today = date.today()
     sql_lines: list[str] = []
 

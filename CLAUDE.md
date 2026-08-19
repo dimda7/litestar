@@ -71,8 +71,10 @@
 - Exception handlers registered in `exception_handlers` must be synchronous `def`, not `async def` — Litestar calls them without `await`
 
 ## Testing
-- Tests substitute Postgres with in-memory SQLite: `ATTACH DATABASE ':memory:' AS public` (+ `StaticPool`) on the `connect` event, since models and raw SQL both target `schema="public"`.
-- Postgres-specific SQL (e.g. `::text` casts in `train_parser.py`) is not covered by these tests — needs a real Postgres (testcontainers or similar) for full coverage.
+- Two suites. The default one substitutes Postgres with in-memory SQLite: `ATTACH DATABASE ':memory:' AS public` (+ `StaticPool`) on the `connect` event, since models and raw SQL both target `schema="public"`. It covers validation only.
+- `tests/pg/` runs the generated SQL against a **real copy of grom** and covers what SQLite cannot parse: `ltree`/`::text`, `DO $$` blocks, `nextval`, `FOR UPDATE`, `ON CONFLICT`, `function_get_mileage()` and the PL/Python triggers (`actives_trgger`, `relocate_triger`, `tr_abort_delete`). Target it with `TEST_DB_URL`, or leave it unset to fall back to the `DB_*_MY` set in `.env`; the `pg` marker makes `pytest -m "not pg"` the offline run, and the whole directory skips itself when no database answers.
+- Every `tests/pg/` test runs inside a transaction that is always rolled back (`pg_session` binds the session with `join_transaction_mode="create_savepoint"`, so a `commit()` in the code under test only releases a savepoint). Generated SQL goes through `run_generated_sql()`, which hands it to the raw asyncpg connection exactly as the controllers do — a multi-statement `DO $$` body cannot go through a parameterised `execute()`.
+- Reference rows (train types, design numbers, storages) are taken from the copy as they are; anything the tests write they create themselves (`tests/pg/factories.py`). The asset move is the exception — it is exercised on a real asset, because `relocate_triger` recomputes the mileage counter from the asset's own history and fails on a synthetic one with an empty counter.
 
 ## Known Bugs / Data Issues
 - When looking up `CarPlace` by `name`, use `.scalars().all()` and handle 0/1/many explicitly — `.scalar_one_or_none()` raises `MultipleResultsFound` if duplicate names ever reappear in DB
