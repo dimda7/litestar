@@ -9,7 +9,9 @@ from sqlalchemy.exc import IntegrityError
 
 from sql_builders import models as models_sql
 from tests.pg.conftest import run_generated_sql
-from tests.pg.factories import lcn_of, make_active, make_location, make_train, next_id, reference_ids
+from tests.pg.factories import (
+    lcn_of, make_active, make_location, make_train, next_id, reference_ids, second_car_place_id,
+)
 
 
 async def make_two_assets(session) -> tuple[dict, int, int, int]:
@@ -100,6 +102,36 @@ async def test_change_model_lcn_updates_models_through_the_chain(pg_session):
         {"ids": [first_id, second_id]})).all())
     assert lcns[first_id] == second_lcn
     assert lcns[second_id] == f"{second_lcn}.9"
+
+
+async def test_change_model_okz_survives_a_swap(pg_session):
+    ids = await reference_ids(pg_session)
+    other_car_place = await second_car_place_id(pg_session, ids["car_place"])
+    if other_car_place is None:
+        pytest.skip("copy needs at least two public.car_place rows")
+
+    made = []
+    for suffix in ("1", "2"):
+        model_id = await next_id(pg_session, "models_id_seq")
+        await pg_session.execute(
+            text("INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
+                 "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"),
+            {"id": model_id, "tt": ids["train_type"], "lcn": f"M{ids['train_type']}.{model_id}",
+             "cp": ids["car_place"], "dn": ids["design_number"]},
+        )
+        made.append(model_id)
+    first_id, second_id = made
+
+    # Swap: first -> other_car_place, second -> ids["car_place"] (first's old place).
+    rows = [{"id": first_id, "new_car_place_id": other_car_place},
+            {"id": second_id, "new_car_place_id": ids["car_place"]}]
+    await run_generated_sql(pg_session, "\n".join(models_sql.change_model_okz(rows)))
+
+    places = dict((await pg_session.execute(
+        text("SELECT id, id_car_place FROM public.models WHERE id = ANY(:ids)"),
+        {"ids": [first_id, second_id]})).all())
+    assert places[first_id] == other_car_place
+    assert places[second_id] == ids["car_place"]
 
 
 async def test_insert_and_delete_models_round_trip(pg_session):

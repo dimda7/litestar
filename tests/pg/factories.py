@@ -29,6 +29,13 @@ async def next_id(session: AsyncSession, sequence: str) -> int:
     return (await session.execute(text(f"SELECT nextval('public.{sequence}')"))).scalar_one()
 
 
+async def second_car_place_id(session: AsyncSession, exclude_id: int) -> int:
+    return await session.scalar(
+        text("SELECT id FROM public.car_place WHERE id != :exclude ORDER BY id LIMIT 1"),
+        {"exclude": exclude_id},
+    )
+
+
 async def make_train(session: AsyncSession, id_train_type: int, name: str = f"{TEST_PREFIX}-train") -> int:
     id_train = await next_id(session, "train_id_seq")
     await session.execute(

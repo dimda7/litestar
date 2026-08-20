@@ -58,6 +58,28 @@ def change_model_lcn(valid_rows: list[dict]) -> list[str]:
     ]
 
 
+def change_model_okz(valid_rows: list[dict]) -> list[str]:
+    """Two-phase UPDATE of public.models.id_car_place, matching on models.id.
+
+    id_car_place is part of the same composite UNIQUE (id_train_type, lcn,
+    id_car_place, id_design_number, is_default) that change_model_lcn works
+    around, so a swap chain (row A -> row B's old place, row B -> row A's old
+    place) can hit UniqueViolationError inside one bulk UPDATE just like lcn
+    does. id_car_place is a nullable integer FK though, not text, so there is
+    no prefix to prepend — a plain NULL stands in for the 'Z' prefix trick,
+    since Postgres treats NULL as distinct for UNIQUE purposes.
+    """
+    if not valid_rows:
+        return []
+    id_list = ", ".join(str(vr["id"]) for vr in valid_rows)
+    values_list = ", ".join(f"({vr['id']}, {vr['new_car_place_id']})" for vr in valid_rows)
+    return [
+        f"UPDATE public.models SET id_car_place = NULL WHERE id IN ({id_list});",
+        "UPDATE public.models AS m SET id_car_place = v.new_car_place "
+        f"FROM (VALUES {values_list}) AS v(mid, new_car_place) WHERE m.id = v.mid;",
+    ]
+
+
 def set_is_default(valid_rows: list[dict]) -> list[str]:
     """FALSE rows go before TRUE ones: the partial UNIQUE index (WHERE is_default=true)
 
