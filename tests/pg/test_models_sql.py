@@ -7,10 +7,13 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from controllers.parser.change_okz_active import validate_change_okz_active_rows
+
 from sql_builders import models as models_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import (
-    lcn_of, make_active, make_location, make_train, next_id, reference_ids, second_car_place_id,
+    car_place_name, lcn_of, make_active, make_location, make_train, next_id, reference_ids,
+    second_car_place_id,
 )
 
 
@@ -132,6 +135,124 @@ async def test_change_model_okz_survives_a_swap(pg_session):
         {"ids": [first_id, second_id]})).all())
     assert places[first_id] == other_car_place
     assert places[second_id] == ids["car_place"]
+
+
+async def make_model(pg_session, id_train_type: int, lcn: str, id_car_place: int, id_design_number: int) -> int:
+    model_id = await next_id(pg_session, "models_id_seq")
+    await pg_session.execute(
+        text("INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
+             "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"),
+        {"id": model_id, "tt": id_train_type, "lcn": lcn, "cp": id_car_place, "dn": id_design_number},
+    )
+    return model_id
+
+
+async def test_change_okz_active_validate_resolves_every_train_of_the_type(pg_session):
+    ids = await reference_ids(pg_session)
+    lcn = f"M{ids['train_type']}.6.5"
+    await make_model(pg_session, ids["train_type"], lcn, ids["car_place"], ids["design_number"])
+    id_train_a = await make_train(pg_session, ids["train_type"])
+    id_train_b = await make_train(pg_session, ids["train_type"])
+    target_cp = await second_car_place_id(pg_session, ids["car_place"])
+    if target_cp is None:
+        pytest.skip("copy needs at least two public.car_place rows")
+    target_name = await car_place_name(pg_session, target_cp)
+
+    errors, valid_rows = await validate_change_okz_active_rows(
+        pg_session, [{"lsn": lcn, "new_position": target_name}]
+    )
+
+    assert errors == []
+    assert len(valid_rows) == 1
+    # The copy may already have other trains of this train_type -> subset check,
+    # not an exact match.
+    assert {f"{id_train_a}.6.5", f"{id_train_b}.6.5"} <= set(valid_rows[0]["lcn_trains"])
+    assert valid_rows[0]["new_car_place_id"] == target_cp
+
+
+async def test_change_okz_active_lsn_not_a_real_model_reported(pg_session):
+    ids = await reference_ids(pg_session)
+    await make_train(pg_session, ids["train_type"])
+    cp_name = await car_place_name(pg_session, ids["car_place"])
+    bogus_lcn = f"M{ids['train_type']}.999999.999999"
+
+    errors, valid_rows = await validate_change_okz_active_rows(
+        pg_session, [{"lsn": bogus_lcn, "new_position": cp_name}]
+    )
+
+    assert valid_rows == []
+    assert [e["field"] for e in errors] == ["lcn"]
+    assert "не найдена" in errors[0]["message"]
+
+
+async def test_change_okz_active_conflicting_new_position_for_same_lsn_reported(pg_session):
+    ids = await reference_ids(pg_session)
+    lcn = f"M{ids['train_type']}.6.5"
+    await make_model(pg_session, ids["train_type"], lcn, ids["car_place"], ids["design_number"])
+    await make_train(pg_session, ids["train_type"])
+    other_cp = await second_car_place_id(pg_session, ids["car_place"])
+    if other_cp is None:
+        pytest.skip("copy needs at least two public.car_place rows")
+    name_a = await car_place_name(pg_session, ids["car_place"])
+    name_b = await car_place_name(pg_session, other_cp)
+
+    errors, valid_rows = await validate_change_okz_active_rows(pg_session, [
+        {"lsn": lcn, "new_position": name_a},
+        {"lsn": lcn, "new_position": name_b},
+    ])
+
+    assert [e["field"] for e in errors] == ["lcn"]
+    assert "Конфликт" in errors[0]["message"]
+
+
+async def test_change_okz_active_conflict_check_normalizes_lsn_text(pg_session):
+    """Regression: a leading-zero variant ('M09.6.5') parses to the same
+    (id_train_type, rest) as 'M9.6.5' and must conflict/dedup as the same lsn,
+    not slip past as two unrelated rows keyed by raw text."""
+    ids = await reference_ids(pg_session)
+    lcn_a = f"M{ids['train_type']}.6.5"
+    lcn_b = f"M0{ids['train_type']}.6.5"
+    await make_model(pg_session, ids["train_type"], lcn_a, ids["car_place"], ids["design_number"])
+    await make_model(pg_session, ids["train_type"], lcn_b, ids["car_place"], ids["design_number"])
+    await make_train(pg_session, ids["train_type"])
+    other_cp = await second_car_place_id(pg_session, ids["car_place"])
+    if other_cp is None:
+        pytest.skip("copy needs at least two public.car_place rows")
+    name_a = await car_place_name(pg_session, ids["car_place"])
+    name_b = await car_place_name(pg_session, other_cp)
+
+    errors, valid_rows = await validate_change_okz_active_rows(pg_session, [
+        {"lsn": lcn_a, "new_position": name_a},
+        {"lsn": lcn_b, "new_position": name_b},
+    ])
+
+    assert [e["field"] for e in errors] == ["lcn"]
+    assert "Конфликт" in errors[0]["message"]
+
+
+async def test_change_okz_active_updates_location_only_for_the_matching_asset(pg_session):
+    ids = await reference_ids(pg_session)
+    id_train = await make_train(pg_session, ids["train_type"])
+    other_cp = await second_car_place_id(pg_session, ids["car_place"])
+    if other_cp is None:
+        pytest.skip("copy needs at least two public.car_place rows")
+
+    matched_loc = await make_location(pg_session, id_type_location=2, id_train=id_train,
+                                       car_number=1, id_car_place=ids["car_place"])
+    matched_active = await make_active(pg_session, f"{id_train}.6.5", ids["design_number"], matched_loc)
+    unmatched_loc = await make_location(pg_session, id_type_location=2, id_train=id_train,
+                                         car_number=1, id_car_place=ids["car_place"])
+    unmatched_active = await make_active(pg_session, f"{id_train}.9.9", ids["design_number"], unmatched_loc)
+
+    valid_rows = [{"lcn_trains": [f"{id_train}.6.5"], "new_car_place_id": other_cp}]
+    await run_generated_sql(pg_session, "\n".join(models_sql.change_okz_active(valid_rows)))
+
+    places = dict((await pg_session.execute(
+        text("SELECT act.id, loc.id_car_place FROM public.actives act "
+             "JOIN public.location loc ON loc.id = act.id_location WHERE act.id = ANY(:ids)"),
+        {"ids": [matched_active, unmatched_active]})).all())
+    assert places[matched_active] == other_cp
+    assert places[unmatched_active] == ids["car_place"]
 
 
 async def test_insert_and_delete_models_round_trip(pg_session):
