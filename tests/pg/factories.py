@@ -36,6 +36,12 @@ async def second_car_place_id(session: AsyncSession, exclude_id: int) -> int:
     )
 
 
+async def car_place_name(session: AsyncSession, id_car_place: int) -> str:
+    return await session.scalar(
+        text("SELECT name FROM public.car_place WHERE id = :id"), {"id": id_car_place}
+    )
+
+
 async def make_train(session: AsyncSession, id_train_type: int, name: str = f"{TEST_PREFIX}-train") -> int:
     id_train = await next_id(session, "train_id_seq")
     await session.execute(

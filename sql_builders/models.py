@@ -80,6 +80,31 @@ def change_model_okz(valid_rows: list[dict]) -> list[str]:
     ]
 
 
+def change_okz_active(valid_rows: list[dict]) -> list[str]:
+    """Single-statement UPDATE of public.location.id_car_place for assets found
+    by their per-train lcn (see 'изменить okz в активе по модели').
+
+    public.actives has no id_car_place column of its own — it lives on
+    public.location, reached through actives.id_location — so the update is
+    joined through actives on lcn, same matching key set_serial_none already
+    uses. No composite UNIQUE on location/actives involves id_car_place
+    (unlike models'), so unlike change_model_okz this needs no two-phase NULL
+    trick: one bulk UPDATE is safe. An lcn_train with no matching asset (not
+    every train has every position) simply matches no row, not an error.
+    """
+    values_list = ", ".join(
+        f"('{sql_escape(lcn_train)}', {vr['new_car_place_id']})"
+        for vr in valid_rows for lcn_train in vr["lcn_trains"]
+    )
+    if not values_list:
+        return []
+    return [
+        "UPDATE public.location AS loc SET id_car_place = v.new_car_place "
+        f"FROM public.actives AS act, (VALUES {values_list}) AS v(lcn_train, new_car_place) "
+        "WHERE act.lcn::text = v.lcn_train AND loc.id = act.id_location;"
+    ]
+
+
 def set_is_default(valid_rows: list[dict]) -> list[str]:
     """FALSE rows go before TRUE ones: the partial UNIQUE index (WHERE is_default=true)
 
