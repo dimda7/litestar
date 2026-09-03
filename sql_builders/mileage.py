@@ -15,10 +15,10 @@ MILEAGE_TRIGGER_NAME = "counter_active_trigger"
 class Correction:
     """A resolved rollback: what to delete and what to reset the counter to.
 
-    counter_date comes from the selected (deleted) row while counter_value comes
-    from the last surviving one, source_row_id/source_date_average — the two are
-    deliberately from different rows, reproducing the correction operators run
-    by hand.
+    counter_date and counter_value both come from the same row — the last
+    surviving manual reading (source_row_id/source_date_average), not from the
+    selected (deleted) one: the counter is reset to exactly the state of that
+    earlier reading, not a mix of one row's value and another's timestamp.
 
     The delete threshold is source_date_average, not the selected row's own
     date_average: counter_active_trigger fills every day of a gap between two

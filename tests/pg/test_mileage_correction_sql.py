@@ -116,7 +116,7 @@ async def test_generated_sql_rolls_the_mileage_back(pg_session):
         text("SELECT value, date FROM public.counter_active WHERE id = :id"),
         {"id": fixture["id_counter"]})).mappings().one()
     assert counter["value"] == 199145
-    assert counter["date"] == datetime(2023, 10, 16, 9, 0)
+    assert counter["date"] == datetime(2023, 10, 15, 9, 0)
 
 
 async def test_trigger_is_enabled_again_after_the_script(pg_session):
@@ -160,7 +160,7 @@ async def test_gap_row_between_kept_and_selected_is_deleted_and_never_used_as_pr
         text("SELECT value, date FROM public.counter_active WHERE id = :id"),
         {"id": id_counter})).mappings().one()
     assert counter["value"] == 198000
-    assert counter["date"] == datetime(2023, 10, 16, 9, 0)
+    assert counter["date"] == datetime(2023, 10, 13, 9, 0)
 
 
 async def test_counters_of_other_assets_are_untouched(pg_session):

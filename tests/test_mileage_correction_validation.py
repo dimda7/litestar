@@ -40,7 +40,7 @@ async def test_resolves_the_correction_for_the_selected_row(db_session):
     assert error == ""
     assert correction.id_train == id_train
     assert correction.id_active == id_active
-    assert correction.counter_date == datetime(2023, 10, 16, 9, 0)
+    assert correction.counter_date == datetime(2023, 10, 15, 9, 0)
     assert correction.counter_value == 199145
     assert correction.source_row_id == day15
     assert correction.source_date_average == date(2023, 10, 15)
@@ -78,6 +78,8 @@ async def test_gap_row_between_the_kept_row_and_the_selected_one_is_also_deleted
     assert error == ""
     assert correction.source_row_id == kept
     assert correction.source_date_average == date(2023, 10, 13)
+    assert correction.counter_date == datetime(2023, 10, 13, 9, 0)
+    assert correction.counter_value == 198000
     # gap_row (10-14, hidden) and selected (10-16) — 2 rows, not 1.
     assert correction.delete_count == 2
     assert gap_row != kept
@@ -184,8 +186,8 @@ async def test_earlier_row_without_a_mileage_is_rejected(db_session):
 
 
 async def test_selected_row_without_a_date_is_rejected(db_session):
-    """The counter's new date comes from the selected row, and counter_active.date
-    is NOT NULL — a row the page could never list must not slip through the API."""
+    """A null-date row is never a manual reading and the page's list would never
+    offer it — a crafted request must not be able to select one anyway."""
     id_train, _ = await train_with_counter(db_session)
     await make_mileage_train(db_session, id_train, date(2023, 10, 15), 199145, datetime(2023, 10, 15, 9, 0))
     selected = await make_mileage_train(db_session, id_train, date(2023, 10, 16), 250000, None)
@@ -210,6 +212,7 @@ async def test_latest_earlier_row_wins_among_several(db_session):
     assert error == ""
     assert correction.source_row_id == later_same_day
     assert correction.counter_value == 199200
+    assert correction.counter_date == datetime(2023, 10, 15, 14, 0)
 
 
 async def test_null_date_row_is_not_picked_as_the_previous_state(db_session):
@@ -226,12 +229,13 @@ async def test_null_date_row_is_not_picked_as_the_previous_state(db_session):
     assert error == ""
     assert correction.source_row_id == kept
     assert correction.counter_value == 198000
+    assert correction.counter_date == datetime(2023, 10, 10, 9, 0)
 
 
 CORRECTION = mileage_sql.Correction(
     id_train=271,
     id_active=401961,
-    counter_date=datetime(2026, 8, 2, 0, 0, 0),
+    counter_date=datetime(2026, 7, 31, 0, 0, 0),
     counter_value=7020184,
     source_row_id=2865781,
     source_date_average=date(2026, 7, 31),
@@ -246,8 +250,9 @@ def test_generated_sql_matches_the_reference_script():
         2867439  2026-08-02 00:00:00  2026-08-02  7021396   606  <- selected
         2865781  2026-07-31 00:00:00  2026-07-31  7020184   811
 
-    The threshold is the *kept* row's date (2026-07-31), not the selected row's
-    own date — > not >=, and against the earlier surviving row."""
+    Both the delete threshold and the counter's new value/date come from the
+    same row — the last surviving manual reading (2026-07-31), not the selected
+    one — > not >=, and against the earlier surviving row."""
     sql = "\n".join(mileage_sql.correct_mileage(CORRECTION))
 
     assert sql == (
@@ -258,7 +263,7 @@ def test_generated_sql_matches_the_reference_script():
         "\n"
         "-- value from mileage_train.id=2865781, date_average=2026-07-31\n"
         "UPDATE public.counter_active c\n"
-        "SET value = 7020184, date = '2026-08-02 00:00:00'\n"
+        "SET value = 7020184, date = '2026-07-31 00:00:00'\n"
         "WHERE c.id_active = 401961 AND c.id_counter_type = 3 AND c.is_train = true;\n"
         "\n"
         "ALTER TABLE public.counter_active ENABLE TRIGGER counter_active_trigger;"

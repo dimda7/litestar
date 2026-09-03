@@ -44,6 +44,9 @@ async def resolve_correction(
     if selected is None:
         return "Выбранная запись о пробеге не найдена у этого поезда", None
     if selected.date is None:
+        # A null date means this row was never a manual reading — the trigger's
+        # own fill for a later one — and isn't something the page's list would
+        # ever offer to pick.
         return f"У записи mileage_train.id={mileage_row_id} не заполнено время (date)", None
 
     if train.active is None:
@@ -68,7 +71,7 @@ async def resolve_correction(
     # surviving prior state — "previous" must be the last manual reading, not
     # merely the closest earlier row.
     previous = (await db_session.execute(
-        select(MileageTrain.id, MileageTrain.milage, MileageTrain.date_average)
+        select(MileageTrain.id, MileageTrain.milage, MileageTrain.date, MileageTrain.date_average)
         .where(MileageTrain.id_train == train_id, MileageTrain.date_average < selected.date_average,
                MileageTrain.date.is_not(None))
         .order_by(MileageTrain.date_average.desc(), MileageTrain.id.desc())
@@ -94,7 +97,7 @@ async def resolve_correction(
     return "", Correction(
         id_train=train_id,
         id_active=train.active,
-        counter_date=selected.date,
+        counter_date=previous.date,
         counter_value=previous.milage,
         source_row_id=previous.id,
         source_date_average=previous.date_average,
