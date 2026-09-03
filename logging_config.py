@@ -2,7 +2,7 @@ import logging.config
 
 from parser_storage import LOG_DIR
 
-MODULE_LOGGERS = ["app", "parser", "train_parser", "design_number_parser"]
+MODULE_LOGGERS = ["app", "parser", "train_parser", "design_number_parser", "mileage_correction"]
 
 MAX_BYTES = 5 * 1024 * 1024
 BACKUP_COUNT = 5
