@@ -62,8 +62,8 @@ async def adopt_mileage_counter(session, id_active, value, moment) -> int:
     return id_counter
 
 
-async def train_with_mileage(session) -> dict:
-    """A train, its asset, its mileage counter and three days of mileage."""
+async def train_with_counter(session, value: int, moment: datetime) -> tuple[int, int, int]:
+    """A train with an asset carrying a mileage counter: (id_train, id_active, id_counter)."""
     ids = await reference_ids(session)
     id_train = await make_train(session, ids["train_type"])
     id_active = await make_active(session, lcn=str(id_train),
@@ -72,7 +72,13 @@ async def train_with_mileage(session) -> dict:
         text("UPDATE public.train SET active = :active WHERE id = :id"),
         {"active": id_active, "id": id_train},
     )
-    id_counter = await adopt_mileage_counter(session, id_active, 250000, datetime(2023, 10, 16, 9, 0))
+    id_counter = await adopt_mileage_counter(session, id_active, value, moment)
+    return id_train, id_active, id_counter
+
+
+async def train_with_mileage(session) -> dict:
+    """A train, its asset, its mileage counter and three days of mileage."""
+    id_train, id_active, id_counter = await train_with_counter(session, 250000, datetime(2023, 10, 16, 9, 0))
     kept = await make_mileage_train(session, id_train, date(2023, 10, 14), 199000, datetime(2023, 10, 14, 9, 0))
     source = await make_mileage_train(session, id_train, date(2023, 10, 15), 199145, datetime(2023, 10, 15, 9, 0))
     bad = await make_mileage_train(session, id_train, date(2023, 10, 16), 250000, datetime(2023, 10, 16, 9, 0))
@@ -121,6 +127,40 @@ async def test_trigger_is_enabled_again_after_the_script(pg_session):
     await run_generated_sql(pg_session, "\n".join(mileage_sql.correct_mileage(correction)))
 
     assert await trigger_state(pg_session) == before
+
+
+async def test_gap_row_between_kept_and_selected_is_deleted_and_never_used_as_previous(pg_session):
+    """The reference case that prompted this fix: a manual reading followed, a
+    day or more later, by another one leaves a null-date row in between (the
+    trigger fills every day of the gap) that never shows up in the page's list.
+    That row must both (a) not be picked as the state to roll back to, and
+    (b) be deleted along with the bad reading — rolling back to the *kept*
+    reading two days earlier, not to the gap's interpolated value."""
+    id_train, id_active, id_counter = await train_with_counter(pg_session, 250000, datetime(2023, 10, 16, 9, 0))
+    kept = await make_mileage_train(pg_session, id_train, date(2023, 10, 13), 198000, datetime(2023, 10, 13, 9, 0))
+    gap_row = await make_mileage_train(pg_session, id_train, date(2023, 10, 14), 198500, None)
+    bad = await make_mileage_train(pg_session, id_train, date(2023, 10, 16), 250000, datetime(2023, 10, 16, 9, 0))
+
+    error, correction = await resolve_correction(pg_session, id_train, bad)
+    assert error == ""
+    assert correction.source_row_id == kept
+    assert correction.counter_value == 198000
+    assert correction.delete_count == 2
+
+    await run_generated_sql(pg_session, "\n".join(mileage_sql.correct_mileage(correction)))
+
+    remaining = (await pg_session.execute(
+        text("SELECT id FROM public.mileage_train WHERE id_train = :id ORDER BY id"),
+        {"id": id_train})).scalars().all()
+    assert remaining == [kept]
+    assert gap_row not in remaining
+    assert bad not in remaining
+
+    counter = (await pg_session.execute(
+        text("SELECT value, date FROM public.counter_active WHERE id = :id"),
+        {"id": id_counter})).mappings().one()
+    assert counter["value"] == 198000
+    assert counter["date"] == datetime(2023, 10, 16, 9, 0)
 
 
 async def test_counters_of_other_assets_are_untouched(pg_session):

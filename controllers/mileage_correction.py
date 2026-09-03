@@ -62,9 +62,15 @@ async def resolve_correction(
         ids = ", ".join(str(i) for i in counters)
         return f"Для актива {train.active} найдено несколько счётчиков пробега: {ids}", None
 
+    # date IS NOT NULL, same as the page's list: a null-date row only exists as
+    # part of the trigger's fill for a *later* manual entry, so an interior one
+    # between two manual readings belongs to the entry being undone, not to a
+    # surviving prior state — "previous" must be the last manual reading, not
+    # merely the closest earlier row.
     previous = (await db_session.execute(
         select(MileageTrain.id, MileageTrain.milage, MileageTrain.date_average)
-        .where(MileageTrain.id_train == train_id, MileageTrain.date_average < selected.date_average)
+        .where(MileageTrain.id_train == train_id, MileageTrain.date_average < selected.date_average,
+               MileageTrain.date.is_not(None))
         .order_by(MileageTrain.date_average.desc(), MileageTrain.id.desc())
         .limit(1)
     )).first()
@@ -73,20 +79,21 @@ async def resolve_correction(
     if previous.milage is None:
         return f"У записи mileage_train.id={previous.id} не заполнен пробег (milage)", None
 
-    # The same predicate as the DELETE, not len(the listed rows): the boundary is
-    # a date, so it also catches same-day rows and later rows with a null date,
-    # neither of which the page's list shows.
+    # The same predicate as the DELETE: date_average strictly after the last
+    # surviving row, not >= the selected row's own date_average. A gap of more
+    # than a day between two manual readings gets filled by the trigger with
+    # intermediate rows carrying a null date, which the page's list — and a
+    # boundary of the selected row's own date — would both miss.
     delete_count = await db_session.scalar(
         select(func.count()).select_from(MileageTrain).where(
             MileageTrain.id_train == train_id,
-            MileageTrain.date_average >= selected.date_average,
+            MileageTrain.date_average > previous.date_average,
         )
     )
 
     return "", Correction(
         id_train=train_id,
         id_active=train.active,
-        boundary=selected.date_average,
         counter_date=selected.date,
         counter_value=previous.milage,
         source_row_id=previous.id,
@@ -169,7 +176,7 @@ class MileageCorrectionController(Controller):
             "delete_count": correction.delete_count,
             "counter_value": correction.counter_value,
             "counter_date": correction.counter_date.strftime("%Y-%m-%d %H:%M:%S"),
-            "boundary": correction.boundary.strftime("%Y-%m-%d"),
+            "kept_date": correction.source_date_average.strftime("%Y-%m-%d"),
         })
 
     @post("/generate-sql")

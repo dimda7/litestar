@@ -203,7 +203,7 @@
             }
             document.getElementById('modal-summary').innerHTML =
                 'Будет удалено записей mileage_train: <strong>' + data.delete_count + '</strong>' +
-                ' (начиная с ' + data.boundary + ')<br>' +
+                ' (после ' + data.kept_date + ')<br>' +
                 'Счётчик будет установлен: <strong>' + data.counter_value + '</strong> на ' + data.counter_date;
             document.getElementById('action-modal').style.display = 'flex';
         } catch (err) {

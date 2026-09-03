@@ -16,13 +16,20 @@ class Correction:
     """A resolved rollback: what to delete and what to reset the counter to.
 
     counter_date comes from the selected (deleted) row while counter_value comes
-    from the last surviving one — the two are deliberately from different rows,
-    reproducing the correction operators run by hand.
+    from the last surviving one, source_row_id/source_date_average — the two are
+    deliberately from different rows, reproducing the correction operators run
+    by hand.
+
+    The delete threshold is source_date_average, not the selected row's own
+    date_average: counter_active_trigger fills every day of a gap between two
+    manual readings, leaving intermediate mileage_train rows with a null date
+    that never show up in the page's list. Deleting only from the selected row
+    onward would leave those hidden rows behind; date_average strictly after
+    the last surviving row's date_average catches them too.
     """
 
     id_train: int
     id_active: int
-    boundary: date
     counter_date: datetime
     counter_value: int
     source_row_id: int
@@ -31,7 +38,7 @@ class Correction:
 
 
 def correct_mileage(correction: Correction, wrap_transaction: bool = False) -> list[str]:
-    """SQL rolling a train's mileage back to the state before `boundary`.
+    """SQL rolling a train's mileage back to the state after `source_date_average`.
 
     wrap_transaction adds BEGIN/COMMIT for the downloadable file; when the app
     executes the statements itself the session already owns the transaction, and
@@ -42,7 +49,7 @@ def correct_mileage(correction: Correction, wrap_transaction: bool = False) -> l
         "",
         "DELETE FROM public.mileage_train",
         f"WHERE id_train = {correction.id_train} "
-        f"AND date_average >= '{correction.boundary:%Y-%m-%d}';",
+        f"AND date_average > '{correction.source_date_average:%Y-%m-%d}';",
         "",
         f"-- value from mileage_train.id={correction.source_row_id}, "
         f"date_average={correction.source_date_average:%Y-%m-%d}",

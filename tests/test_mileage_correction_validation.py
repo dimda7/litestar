@@ -40,7 +40,6 @@ async def test_resolves_the_correction_for_the_selected_row(db_session):
     assert error == ""
     assert correction.id_train == id_train
     assert correction.id_active == id_active
-    assert correction.boundary == date(2023, 10, 16)
     assert correction.counter_date == datetime(2023, 10, 16, 9, 0)
     assert correction.counter_value == 199145
     assert correction.source_row_id == day15
@@ -49,8 +48,9 @@ async def test_resolves_the_correction_for_the_selected_row(db_session):
 
 
 async def test_delete_count_covers_rows_the_ten_row_list_never_showed(db_session):
-    """The boundary is a date, so it also catches same-day rows and rows with a
-    null `date` — which the page's list, filtered on `date is not null`, hides."""
+    """The threshold is source_date_average, a date, so it also catches same-day
+    rows and rows with a null `date` — which the page's list, filtered on
+    `date is not null`, hides."""
     id_train, _ = await train_with_counter(db_session)
     _, _, day16 = await three_days(db_session, id_train)
     await make_mileage_train(db_session, id_train, date(2023, 10, 16), 250100, datetime(2023, 10, 16, 18, 0))
@@ -60,6 +60,27 @@ async def test_delete_count_covers_rows_the_ten_row_list_never_showed(db_session
 
     assert error == ""
     assert correction.delete_count == 3
+
+
+async def test_gap_row_between_the_kept_row_and_the_selected_one_is_also_deleted(db_session):
+    """counter_active_trigger fills every day of a gap between two manual
+    readings, so a null-date row can sit strictly between the kept row and the
+    selected one without ever appearing in the page's ten-row list. Deleting
+    from the selected row's own date onward (the old, wrong threshold) would
+    miss it; date_average > the kept row's date_average catches it."""
+    id_train, _ = await train_with_counter(db_session)
+    kept = await make_mileage_train(db_session, id_train, date(2023, 10, 13), 198000, datetime(2023, 10, 13, 9, 0))
+    gap_row = await make_mileage_train(db_session, id_train, date(2023, 10, 14), 198500, None)
+    selected = await make_mileage_train(db_session, id_train, date(2023, 10, 16), 199000, datetime(2023, 10, 16, 9, 0))
+
+    error, correction = await resolve_correction(db_session, id_train, selected)
+
+    assert error == ""
+    assert correction.source_row_id == kept
+    assert correction.source_date_average == date(2023, 10, 13)
+    # gap_row (10-14, hidden) and selected (10-16) — 2 rows, not 1.
+    assert correction.delete_count == 2
+    assert gap_row != kept
 
 
 async def test_rows_of_another_train_are_not_counted(db_session):
@@ -176,10 +197,12 @@ async def test_selected_row_without_a_date_is_rejected(db_session):
 
 
 async def test_latest_earlier_row_wins_among_several(db_session):
+    """Two manual readings can share a date_average (a same-day correction) — the
+    later id, not the first one found, is the true last state."""
     id_train, _ = await train_with_counter(db_session)
     await make_mileage_train(db_session, id_train, date(2023, 10, 10), 198000, datetime(2023, 10, 10, 9, 0))
     await make_mileage_train(db_session, id_train, date(2023, 10, 15), 199145, datetime(2023, 10, 15, 9, 0))
-    later_same_day = await make_mileage_train(db_session, id_train, date(2023, 10, 15), 199200, None)
+    later_same_day = await make_mileage_train(db_session, id_train, date(2023, 10, 15), 199200, datetime(2023, 10, 15, 14, 0))
     selected = await make_mileage_train(db_session, id_train, date(2023, 10, 16), 250000, datetime(2023, 10, 16, 9, 0))
 
     error, correction = await resolve_correction(db_session, id_train, selected)
@@ -189,31 +212,54 @@ async def test_latest_earlier_row_wins_among_several(db_session):
     assert correction.counter_value == 199200
 
 
+async def test_null_date_row_is_not_picked_as_the_previous_state(db_session):
+    """A null-date row only exists as the trigger's own interpolation for a
+    later manual entry — it must never be mistaken for a surviving prior
+    reading, even when it happens to be the closest one by date_average."""
+    id_train, _ = await train_with_counter(db_session)
+    kept = await make_mileage_train(db_session, id_train, date(2023, 10, 10), 198000, datetime(2023, 10, 10, 9, 0))
+    await make_mileage_train(db_session, id_train, date(2023, 10, 15), 199145, None)
+    selected = await make_mileage_train(db_session, id_train, date(2023, 10, 16), 250000, datetime(2023, 10, 16, 9, 0))
+
+    error, correction = await resolve_correction(db_session, id_train, selected)
+
+    assert error == ""
+    assert correction.source_row_id == kept
+    assert correction.counter_value == 198000
+
+
 CORRECTION = mileage_sql.Correction(
-    id_train=131,
-    id_active=298,
-    boundary=date(2023, 10, 16),
-    counter_date=datetime(2023, 10, 16, 9, 0),
-    counter_value=199145,
-    source_row_id=8231,
-    source_date_average=date(2023, 10, 15),
-    delete_count=1,
+    id_train=271,
+    id_active=401961,
+    counter_date=datetime(2026, 8, 2, 0, 0, 0),
+    counter_value=7020184,
+    source_row_id=2865781,
+    source_date_average=date(2026, 7, 31),
+    delete_count=2,
 )
 
 
-def test_generated_sql_matches_the_hand_written_script():
+def test_generated_sql_matches_the_reference_script():
+    """The reference case: rows
+
+        2867566  2026-08-03 00:00:00  2026-08-03  7022892  1496
+        2867439  2026-08-02 00:00:00  2026-08-02  7021396   606  <- selected
+        2865781  2026-07-31 00:00:00  2026-07-31  7020184   811
+
+    The threshold is the *kept* row's date (2026-07-31), not the selected row's
+    own date — > not >=, and against the earlier surviving row."""
     sql = "\n".join(mileage_sql.correct_mileage(CORRECTION))
 
     assert sql == (
         "ALTER TABLE public.counter_active DISABLE TRIGGER counter_active_trigger;\n"
         "\n"
         "DELETE FROM public.mileage_train\n"
-        "WHERE id_train = 131 AND date_average >= '2023-10-16';\n"
+        "WHERE id_train = 271 AND date_average > '2026-07-31';\n"
         "\n"
-        "-- value from mileage_train.id=8231, date_average=2023-10-15\n"
+        "-- value from mileage_train.id=2865781, date_average=2026-07-31\n"
         "UPDATE public.counter_active c\n"
-        "SET value = 199145, date = '2023-10-16 09:00:00'\n"
-        "WHERE c.id_active = 298 AND c.id_counter_type = 3 AND c.is_train = true;\n"
+        "SET value = 7020184, date = '2026-08-02 00:00:00'\n"
+        "WHERE c.id_active = 401961 AND c.id_counter_type = 3 AND c.is_train = true;\n"
         "\n"
         "ALTER TABLE public.counter_active ENABLE TRIGGER counter_active_trigger;"
     )
