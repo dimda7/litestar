@@ -96,9 +96,15 @@ async def test_generated_sql_rolls_the_mileage_back(pg_session):
     await run_generated_sql(pg_session, "\n".join(mileage_sql.correct_mileage(correction)))
 
     remaining = (await pg_session.execute(
-        text("SELECT id FROM public.mileage_train WHERE id_train = :id ORDER BY id"),
-        {"id": fixture["id_train"]})).scalars().all()
-    assert remaining == [fixture["kept"], fixture["source"]]
+        text("SELECT id, milage, mileage_average, date, date_average FROM public.mileage_train "
+             "WHERE id_train = :id ORDER BY id"),
+        {"id": fixture["id_train"]})).mappings().all()
+    assert [dict(r) for r in remaining] == [
+        {"id": fixture["kept"], "milage": 199000, "mileage_average": 100,
+         "date": datetime(2023, 10, 14, 9, 0), "date_average": date(2023, 10, 14)},
+        {"id": fixture["source"], "milage": 199145, "mileage_average": 100,
+         "date": datetime(2023, 10, 15, 9, 0), "date_average": date(2023, 10, 15)},
+    ]
 
     counter = (await pg_session.execute(
         text("SELECT value, date FROM public.counter_active WHERE id = :id"),

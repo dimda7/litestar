@@ -84,6 +84,8 @@
 <script>
     const TRAINS_BY_NAME = new Map({{ trains | tojson }}.map(t => [t.name, t.id]));
 
+    const EMPTY_MESSAGE = 'У поезда нет записей о пробеге с заполненным временем';
+
     let selectedTrainId = null;
     let selectedRowId = null;
 
@@ -129,7 +131,7 @@
         document.getElementById('delete-btn').disabled = false;
     }
 
-    function renderRows(rows) {
+    function renderRows(rows, announceEmpty) {
         const tbody = document.getElementById('mileage-tbody');
         tbody.innerHTML = '';
         document.getElementById('mileage-card').style.display = 'block';
@@ -139,9 +141,10 @@
             const td = document.createElement('td');
             td.colSpan = 6;
             td.style.cssText = 'color: var(--text-hint); text-align: center; padding: 20px;';
-            td.textContent = 'У поезда нет записей о пробеге с заполненным временем';
+            td.textContent = EMPTY_MESSAGE;
             tr.appendChild(td);
             tbody.appendChild(tr);
+            if (announceEmpty) showError(EMPTY_MESSAGE);
             return;
         }
 
@@ -173,7 +176,7 @@
         clearSelection();
         try {
             const data = await getJson('/mileage-correction/mileage/' + selectedTrainId);
-            renderRows(data.rows);
+            renderRows(data.rows, !keepMessage);
         } catch (err) {
             showError('Ошибка загрузки: ' + err.message);
         }

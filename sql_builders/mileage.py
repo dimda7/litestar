@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
-# counter_active_trigger fires on UPDATE of a counter of this type with
-# is_train = true, and its PL/Python body is what generates the mileage_train
-# rows day by day. Rolling mileage back means updating the counter with the
-# trigger switched off, or it would regenerate what the DELETE just removed.
-MILEAGE_COUNTER_TYPE_ID = 3
+from sql_builders.actives import MILEAGE_COUNTER_TYPE_ID
+
+# counter_active_trigger fires on UPDATE of a counter of MILEAGE_COUNTER_TYPE_ID
+# with is_train = true, and its PL/Python body is what generates the
+# mileage_train rows day by day. Rolling mileage back means updating the counter
+# with the trigger switched off, or it would regenerate what the DELETE just
+# removed.
 MILEAGE_TRIGGER_NAME = "counter_active_trigger"
 
 
