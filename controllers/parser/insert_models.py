@@ -56,7 +56,7 @@ async def validate_insert_rows(
         if progress is not None:
             progress["processed"] = row_num
         model_name = str(row.get("model", "")).strip()
-        position = str(row.get("position", "")).strip()
+        position = str(row.get("position") or "").strip()
         itemnum = str(row.get("itemnum", "")).strip()
         lcn = str(row.get("lsn", "") or row.get("lcn", "")).strip()
         isdefault = str(row.get("isdefault", "")).strip().lower()
@@ -76,7 +76,9 @@ async def validate_insert_rows(
 
         # An existing car place by id, or one to create by its name (see car_place_sql.new_names).
         car_place: int | str | None = None
-        if position and position != "null":
+        if not position:
+            errors.append({"row": row_num, "field": "position", "message": "Пустой position"})
+        elif position != "null":
             result = await db_session.execute(
                 select(CarPlace.id).where(CarPlace.name == position)
             )

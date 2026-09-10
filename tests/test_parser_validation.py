@@ -1,5 +1,7 @@
 """FK/UNIQUE validation tests for validate_insert_rows (controllers/parser/insert_models.py)."""
 
+import pytest
+
 from controllers.parser.insert_models import validate_insert_rows
 
 from models import Models
@@ -127,6 +129,22 @@ async def test_unique_conflict_car_place_train_type_design_within_batch_on_a_car
     assert len(errors) == 1
     assert errors[0]["row"] == 2
     assert "unique (car_place, train_type, design_number)" in errors[0]["message"]
+
+
+@pytest.mark.parametrize("position", [None, "", "  "])
+async def test_empty_position_reported(db_session, position):
+    """Regression: an empty Excel cell arrives as None, and str(None) used to turn
+    it into a car place named 'None' to create."""
+    await make_train_type(db_session, "Ласточка")
+    await make_design_number(db_session, "DN-001")
+    row = make_row("Ласточка", "", "DN-001", lsn="M1.1")
+    row["position"] = position
+
+    errors, valid_rows = await validate(db_session, [row])
+
+    assert valid_rows == []
+    assert error_fields(errors) == ["position"]
+    assert "Пустой position" in errors[0]["message"]
 
 
 async def test_row_with_other_errors_creates_no_car_place(db_session):
