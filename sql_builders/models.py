@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from sql_builders import car_place as car_place_sql
 from sql_utils import sql_escape
 
 
@@ -68,12 +69,17 @@ def change_model_okz(valid_rows: list[dict]) -> list[str]:
     does. id_car_place is a nullable integer FK though, not text, so there is
     no prefix to prepend — a plain NULL stands in for the 'Z' prefix trick,
     since Postgres treats NULL as distinct for UNIQUE purposes.
+
+    Car places the file names but the DB lacks are created first.
     """
     if not valid_rows:
         return []
     id_list = ", ".join(str(vr["id"]) for vr in valid_rows)
-    values_list = ", ".join(f"({vr['id']}, {vr['new_car_place_id']})" for vr in valid_rows)
+    values_list = ", ".join(
+        f"({vr['id']}, {car_place_sql.ref_sql(vr['new_car_place'])})" for vr in valid_rows
+    )
     return [
+        *car_place_sql.insert_missing(vr["new_car_place"] for vr in valid_rows),
         f"UPDATE public.models SET id_car_place = NULL WHERE id IN ({id_list});",
         "UPDATE public.models AS m SET id_car_place = v.new_car_place "
         f"FROM (VALUES {values_list}) AS v(mid, new_car_place) WHERE m.id = v.mid;",
@@ -201,13 +207,15 @@ def move_actives(
     return sql_lines
 
 
-def insert_models(valid_rows: list[tuple[int, int, int, str, bool]]) -> list[str]:
-    sql_lines: list[str] = []
-    for train_type_id, car_place_id, design_number_id, lcn, is_default in valid_rows:
+def insert_models(valid_rows: list[tuple[int, int | str, int, str, bool]]) -> list[str]:
+    """Car places the file names but the DB lacks are created first."""
+    sql_lines: list[str] = car_place_sql.insert_missing(vr[1] for vr in valid_rows)
+    for train_type_id, car_place, design_number_id, lcn, is_default in valid_rows:
         isdefault_val = "TRUE" if is_default else "FALSE"
         sql_lines.append(
             f"INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
-            f"VALUES ({train_type_id}, {car_place_id}, {design_number_id}, '{sql_escape(lcn)}', {isdefault_val});"
+            f"VALUES ({train_type_id}, {car_place_sql.ref_sql(car_place)}, {design_number_id}, "
+            f"'{sql_escape(lcn)}', {isdefault_val});"
         )
     return sql_lines
 

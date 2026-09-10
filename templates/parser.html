@@ -482,6 +482,12 @@
         return appendCsrfToken(formData);
     }
 
+    function alertNewCarPlaces(data) {
+        if (data.new_car_places && data.new_car_places.length > 0) {
+            alert('Будут созданы car_place:\n' + data.new_car_places.join('\n'));
+        }
+    }
+
     function generateSQL() {
         closeActionModal();
         document.getElementById('error-box').style.display = 'none';
@@ -501,6 +507,7 @@
                     a.download = 'models_insert.sql';
                     a.click();
                     URL.revokeObjectURL(url);
+                    alertNewCarPlaces(data);
                 }
             }))
             .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -867,6 +874,7 @@
                     a.download = 'change_okz.sql';
                     a.click();
                     URL.revokeObjectURL(url);
+                    alertNewCarPlaces(data);
                 }
             }))
             .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });

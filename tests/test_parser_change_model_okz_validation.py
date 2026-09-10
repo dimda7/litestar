@@ -78,14 +78,30 @@ async def test_model_not_found_reported(db_session):
     assert "не найдена" in errors[0]["message"]
 
 
-async def test_car_place_not_found_reported(db_session):
+async def test_missing_car_place_becomes_one_to_create(db_session):
     model_id = await make_model(db_session)
 
-    errors, valid_rows = await validate(db_session, [{"id": str(model_id), "new_position": "Неизвестный вагон"}])
+    errors, valid_rows = await validate(db_session, [{"id": str(model_id), "new_position": "+106.20-01_(01)"}])
 
-    assert valid_rows == []
-    assert error_fields(errors) == ["new_position"]
-    assert "car_place не найден" in errors[0]["message"]
+    assert errors == []
+    assert valid_rows == [{"id": model_id, "new_car_place": "+106.20-01_(01)"}]
+
+
+async def test_car_place_to_create_named_by_several_models_is_created_once(db_session):
+    first_id = await make_model(db_session)
+    second_id = await make_model(db_session)
+
+    errors, valid_rows = await validate(db_session, [
+        {"id": str(first_id), "new_position": "+106.20-01_(01)"},
+        {"id": str(second_id), "new_position": "+106.20-01_(01)"},
+    ])
+
+    assert errors == []
+    assert valid_rows == [
+        {"id": first_id, "new_car_place": "+106.20-01_(01)"},
+        {"id": second_id, "new_car_place": "+106.20-01_(01)"},
+    ]
+    assert "\n".join(models_sql.change_model_okz(valid_rows)).count("INSERT INTO public.car_place") == 1
 
 
 async def test_ambiguous_car_place_reported(db_session):
@@ -108,7 +124,7 @@ async def test_valid_row_passes(db_session):
     errors, valid_rows = await validate(db_session, [{"id": str(model_id), "new_position": "+342_(06)"}])
 
     assert errors == []
-    assert valid_rows == [{"id": model_id, "new_car_place_id": cp_id}]
+    assert valid_rows == [{"id": model_id, "new_car_place": cp_id}]
 
 
 async def test_no_op_row_skipped(db_session):
@@ -139,7 +155,7 @@ async def test_conflicting_new_position_in_same_file_reported(db_session):
 
 
 def test_build_sql_lines_single_row():
-    valid_rows = [{"id": 168948, "new_car_place_id": 42}]
+    valid_rows = [{"id": 168948, "new_car_place": 42}]
     sql_lines = models_sql.change_model_okz(valid_rows)
 
     assert len(sql_lines) == 2
@@ -152,8 +168,8 @@ def test_build_sql_lines_single_row():
 
 def test_build_sql_lines_multiple_rows():
     valid_rows = [
-        {"id": 1, "new_car_place_id": 10},
-        {"id": 2, "new_car_place_id": 20},
+        {"id": 1, "new_car_place": 10},
+        {"id": 2, "new_car_place": 20},
     ]
     sql_lines = models_sql.change_model_okz(valid_rows)
 
@@ -163,8 +179,43 @@ def test_build_sql_lines_multiple_rows():
     assert "(2, 20)" in sql_lines[1]
 
 
+def test_build_sql_lines_creates_missing_car_place():
+    valid_rows = [{"id": 1, "new_car_place": "+106.20-01_(01)"}]
+    sql_lines = models_sql.change_model_okz(valid_rows)
+
+    assert sql_lines == [
+        "INSERT INTO public.car_place (name, car_number) VALUES ('+106.20-01_(01)', 1) "
+        "ON CONFLICT (name) DO NOTHING RETURNING name;",
+        "UPDATE public.models SET id_car_place = NULL WHERE id IN (1);",
+        "UPDATE public.models AS m SET id_car_place = v.new_car_place "
+        "FROM (VALUES (1, (SELECT id FROM public.car_place WHERE name = '+106.20-01_(01)'))) "
+        "AS v(mid, new_car_place) WHERE m.id = v.mid;",
+    ]
+
+
+def test_build_sql_lines_missing_car_place_without_car_number():
+    sql_lines = models_sql.change_model_okz([{"id": 1, "new_car_place": "+106.20"}])
+
+    assert sql_lines[0] == (
+        "INSERT INTO public.car_place (name, car_number) VALUES ('+106.20', NULL) "
+        "ON CONFLICT (name) DO NOTHING RETURNING name;"
+    )
+
+
+def test_build_sql_lines_creates_a_repeated_car_place_once():
+    valid_rows = [
+        {"id": 1, "new_car_place": "+106.20-01_(01)"},
+        {"id": 2, "new_car_place": "+106.20-01_(01)"},
+        {"id": 3, "new_car_place": 42},
+    ]
+    sql = "\n".join(models_sql.change_model_okz(valid_rows))
+
+    assert sql.count("INSERT INTO public.car_place") == 1
+    assert "(3, 42)" in sql
+
+
 def test_build_sql_lines_targets_models_not_actives():
-    valid_rows = [{"id": 1, "new_car_place_id": 10}]
+    valid_rows = [{"id": 1, "new_car_place": 10}]
     sql = "\n".join(models_sql.change_model_okz(valid_rows))
 
     assert "public.models" in sql

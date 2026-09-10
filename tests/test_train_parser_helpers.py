@@ -4,7 +4,6 @@ from controllers.train_parser import (
     _lcn_to_model,
     _lcn_to_lcn,
     _lcn_to_prelcn,
-    _parse_car_number,
 )
 
 
@@ -34,19 +33,3 @@ def test_lcn_to_prelcn_one_level():
 
 def test_lcn_to_prelcn_multi_level_drops_last_segment_only():
     assert _lcn_to_prelcn("5.2.3") == "5.2"
-
-
-def test_parse_car_number_extracts_digits():
-    assert _parse_car_number("+100_(01)") == 1
-
-
-def test_parse_car_number_multi_digit():
-    assert _parse_car_number("+100_(12)") == 12
-
-
-def test_parse_car_number_empty_position_returns_none():
-    assert _parse_car_number("") is None
-
-
-def test_parse_car_number_no_match_returns_none():
-    assert _parse_car_number("+100") is None
