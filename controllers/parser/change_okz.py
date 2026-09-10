@@ -17,6 +17,8 @@ from progress_tasks import start_task
 from sql_builders import car_place as car_place_sql
 from sql_builders import models as models_sql
 
+from .common import execute_sql_lines
+
 
 logger = logging.getLogger("parser")
 
@@ -177,13 +179,8 @@ class ChangeModelOkzController(Controller):
                 try:
                     # Car place INSERTs, then the two-phase UPDATE (see models_sql.change_model_okz)
                     # — all in one transaction, or after the first UPDATE the models rows are
-                    # left with id_car_place = NULL. Only the INSERTs return rows: the names
-                    # this run actually created.
-                    for line in models_sql.change_model_okz(valid_rows):
-                        result = await session.execute(text(line))
-                        if result.returns_rows:
-                            created.extend(result.scalars().all())
-                    total_updated = result.rowcount
+                    # left with id_car_place = NULL.
+                    created, total_updated = await execute_sql_lines(session, models_sql.change_model_okz(valid_rows))
                     progress["processed"] = 1
                     await session.commit()
                 except Exception as e:

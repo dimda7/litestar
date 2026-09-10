@@ -8,7 +8,7 @@ def parse_car_number(position: str) -> int | None:
     """Parse the car number out of a car place name: '+100_(01)' -> 1."""
     if not position:
         return None
-    match = re.search(r"_\((\d+)\)", position)
+    match = re.search(r"_\((\d+)\)$", position)
     if match:
         return int(match.group(1))
     return None

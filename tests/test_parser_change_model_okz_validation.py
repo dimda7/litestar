@@ -87,6 +87,23 @@ async def test_missing_car_place_becomes_one_to_create(db_session):
     assert valid_rows == [{"id": model_id, "new_car_place": "+106.20-01_(01)"}]
 
 
+async def test_car_place_to_create_named_by_several_models_is_created_once(db_session):
+    first_id = await make_model(db_session)
+    second_id = await make_model(db_session)
+
+    errors, valid_rows = await validate(db_session, [
+        {"id": str(first_id), "new_position": "+106.20-01_(01)"},
+        {"id": str(second_id), "new_position": "+106.20-01_(01)"},
+    ])
+
+    assert errors == []
+    assert valid_rows == [
+        {"id": first_id, "new_car_place": "+106.20-01_(01)"},
+        {"id": second_id, "new_car_place": "+106.20-01_(01)"},
+    ]
+    assert "\n".join(models_sql.change_model_okz(valid_rows)).count("INSERT INTO public.car_place") == 1
+
+
 async def test_ambiguous_car_place_reported(db_session):
     """Regression: car_place.name is not unique in the DB -> used to raise MultipleResultsFound."""
     model_id = await make_model(db_session)

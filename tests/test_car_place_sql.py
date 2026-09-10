@@ -22,3 +22,7 @@ def test_parse_car_number_empty_position_returns_none():
 
 def test_parse_car_number_no_match_returns_none():
     assert car_place_sql.parse_car_number("+100") is None
+
+
+def test_parse_car_number_takes_only_a_trailing_suffix():
+    assert car_place_sql.parse_car_number("+100_(01)-A") is None

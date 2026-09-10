@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -16,6 +16,8 @@ from parser_storage import LOG_DIR
 from progress_tasks import start_task
 from sql_builders import car_place as car_place_sql
 from sql_builders import models as models_sql
+
+from .common import execute_sql_lines
 
 
 logger = logging.getLogger("parser")
@@ -202,16 +204,11 @@ class InsertModelsController(Controller):
                     return
 
                 # The builder's own statements, so a car place to create is inserted and
-                # then referenced by name exactly as in the downloaded file. Only the car
-                # place INSERTs return rows: the names this run actually created.
+                # then referenced by name exactly as in the downloaded file.
                 sql_lines = models_sql.insert_models(valid_rows)
                 progress.update(processed=0, total=len(sql_lines), phase="executing")
                 try:
-                    for i, line in enumerate(sql_lines, start=1):
-                        result = await session.execute(text(line))
-                        if result.returns_rows:
-                            created.extend(result.scalars().all())
-                        progress["processed"] = i
+                    created, _ = await execute_sql_lines(session, sql_lines, progress)
                     await session.commit()
                 except Exception as e:
                     await session.rollback()

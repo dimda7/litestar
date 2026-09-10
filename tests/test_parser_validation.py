@@ -113,6 +113,36 @@ async def test_ambiguous_car_place_reported(db_session):
     assert "неоднозначен" in errors[0]["message"]
 
 
+async def test_unique_conflict_car_place_train_type_design_within_batch_on_a_car_place_to_create(db_session):
+    tt_id = await make_train_type(db_session, "Ласточка")
+    dn_id = await make_design_number(db_session, "DN-001")
+
+    rows = [
+        make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1", is_default=True),
+        make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.2", is_default=True),
+    ]
+    errors, valid_rows = await validate(db_session, rows)
+
+    assert valid_rows == [(tt_id, "+106.20-01_(01)", dn_id, "M1.1", True)]
+    assert len(errors) == 1
+    assert errors[0]["row"] == 2
+    assert "unique (car_place, train_type, design_number)" in errors[0]["message"]
+
+
+async def test_row_with_other_errors_creates_no_car_place(db_session):
+    tt_id = await make_train_type(db_session, "Ласточка")
+    dn_id = await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await validate(db_session, [
+        make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1"),
+        make_row("Неизвестный поезд", "+106.20-02_(01)", "DN-001", lsn="M1.2"),
+    ])
+
+    assert error_fields(errors) == ["model"]
+    assert valid_rows == [(tt_id, "+106.20-01_(01)", dn_id, "M1.1", False)]
+    assert "+106.20-02_(01)" not in "\n".join(models_sql.insert_models(valid_rows))
+
+
 async def test_missing_design_number_reported(db_session):
     await make_train_type(db_session, "Ласточка")
     await make_car_place(db_session, "Вагон 1")
@@ -296,3 +326,10 @@ def test_build_sql_creates_a_missing_car_place_once():
         "INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
         "VALUES (1, (SELECT id FROM public.car_place WHERE name = '+106.20-01_(01)'), 7, 'M1.2', FALSE);",
     ]
+
+
+def test_build_sql_missing_car_place_without_car_number():
+    assert models_sql.insert_models([(1, "+106.20", 7, "M1.1", False)])[0] == (
+        "INSERT INTO public.car_place (name, car_number) VALUES ('+106.20', NULL) "
+        "ON CONFLICT (name) DO NOTHING RETURNING name;"
+    )

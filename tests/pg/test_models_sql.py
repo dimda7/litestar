@@ -6,8 +6,10 @@ cast, and the UNIQUE indexes the two-phase update exists to work around.
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from controllers.parser.change_okz_active import validate_change_okz_active_rows
+from controllers.parser.common import execute_sql_lines
 
 from sql_builders import models as models_sql
 from tests.pg.conftest import run_generated_sql
@@ -137,12 +139,12 @@ async def test_change_model_okz_survives_a_swap(pg_session):
     assert places[second_id] == ids["car_place"]
 
 
-async def model_at_reference_car_place(session, ids: dict) -> int:
+async def model_at_reference_car_place(session: AsyncSession, ids: dict) -> int:
     lcn = f"M{ids['train_type']}.{await next_id(session, 'models_id_seq')}"
     return await make_model(session, ids["train_type"], lcn, ids["car_place"], ids["design_number"])
 
 
-async def car_place_flag_defaults(session) -> dict[str, str | None]:
+async def car_place_flag_defaults(session: AsyncSession) -> dict[str, str | None]:
     """is_active / is_delete as the catalog defines them — the copy's defaults
     differ from the working database's, so tests must not hardcode them."""
     return dict((await session.execute(text(
@@ -186,6 +188,25 @@ async def test_change_model_okz_reuses_a_car_place_created_after_generation(pg_s
     assert [(r.id, r.car_number) for r in rows] == [(existing_id, 7)]
     assert await pg_session.scalar(
         text("SELECT id_car_place FROM public.models WHERE id = :id"), {"id": model_id}) == existing_id
+
+
+async def test_execute_sql_lines_reports_only_the_car_places_it_created(pg_session):
+    """A typed name goes into the SQL text as is — ':1' after a space must not be
+    read as a bind parameter, nor '%' as a placeholder."""
+    ids = await reference_ids(pg_session)
+    model_id = await model_at_reference_car_place(pg_session, ids)
+    name = f"{TEST_PREFIX}+106 :1 %"
+    sql_lines = models_sql.change_model_okz([{"id": model_id, "new_car_place": name}])
+
+    created, updated = await execute_sql_lines(pg_session, sql_lines)
+    created_again, _ = await execute_sql_lines(pg_session, sql_lines)
+
+    assert created == [name]
+    assert updated == 1
+    assert created_again == []
+    assert await pg_session.scalar(text(
+        "SELECT cp.name FROM public.models m JOIN public.car_place cp ON cp.id = m.id_car_place WHERE m.id = :id"),
+        {"id": model_id}) == name
 
 
 async def make_model(pg_session, id_train_type: int, lcn: str, id_car_place: int, id_design_number: int) -> int:
@@ -339,3 +360,21 @@ async def test_insert_models_creates_a_missing_car_place(pg_session):
     assert await pg_session.scalar(
         text("SELECT id_car_place FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
         {"lcn": lcn, "dn": ids["design_number"]}) == created.id
+
+
+async def test_insert_models_reuses_a_car_place_created_after_generation(pg_session):
+    ids = await reference_ids(pg_session)
+    lcn = f"M{ids['train_type']}.{await next_id(pg_session, 'models_id_seq')}"
+    name = f"{TEST_PREFIX}+106.20-04_(02)"
+    sql = "\n".join(models_sql.insert_models([(ids["train_type"], name, ids["design_number"], lcn, False)]))
+    existing_id = await pg_session.scalar(
+        text("INSERT INTO public.car_place (name, car_number) VALUES (:name, 7) RETURNING id"), {"name": name})
+
+    await run_generated_sql(pg_session, sql)
+
+    rows = (await pg_session.execute(
+        text("SELECT id, car_number FROM public.car_place WHERE name = :name"), {"name": name})).all()
+    assert [(r.id, r.car_number) for r in rows] == [(existing_id, 7)]
+    assert await pg_session.scalar(
+        text("SELECT id_car_place FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
+        {"lcn": lcn, "dn": ids["design_number"]}) == existing_id
