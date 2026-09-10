@@ -12,6 +12,7 @@ from models import TrainType, DesignNumber
 import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, progress_response, start_task
+from sql_builders import car_place as car_place_sql
 from sql_builders import train as train_sql
 
 logger = logging.getLogger("train_parser")
@@ -39,17 +40,6 @@ def _lcn_to_prelcn(lsn: str) -> str:
     if len(parts) <= 1:
         return ""
     return ".".join(parts[:-1])
-
-
-def _parse_car_number(position: str) -> int | None:
-    """Parse the car number out of the position column: '+100_(01)' -> 1."""
-    if not position:
-        return None
-    import re
-    match = re.search(r"_\((\d+)\)", position)
-    if match:
-        return int(match.group(1))
-    return None
 
 
 def _parse_count_car(lsn: str) -> int | None:
@@ -105,7 +95,7 @@ class TrainParserController(Controller):
             lsn_split = lsn.split(".")
             lcn_model = _lcn_to_model(lsn, id_type_train)
             lcn_new = _lcn_to_lcn(lsn, id_train)
-            car_number = None if len(lsn_split) == 1 else _parse_car_number(position)
+            car_number = None if len(lsn_split) == 1 else car_place_sql.parse_car_number(position)
 
             result = await db_session.execute(
                 select(DesignNumber.id, DesignNumber.id_unit_type)

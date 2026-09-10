@@ -12,7 +12,7 @@ from controllers.parser.change_okz_active import validate_change_okz_active_rows
 from sql_builders import models as models_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import (
-    car_place_name, lcn_of, make_active, make_location, make_train, next_id, reference_ids,
+    TEST_PREFIX, car_place_name, lcn_of, make_active, make_location, make_train, next_id, reference_ids,
     second_car_place_id,
 )
 
@@ -126,8 +126,8 @@ async def test_change_model_okz_survives_a_swap(pg_session):
     first_id, second_id = made
 
     # Swap: first -> other_car_place, second -> ids["car_place"] (first's old place).
-    rows = [{"id": first_id, "new_car_place_id": other_car_place},
-            {"id": second_id, "new_car_place_id": ids["car_place"]}]
+    rows = [{"id": first_id, "new_car_place": other_car_place},
+            {"id": second_id, "new_car_place": ids["car_place"]}]
     await run_generated_sql(pg_session, "\n".join(models_sql.change_model_okz(rows)))
 
     places = dict((await pg_session.execute(
@@ -135,6 +135,57 @@ async def test_change_model_okz_survives_a_swap(pg_session):
         {"ids": [first_id, second_id]})).all())
     assert places[first_id] == other_car_place
     assert places[second_id] == ids["car_place"]
+
+
+async def model_at_reference_car_place(session, ids: dict) -> int:
+    lcn = f"M{ids['train_type']}.{await next_id(session, 'models_id_seq')}"
+    return await make_model(session, ids["train_type"], lcn, ids["car_place"], ids["design_number"])
+
+
+async def car_place_flag_defaults(session) -> dict[str, str | None]:
+    """is_active / is_delete as the catalog defines them — the copy's defaults
+    differ from the working database's, so tests must not hardcode them."""
+    return dict((await session.execute(text(
+        "SELECT column_name, column_default FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'car_place' "
+        "AND column_name IN ('is_active', 'is_delete')"
+    ))).all())
+
+
+async def test_change_model_okz_creates_a_missing_car_place(pg_session):
+    ids = await reference_ids(pg_session)
+    model_id = await model_at_reference_car_place(pg_session, ids)
+    name = f"{TEST_PREFIX}+106.20-01_(01)"
+
+    await run_generated_sql(pg_session, "\n".join(models_sql.change_model_okz([{"id": model_id, "new_car_place": name}])))
+
+    created = (await pg_session.execute(
+        text("SELECT id, car_number, short_name, is_active, is_delete FROM public.car_place WHERE name = :name"),
+        {"name": name})).one()
+    assert created.car_number == 1
+    assert created.short_name is None
+    defaults = await car_place_flag_defaults(pg_session)
+    assert str(created.is_active).lower() == defaults["is_active"]
+    assert str(created.is_delete).lower() == defaults["is_delete"]
+    assert await pg_session.scalar(
+        text("SELECT id_car_place FROM public.models WHERE id = :id"), {"id": model_id}) == created.id
+
+
+async def test_change_model_okz_reuses_a_car_place_created_after_generation(pg_session):
+    ids = await reference_ids(pg_session)
+    model_id = await model_at_reference_car_place(pg_session, ids)
+    name = f"{TEST_PREFIX}+106.20-02_(01)"
+    sql = "\n".join(models_sql.change_model_okz([{"id": model_id, "new_car_place": name}]))
+    existing_id = await pg_session.scalar(
+        text("INSERT INTO public.car_place (name, car_number) VALUES (:name, 7) RETURNING id"), {"name": name})
+
+    await run_generated_sql(pg_session, sql)
+
+    rows = (await pg_session.execute(
+        text("SELECT id, car_number FROM public.car_place WHERE name = :name"), {"name": name})).all()
+    assert [(r.id, r.car_number) for r in rows] == [(existing_id, 7)]
+    assert await pg_session.scalar(
+        text("SELECT id_car_place FROM public.models WHERE id = :id"), {"id": model_id}) == existing_id
 
 
 async def make_model(pg_session, id_train_type: int, lcn: str, id_car_place: int, id_design_number: int) -> int:
@@ -268,3 +319,23 @@ async def test_insert_and_delete_models_round_trip(pg_session):
 
     await run_generated_sql(pg_session, "\n".join(models_sql.delete_models([model_id])))
     assert await pg_session.scalar(text("SELECT count(*) FROM public.models WHERE id = :id"), {"id": model_id}) == 0
+
+
+async def test_insert_models_creates_a_missing_car_place(pg_session):
+    ids = await reference_ids(pg_session)
+    lcn = f"M{ids['train_type']}.{await next_id(pg_session, 'models_id_seq')}"
+    name = f"{TEST_PREFIX}+106.20-03_(02)"
+    rows = [(ids["train_type"], name, ids["design_number"], lcn, False)]
+
+    await run_generated_sql(pg_session, "\n".join(models_sql.insert_models(rows)))
+
+    created = (await pg_session.execute(
+        text("SELECT id, car_number, is_active, is_delete FROM public.car_place WHERE name = :name"),
+        {"name": name})).one()
+    assert created.car_number == 2
+    defaults = await car_place_flag_defaults(pg_session)
+    assert str(created.is_active).lower() == defaults["is_active"]
+    assert str(created.is_delete).lower() == defaults["is_delete"]
+    assert await pg_session.scalar(
+        text("SELECT id_car_place FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
+        {"lcn": lcn, "dn": ids["design_number"]}) == created.id

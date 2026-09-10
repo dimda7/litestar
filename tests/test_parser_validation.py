@@ -3,6 +3,7 @@
 from controllers.parser.insert_models import validate_insert_rows
 
 from models import Models
+from sql_builders import models as models_sql
 from tests.conftest import make_car_place, make_design_number, make_train_type
 
 
@@ -50,17 +51,50 @@ async def test_missing_train_type_reported(db_session):
     assert "train_type не найден" in errors[0]["message"]
 
 
-async def test_missing_car_place_reported(db_session):
-    await make_train_type(db_session, "Ласточка")
-    await make_design_number(db_session, "DN-001")
+async def test_missing_car_place_becomes_one_to_create(db_session):
+    tt_id = await make_train_type(db_session, "Ласточка")
+    dn_id = await make_design_number(db_session, "DN-001")
 
     errors, valid_rows = await validate(
-        db_session, [make_row("Ласточка", "Неизвестный вагон", "DN-001")]
+        db_session, [make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1")]
     )
 
-    assert valid_rows == []
-    assert error_fields(errors) == ["position"]
-    assert "car_place не найден" in errors[0]["message"]
+    assert errors == []
+    assert valid_rows == [(tt_id, "+106.20-01_(01)", dn_id, "M1.1", False)]
+
+
+async def test_duplicate_within_batch_on_a_car_place_to_create(db_session):
+    tt_id = await make_train_type(db_session, "Ласточка")
+    dn_id = await make_design_number(db_session, "DN-001")
+
+    rows = [
+        make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1"),
+        make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1"),
+    ]
+    errors, valid_rows = await validate(db_session, rows)
+
+    assert valid_rows == [(tt_id, "+106.20-01_(01)", dn_id, "M1.1", False)]
+    assert len(errors) == 1
+    assert errors[0]["row"] == 2
+    assert "Дубликат" in errors[0]["message"]
+
+
+async def test_unique_conflict_lcn_car_place_default_within_batch_on_a_car_place_to_create(db_session):
+    tt1 = await make_train_type(db_session, "Ласточка")
+    await make_train_type(db_session, "Финист")
+    dn1 = await make_design_number(db_session, "DN-001")
+    await make_design_number(db_session, "DN-002")
+
+    rows = [
+        make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1", is_default=True),
+        make_row("Финист", "+106.20-01_(01)", "DN-002", lsn="M1.1", is_default=True),
+    ]
+    errors, valid_rows = await validate(db_session, rows)
+
+    assert valid_rows == [(tt1, "+106.20-01_(01)", dn1, "M1.1", True)]
+    assert len(errors) == 1
+    assert errors[0]["row"] == 2
+    assert "unique (lcn, car_place)" in errors[0]["message"]
 
 
 async def test_ambiguous_car_place_reported(db_session):
@@ -239,3 +273,26 @@ async def test_lcn_falls_back_to_lcn_key_when_lsn_absent(db_session):
 
     assert errors == []
     assert valid_rows == [(tt_id, cp_id, dn_id, "M1.9", False)]
+
+
+def test_build_sql_existing_car_place_keeps_its_id():
+    assert models_sql.insert_models([(1, 42, 7, "M1.1", True)]) == [
+        "INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
+        "VALUES (1, 42, 7, 'M1.1', TRUE);"
+    ]
+
+
+def test_build_sql_creates_a_missing_car_place_once():
+    valid_rows = [
+        (1, "+106.20-01_(01)", 7, "M1.1", False),
+        (1, "+106.20-01_(01)", 7, "M1.2", False),
+    ]
+
+    assert models_sql.insert_models(valid_rows) == [
+        "INSERT INTO public.car_place (name, car_number) VALUES ('+106.20-01_(01)', 1) "
+        "ON CONFLICT (name) DO NOTHING RETURNING name;",
+        "INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
+        "VALUES (1, (SELECT id FROM public.car_place WHERE name = '+106.20-01_(01)'), 7, 'M1.1', FALSE);",
+        "INSERT INTO public.models (id_train_type, id_car_place, id_design_number, lcn, is_default) "
+        "VALUES (1, (SELECT id FROM public.car_place WHERE name = '+106.20-01_(01)'), 7, 'M1.2', FALSE);",
+    ]

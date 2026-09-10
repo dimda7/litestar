@@ -14,6 +14,7 @@ from db_manager import get_session_maker
 from models import CarPlace
 from parser_storage import LOG_DIR
 from progress_tasks import start_task
+from sql_builders import car_place as car_place_sql
 from sql_builders import models as models_sql
 
 
@@ -98,10 +99,6 @@ async def validate_change_model_okz_rows(
 
         cp_result = await db_session.execute(select(CarPlace.id).where(CarPlace.name == new_raw))
         matches = cp_result.scalars().all()
-        if len(matches) == 0:
-            errors.append({"row": row_num, "field": "new_position",
-                           "message": f"car_place не найден: '{new_raw}'"})
-            continue
         if len(matches) > 1:
             errors.append({"row": row_num, "field": "new_position",
                            "message": (f"car_place неоднозначен: найдено {len(matches)} записей "
@@ -110,7 +107,7 @@ async def validate_change_model_okz_rows(
 
         if model_id not in batch_ids:
             batch_ids[model_id] = new_raw
-            valid_rows.append({"id": model_id, "new_car_place_id": matches[0]})
+            valid_rows.append({"id": model_id, "new_car_place": matches[0] if matches else new_raw})
 
     return errors, valid_rows
 
@@ -143,7 +140,8 @@ class ChangeModelOkzController(Controller):
 
         sql_lines = models_sql.change_model_okz(valid_rows)
         full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
-        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+        progress.update(status="done", sql=full_sql, count=len(valid_rows),
+                        new_car_places=car_place_sql.new_names(vr["new_car_place"] for vr in valid_rows))
 
     @post("/change-okz/execute-sql/start")
     async def change_okz_execute_sql_start(
@@ -157,6 +155,7 @@ class ChangeModelOkzController(Controller):
 
     async def _run_change_okz_execute(self, progress: dict, rows: list[dict]) -> None:
         total_updated = 0
+        created: list[str] = []
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
@@ -176,12 +175,14 @@ class ChangeModelOkzController(Controller):
 
                 progress.update(processed=0, total=1, phase="executing")
                 try:
-                    # Two-phase UPDATE (see models_sql.change_model_okz) — both steps must
-                    # run in one transaction, or after the first step the models rows are
-                    # left with id_car_place = NULL.
-                    sql_lines = models_sql.change_model_okz(valid_rows)
-                    await session.execute(text(sql_lines[0]))
-                    result = await session.execute(text(sql_lines[1]))
+                    # Car place INSERTs, then the two-phase UPDATE (see models_sql.change_model_okz)
+                    # — all in one transaction, or after the first UPDATE the models rows are
+                    # left with id_car_place = NULL. Only the INSERTs return rows: the names
+                    # this run actually created.
+                    for line in models_sql.change_model_okz(valid_rows):
+                        result = await session.execute(text(line))
+                        if result.returns_rows:
+                            created.extend(result.scalars().all())
                     total_updated = result.rowcount
                     progress["processed"] = 1
                     await session.commit()
@@ -197,6 +198,7 @@ class ChangeModelOkzController(Controller):
         log_lines = [
             f"=== Execute change-okz update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
             f"Rows processed: {len(valid_rows)}, models updated: {total_updated}",
+            f"Car places created: {', '.join(created) or '-'}",
             "",
             *models_sql.change_model_okz(valid_rows),
             "",
@@ -204,7 +206,10 @@ class ChangeModelOkzController(Controller):
         log_file = LOG_DIR / f"change_okz_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(log_lines))
-        logger.info("Changed okz for %d models, log: %s", total_updated, log_file)
+        logger.info("Changed okz for %d models, created %d car places, log: %s",
+                    total_updated, len(created), log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Изменено okz у моделей: {total_updated} (строк файла: {len(valid_rows)})")
+        message = f"Изменено okz у моделей: {total_updated} (строк файла: {len(valid_rows)})"
+        if created:
+            message += "\nСозданы car_place: " + ", ".join(created)
+        progress.update(status="done", count=len(valid_rows), message=message)
