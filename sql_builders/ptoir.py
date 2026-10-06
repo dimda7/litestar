@@ -16,3 +16,20 @@ def update_ptoir(valid_rows: list[tuple[int, datetime, int, int, int]]) -> list[
             f"WHERE id = {level_warning_id};"
         )
     return sql_lines
+
+
+HOURS_COUNTER_TYPE_ID = 1
+
+
+def change_hours(valid_rows: list[dict]) -> list[str]:
+    # replica turns counter_active_hours_jump off: with it on, the written value
+    # is taken as a source reading and summed into the old one instead of replacing it.
+    return [
+        "SET session_replication_role = replica;",
+        *(
+            f"UPDATE public.counter_active SET value = {vr['value']} "
+            f"WHERE id_active = {vr['id_active']} AND id_counter_type = {HOURS_COUNTER_TYPE_ID};"
+            for vr in valid_rows
+        ),
+        "SET session_replication_role = DEFAULT;",
+    ]
