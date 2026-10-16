@@ -152,7 +152,7 @@ class TrainParserController(Controller):
         return errors, valid_rows
 
     @get("/")
-    async def index(self, request: Request, page: int = 1, per_page: int = 10) -> Template:
+    async def index(self, request: Request, db_session: AsyncSession, page: int = 1, per_page: int = 10) -> Template:
         page = max(page, 1)
         per_page = min(per_page, 200)
         error: str = request.session.pop("train_parser_error", "")
@@ -172,6 +172,11 @@ class TrainParserController(Controller):
         offset = (page - 1) * per_page
         rows = all_rows[offset:offset + per_page]
 
+        train_types = list((await db_session.execute(
+            select(TrainType.name).where(TrainType.name.is_not(None)).order_by(TrainType.name)
+        )).scalars().all())
+        file_train_type = str(all_rows[0].get("itemnum", "") or "").strip() if all_rows else ""
+
         return Template(
             template_name="train_parser.html",
             context={
@@ -188,6 +193,8 @@ class TrainParserController(Controller):
                 "user_id": request.session.get("user_id"),
                 "fullname": request.session.get("fullname", ""),
                 "active_page": "train_parser",
+                "train_types": train_types,
+                "file_train_type": file_train_type,
             },
         )
 

@@ -63,8 +63,9 @@
         <div>
             <label class="form-label">Тип поезда</label>
             <select id="train-type-name" class="form-input" style="width: 100%;">
-                <option value="ES104_05_V1">ES104_05_V1</option>
-                <option value="ES104_08_V1">ES104_08_V1</option>
+                {% for name in train_types %}
+                <option value="{{ name }}" {{ 'selected' if name == file_train_type }}>{{ name }}</option>
+                {% endfor %}
             </select>
         </div>
     </div>
