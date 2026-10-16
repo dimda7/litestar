@@ -3,10 +3,13 @@ that hand out asset numbers and lcns from counters locked FOR UPDATE."""
 import pytest
 from sqlalchemy import text
 
+from controllers.actives_parser.change_okz import validate_change_okz
 from sql_builders import actives as actives_sql
 from sql_builders.actives import ACTIVE_NUMBER_COUNTER_DESCRIPTION, ACTIVE_NUMBER_LENGTH, MILEAGE_COUNTER_TYPE_ID
 from tests.pg.conftest import run_generated_sql
-from tests.pg.factories import TEST_PREFIX, make_active, make_location, make_train, reference_ids
+from tests.pg.factories import (
+    TEST_PREFIX, car_place_name, make_active, make_location, make_train, reference_ids, second_car_place_id,
+)
 
 TYPE_ACTIVE = "PG"
 
@@ -192,3 +195,25 @@ async def test_update_design_number_and_serial_number(pg_session):
     updated = (await pg_session.execute(
         text("SELECT id_design_number, serial_number FROM public.actives WHERE id = :a"), {"a": id_active})).first()
     assert (updated.id_design_number, updated.serial_number) == (other_dn, "SN-42")
+
+
+async def test_change_okz_updates_only_the_listed_assets_location(pg_session):
+    ids = await reference_ids(pg_session)
+    target_cp = await second_car_place_id(pg_session, ids["car_place"])
+    id_train = await make_train(pg_session, ids["train_type"])
+    loc_changed = await make_location(pg_session, id_type_location=2, id_train=id_train, id_car_place=ids["car_place"])
+    loc_kept = await make_location(pg_session, id_type_location=2, id_train=id_train, id_car_place=ids["car_place"])
+    changed = await make_active(pg_session, f"{id_train}.1", ids["design_number"], loc_changed)
+    await make_active(pg_session, f"{id_train}.2", ids["design_number"], loc_kept)
+    number = await pg_session.scalar(text("SELECT active_number FROM public.actives WHERE id = :id"), {"id": changed})
+
+    errors, valid_rows = await validate_change_okz(
+        pg_session, [{"Актив": number, "position": await car_place_name(pg_session, target_cp)}])
+    assert errors == []
+
+    await run_generated_sql(pg_session, "\n".join(actives_sql.change_okz(valid_rows)))
+
+    car_places = dict((await pg_session.execute(
+        text("SELECT id, id_car_place FROM public.location WHERE id = ANY(:ids)"),
+        {"ids": [loc_changed, loc_kept]})).all())
+    assert car_places == {loc_changed: target_cp, loc_kept: ids["car_place"]}

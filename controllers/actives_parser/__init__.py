@@ -1,6 +1,7 @@
 from .page import ActivesParserController
 from .design_number import DesignNumberController
 from .serial_number import SerialNumberController
+from .change_okz import ChangeOkzController
 from .recount_mileage import RecountMileageController
 from .delete_actives import DeleteActivesController
 from .create_named_actives import CreateNamedActivesController
@@ -11,6 +12,7 @@ CONTROLLERS = [
     ActivesParserController,
     DesignNumberController,
     SerialNumberController,
+    ChangeOkzController,
     RecountMileageController,
     DeleteActivesController,
     CreateNamedActivesController,

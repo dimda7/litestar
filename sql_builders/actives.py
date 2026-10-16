@@ -27,6 +27,21 @@ def update_serial_number(valid_rows: list[tuple[str, str]]) -> list[str]:
     ]
 
 
+def change_okz(valid_rows: list[tuple[str, int]]) -> list[str]:
+    """Single UPDATE of public.location.id_car_place, reached through
+    actives.id_location by active_number (every asset has its own location row)."""
+    values_list = ", ".join(
+        f"('{sql_escape(active_number)}', {id_car_place})" for active_number, id_car_place in valid_rows
+    )
+    if not values_list:
+        return []
+    return [
+        "UPDATE public.location AS loc SET id_car_place = v.id_car_place "
+        f"FROM public.actives AS act, (VALUES {values_list}) AS v(active_number, id_car_place) "
+        "WHERE act.id_location = loc.id AND act.active_number = v.active_number;"
+    ]
+
+
 def recount_mileage(valid_rows: list[dict]) -> list[str]:
     """Build the mileage recount SQL (without BEGIN/COMMIT), shared by download and execution.
 
