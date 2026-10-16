@@ -7,6 +7,7 @@ from controllers.actives_parser.create_named_actives import validate_create_name
 from controllers.actives_parser.delete_actives import validate_delete_actives
 from controllers.actives_parser.design_number import validate_design_number
 from controllers.actives_parser.recount_mileage import validate_recount_mileage
+from controllers.actives_parser.serial_number import validate_serial_number
 from models import Actives, Consignment, CounterActive, Location, MileageStart, MileageTrain, Relocate, Storage
 from tests.conftest import make_active, make_design_number
 from sql_builders import actives as actives_sql
@@ -557,3 +558,71 @@ def test_build_created_actives_xlsx():
     assert rows[0] == ("active_number", "serial_number")
     assert rows[1] == ("SPV0000101", "251200001")
     assert rows[2] == ("SPV0000102", None)
+
+
+async def test_serial_number_with_modification(db_session):
+    await make_active(db_session, "VR1901004")
+    await make_active(db_session, "VR1901083")
+
+    rows = [
+        {"Актив": "VR1901004", "Новый серийный номер": 158150, "Модификация": " (X)_LIR "},
+        {"Актив": "VR1901083", "Новый серийный номер": "158166", "Модификация": None},
+    ]
+    errors, valid_rows = await validate_serial_number(db_session, rows)
+
+    assert errors == []
+    assert valid_rows == [("VR1901004", "158150", "(X)_LIR"), ("VR1901083", "158166", None)]
+
+
+async def test_serial_number_old_column_name(db_session):
+    await make_active(db_session, "VR1901004")
+
+    rows = [{"Актив": "VR1901004", "Новый с/н": "158150", "Модификация": ""}]
+    errors, valid_rows = await validate_serial_number(db_session, rows)
+
+    assert errors == []
+    assert valid_rows == [("VR1901004", "158150", None)]
+
+
+async def test_serial_number_missing_modification_column_reported(db_session):
+    await make_active(db_session, "VR1901004")
+
+    errors, valid_rows = await validate_serial_number(db_session, [{"Актив": "VR1901004", "Новый с/н": "158150"}])
+
+    assert errors == [{"row": 0, "field": "Модификация", "message": "В файле не найдена колонка 'Модификация'"}]
+    assert valid_rows == []
+
+
+async def test_serial_number_missing_serial_column_reported(db_session):
+    errors, valid_rows = await validate_serial_number(db_session, [{"Актив": "VR1901004", "Модификация": "(1)"}])
+
+    assert [e["field"] for e in errors] == ["Новый с/н"]
+
+
+def test_update_serial_number_sql_writes_null_for_empty_modification():
+    assert actives_sql.update_serial_number([("A'1", "S'N", None), ("A2", "SN2", "(В)'_ЗТЛ")]) == [
+        "UPDATE public.actives AS act SET serial_number = v.serial_number, modification = v.modification "
+        "FROM (VALUES\n('A''1', 'S''N', NULL),\n('A2', 'SN2', '(В)''_ЗТЛ')\n) "
+        "AS v(active_number, serial_number, modification) WHERE act.active_number = v.active_number "
+        "AND (act.serial_number IS DISTINCT FROM v.serial_number OR act.modification IS DISTINCT FROM v.modification);"
+    ]
+
+
+def test_update_serial_number_sql_empty_for_no_rows():
+    assert actives_sql.update_serial_number([]) == []
+
+
+async def test_serial_number_unknown_and_duplicate_actives_reported(db_session):
+    await make_active(db_session, "VR1901004")
+
+    rows = [
+        {"Актив": "VR1901004", "Новый с/н": "1", "Модификация": None},
+        {"Актив": "NOPE", "Новый с/н": "2", "Модификация": None},
+        {"Актив": "VR1901004", "Новый с/н": "3", "Модификация": None},
+    ]
+    errors, valid_rows = await validate_serial_number(db_session, rows)
+
+    assert [(e["row"], e["message"]) for e in errors] == [
+        (2, "Актив не найден: 'NOPE'"), (3, "Дубликат внутри файла: 'VR1901004'"),
+    ]
+    assert valid_rows == [("VR1901004", "1", None)]

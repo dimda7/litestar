@@ -19,11 +19,23 @@ def update_design_number(valid_rows: list[tuple[str, int, str]], with_comment: b
     return sql_lines
 
 
-def update_serial_number(valid_rows: list[tuple[str, str]]) -> list[str]:
+def update_serial_number(valid_rows: list[tuple[str, str, str | None]]) -> list[str]:
+    """Single UPDATE of actives.serial_number and actives.modification (NULL
+    for an empty one) from a VALUES list joined on active_number.
+
+    Rows already holding both values are skipped: rewriting a row costs an
+    entry in each of actives' indexes, which dominates the run on a large file."""
+    values: list[str] = []
+    for active_number, serial_number, modification in valid_rows:
+        modification_val = "NULL" if modification is None else f"'{sql_escape(modification)}'"
+        values.append(f"('{sql_escape(active_number)}', '{sql_escape(serial_number)}', {modification_val})")
+    if not values:
+        return []
     return [
-        f"UPDATE public.actives SET serial_number = '{sql_escape(serial_number)}' "
-        f"WHERE active_number = '{sql_escape(active_number)}';"
-        for active_number, serial_number in valid_rows
+        "UPDATE public.actives AS act SET serial_number = v.serial_number, modification = v.modification "
+        "FROM (VALUES\n" + ",\n".join(values) + "\n) AS v(active_number, serial_number, modification) "
+        "WHERE act.active_number = v.active_number "
+        "AND (act.serial_number IS DISTINCT FROM v.serial_number OR act.modification IS DISTINCT FROM v.modification);"
     ]
 
 

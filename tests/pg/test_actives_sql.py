@@ -190,11 +190,17 @@ async def test_update_design_number_and_serial_number(pg_session):
 
     await run_generated_sql(pg_session, "\n".join(
         actives_sql.update_design_number([(number, other_dn, "any")])
-        + actives_sql.update_serial_number([(number, "SN-42")])))
+        + actives_sql.update_serial_number([(number, "SN-42", "(X)_LIR")])))
 
     updated = (await pg_session.execute(
-        text("SELECT id_design_number, serial_number FROM public.actives WHERE id = :a"), {"a": id_active})).first()
-    assert (updated.id_design_number, updated.serial_number) == (other_dn, "SN-42")
+        text("SELECT id_design_number, serial_number, modification FROM public.actives WHERE id = :a"),
+        {"a": id_active})).first()
+    assert (updated.id_design_number, updated.serial_number, updated.modification) == (other_dn, "SN-42", "(X)_LIR")
+
+    await run_generated_sql(pg_session, "\n".join(actives_sql.update_serial_number([(number, "SN-43", None)])))
+
+    assert await pg_session.scalar(
+        text("SELECT modification FROM public.actives WHERE id = :a"), {"a": id_active}) is None
 
 
 async def test_change_okz_updates_only_the_listed_assets_location(pg_session):
@@ -217,3 +223,20 @@ async def test_change_okz_updates_only_the_listed_assets_location(pg_session):
         text("SELECT id, id_car_place FROM public.location WHERE id = ANY(:ids)"),
         {"ids": [loc_changed, loc_kept]})).all())
     assert car_places == {loc_changed: target_cp, loc_kept: ids["car_place"]}
+
+
+async def test_update_serial_number_skips_rows_already_up_to_date(pg_session):
+    ids = await reference_ids(pg_session)
+    id_train = await make_train(pg_session, ids["train_type"])
+    numbers = []
+    for suffix in ("1", "2"):
+        id_active = await make_active(pg_session, f"{id_train}.{suffix}", ids["design_number"],
+                                      await make_location(pg_session, id_type_location=2, id_train=id_train),
+                                      serial_number="SN")
+        numbers.append(f"{TEST_PREFIX}{id_active}")
+    conn = await pg_session.connection()
+
+    result = await conn.exec_driver_sql(
+        actives_sql.update_serial_number([(numbers[0], "SN", None), (numbers[1], "SN", "(1)")])[0])
+
+    assert result.rowcount == 1
