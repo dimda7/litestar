@@ -69,7 +69,7 @@ def build_xlsx(headers: list[str], rows: list[tuple]) -> bytes:
     sheet = workbook.active
     sheet.append(headers)
     for row in rows:
-        sheet.append(list(row))
+        sheet.append([str(value).lower() if isinstance(value, bool) else value for value in row])
 
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
