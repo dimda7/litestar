@@ -86,8 +86,9 @@ docker compose -f images/docker-compose.yml up -d          # без --build
 > Переменные `DB_*` — только первичный засев. Список подключений живёт в томе
 > `config_data` и редактируется на странице Настройки (добавление, правка,
 > удаление); `DB_*` читаются один раз, пока `config_data/db_profiles.json` не
-> создан. Все три набора необязательны — набор с отсутствующей переменной
-> пропускается.
+> создан. Набор с отсутствующей или пустой переменной пропускается, но при первом
+> запуске нужен хотя бы один полный набор: страница Настройки открывается только
+> после входа, а без подключения войти негде.
 
 | Переменная | Описание |
 |---|---|
@@ -95,13 +96,13 @@ docker compose -f images/docker-compose.yml up -d          # без --build
 | `DB_*_PROD`, `DB_*_MY` | Засев подключений `grom-prod` и `grom-my` |
 | `JIIRA_HOST`, `JIIRA_PORT`, `JIIRA_USER`, `JIIRA_PASSWORD` | Jira: выбор вложения задачи вместо файла с диска |
 | `SERVER_PORT` | Порт внутри контейнера, по умолчанию `8011` |
-| `SESSION_SECRET` | Подпись cookie-сессии и CSRF-токена |
+| `SESSION_SECRET` | Обязателен: 64 hex-символа, подпись cookie-сессии и CSRF-токена |
 | `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 
-Сгенерировать секрет:
+Сгенерировать секрет (Python на хосте не нужен):
 
 ```bash
-python -c "import secrets; print(secrets.token_hex(32))"
+docker run --rm python:3.12-slim python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 `SESSION_SECRET` менять после запуска не нужно — это разлогинит всех пользователей.
@@ -109,6 +110,9 @@ python -c "import secrets; print(secrets.token_hex(32))"
 **Не пишите комментарии в одной строке со значением.** Compose их срезает, а
 `docker run --env-file` — нет, и `DB_PORT=6432   # комментарий` уронит старт с
 `ValueError: invalid literal for int()`. Комментарий — только отдельной строкой.
+
+**Пароль с `$` берите в одинарные кавычки** (`DB_PASSWORD='pa$word'`): без них Compose
+подставит вместо `$word` пустую переменную, и в `db_profiles.json` попадёт обрезанный пароль.
 
 Если БД живёт на самом хосте (а не на отдельном сервере), `DB_HOST=localhost` из контейнера
 работать не будет — укажите IP хоста в локальной сети или `host.docker.internal`
@@ -164,6 +168,8 @@ Healthcheck дёргает `/` каждые 30 с; `docker compose ps` пока�
 |---|---|
 | `permission denied ... /var/run/docker.sock` | Пользователь не в группе `docker` (п. 1) |
 | `ValueError: invalid literal for int()` на старте | Инлайн-комментарий в `.env` (п. 3) |
+| `secret length must be 16 (128 bit), 24 (192 bit) or 32 (256 bit)` на старте | Пустой или короткий `SESSION_SECRET` (п. 3) |
+| «Подключений к БД нет» на экране выбора БД | Ни один набор `DB_*` не заполнен полностью — заполните и пересоздайте контейнер: `up -d --force-recreate` (п. 3) |
 | `port is already allocated` | Занят порт хоста (п. 4) |
 | `MissingDependencyException: jinja2` | Образ собран из старого `requirements.txt` — пересоберите с `--build` |
 | Контейнер стартует, но БД недоступна | `DB_HOST`/`DB_PORT` недостижимы из контейнера (п. 3) |
