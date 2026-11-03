@@ -260,3 +260,14 @@ async def test_missing_column(db_session, column):
 
 async def test_no_rows(db_session):
     assert await validate_techcard_rows(db_session, []) == ([], [])
+
+
+async def test_column_order_does_not_matter(db_session):
+    # The page posts the rows through Jinja's tojson, which sorts the keys.
+    ids = await make_references(db_session)
+    row = dict(sorted(make_row().items()))
+
+    errors, valid_rows = await validate_techcard_rows(db_session, [row])
+
+    assert errors == []
+    assert sorted(valid_rows[0]["specification_ids"]) == sorted([ids["spec_es1"], ids["spec_i5"]])

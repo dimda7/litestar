@@ -20,7 +20,7 @@ CLASSIFIER_TYPE_COLUMN = "Классификация техкарты"
 MAIN_PTOIR_COLUMN = "Использовать техкарту только в БПТОиР?"
 MAIN_PTOIR_VALUES = {"да": True, "нет": False, "": False}
 REQUIRED_COLUMNS = ("Номер техкарты", "Название техкарты", "Тип работы", "Статус", CLASSIFIER_TYPE_COLUMN)
-# Every column before the classifier ones must be present, required or not: a
+# Every non-classifier column must be present, required or not: a
 # missing 'Бригада' or БПТОиР flag would otherwise silently become NULL / false.
 EXPECTED_COLUMNS = (*REQUIRED_COLUMNS, "Полное описание", "Приоритет", "Бригада", MAIN_PTOIR_COLUMN)
 
@@ -28,12 +28,14 @@ EXPECTED_COLUMNS = (*REQUIRED_COLUMNS, "Полное описание", "При�
 async def validate_techcard_rows(
     db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    headers = list(rows[0]) if rows else []
     columns = header_columns(rows)
     missing = missing_columns(rows, columns, EXPECTED_COLUMNS)
     if missing:
         return missing, []
-    classifier_columns = headers[headers.index(columns[CLASSIFIER_TYPE_COLUMN.lower()]) + 1:] if rows else []
+    # Any other column is a classifier. Not "the columns after 'Классификация
+    # техкарты'": the page posts the rows through Jinja's tojson, which sorts the keys.
+    known = {c.lower() for c in EXPECTED_COLUMNS}
+    classifier_columns = [h for key, h in columns.items() if key not in known]
 
     work_types = WorkTypeRepository(session=db_session)
     group_types = GroupTypeRepository(session=db_session)
