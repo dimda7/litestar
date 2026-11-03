@@ -40,13 +40,21 @@ def create(valid_rows: list[dict]) -> list[str]:
                 ", spec AS (INSERT INTO public.techcard_to_specification (id_techcard, id_specification) "
                 f"SELECT ids.id_techcard, v.id FROM ids, (VALUES {values}) AS v(id))"
             )
+        # An empty 'Статус' leaves id_techcard_status NULL and creates no status row.
+        id_status = "NULL::integer"
+        status = ""
+        if vr["id_status_type"] is not None:
+            id_status = "nextval('public.techcard_status_id_seq')"
+            status = (
+                ", status AS (INSERT INTO public.techcard_status "
+                "(id, techcard_number, id_techcard_status_types, date_status, id_users) "
+                f"SELECT id_status, id_techcard, {vr['id_status_type']}, now() AT TIME ZONE 'Europe/Moscow', "
+                f"{TECHCARD_USER_ID} FROM ids)"
+            )
         sql_lines.append(
             "WITH ids AS (SELECT nextval('public.techcard_id_seq') AS id_techcard, "
-            "nextval('public.techcard_status_id_seq') AS id_status), "
-            "status AS (INSERT INTO public.techcard_status "
-            "(id, techcard_number, id_techcard_status_types, date_status, id_users) "
-            f"SELECT id_status, id_techcard, {vr['id_status_type']}, now() AT TIME ZONE 'Europe/Moscow', "
-            f"{TECHCARD_USER_ID} FROM ids)"
+            f"{id_status} AS id_status)"
+            f"{status}"
             f"{specifications} "
             f"INSERT INTO public.techcard (id, id_techcard_status, {', '.join(columns)}) "
             f"SELECT id_techcard, id_status, {', '.join(_literal(v) for v in columns.values())} FROM ids;"

@@ -75,8 +75,7 @@ async def test_row_is_resolved_to_ids(db_session):
     }]
 
 
-@pytest.mark.parametrize("field", ["Номер техкарты", "Название техкарты", "Тип работы", "Статус",
-                                   "Классификация техкарты"])
+@pytest.mark.parametrize("field", ["Номер техкарты", "Название техкарты", "Тип работы", "Классификация техкарты"])
 @pytest.mark.parametrize("empty", [None, "", "  "])
 async def test_required_field_empty(db_session, field, empty):
     await make_references(db_session)
@@ -110,7 +109,7 @@ async def test_reference_value_found_twice_is_an_error(db_session):
     assert error_fields(errors) == ["Тип работы"]
 
 
-@pytest.mark.parametrize("field", ["Приоритет", "Бригада", "Полное описание"])
+@pytest.mark.parametrize("field", ["Приоритет", "Бригада", "Полное описание", "Статус"])
 @pytest.mark.parametrize("empty", [None, "", " "])
 async def test_optional_field_empty_becomes_null(db_session, field, empty):
     await make_references(db_session)
@@ -118,7 +117,8 @@ async def test_optional_field_empty_becomes_null(db_session, field, empty):
     errors, valid_rows = await validate_techcard_rows(db_session, [make_row(**{field: empty})])
 
     assert errors == []
-    key = {"Приоритет": "id_priorities", "Бригада": "id_group_type", "Полное описание": "description_full"}[field]
+    key = {"Приоритет": "id_priorities", "Бригада": "id_group_type", "Полное описание": "description_full",
+           "Статус": "id_status_type"}[field]
     assert valid_rows[0][key] is None
 
 

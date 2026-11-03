@@ -19,10 +19,10 @@ from .common import (
 CLASSIFIER_TYPE_COLUMN = "Классификация техкарты"
 MAIN_PTOIR_COLUMN = "Использовать техкарту только в БПТОиР?"
 MAIN_PTOIR_VALUES = {"да": True, "нет": False, "": False}
-REQUIRED_COLUMNS = ("Номер техкарты", "Название техкарты", "Тип работы", "Статус", CLASSIFIER_TYPE_COLUMN)
+REQUIRED_COLUMNS = ("Номер техкарты", "Название техкарты", "Тип работы", CLASSIFIER_TYPE_COLUMN)
 # Every non-classifier column must be present, required or not: a
 # missing 'Бригада' or БПТОиР flag would otherwise silently become NULL / false.
-EXPECTED_COLUMNS = (*REQUIRED_COLUMNS, "Полное описание", "Приоритет", "Бригада", MAIN_PTOIR_COLUMN)
+EXPECTED_COLUMNS = (*REQUIRED_COLUMNS, "Статус", "Полное описание", "Приоритет", "Бригада", MAIN_PTOIR_COLUMN)
 
 
 async def validate_techcard_rows(
@@ -85,8 +85,10 @@ async def validate_techcard_rows(
 
         field, value = labelled_cell(row, columns, "Тип работы")
         id_work_type = await one_id(work_types, field, value, WorkType.name == value)
+        id_status_type = None
         field, value = labelled_cell(row, columns, "Статус")
-        id_status_type = await one_id(status_types, field, value, TechcardStatusTypes.status == value)
+        if value:
+            id_status_type = await one_id(status_types, field, value, TechcardStatusTypes.status == value)
 
         id_priorities = None
         field, value = labelled_cell(row, columns, "Приоритет")

@@ -107,3 +107,18 @@ async def test_operations_are_added_to_a_techcard(pg_session):
         {"task": 10, "task_name": "Проверить O'Brien :1", "nested": None, "working_hours": 0, "comment": None},
         {"task": 40, "task_name": "Замеры КП", "nested": "USI", "working_hours": 0, "comment": None},
     ]
+
+
+async def test_techcard_without_status(pg_session):
+    name = f"{TEST_PREFIX}-tc-no-status"
+    errors, valid_rows = await validate_techcard_rows(pg_session, [make_row(name, **{"Статус": None})])
+    assert errors == []
+
+    await run_generated_sql(pg_session, "\n".join(techcards_sql.create(valid_rows)))
+
+    created = (await pg_session.execute(text(
+        "SELECT t.id_techcard_status, t.id_users, "
+        "       (SELECT count(*) FROM public.techcard_status s WHERE s.techcard_number = t.id) AS statuses, "
+        "       (SELECT count(*) FROM public.techcard_to_specification tts WHERE tts.id_techcard = t.id) AS specs "
+        "FROM public.techcard t WHERE t.name = :name"), {"name": name})).mappings().one()
+    assert dict(created) == {"id_techcard_status": None, "id_users": 505, "statuses": 0, "specs": 3}
