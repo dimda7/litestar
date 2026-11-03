@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, Date, DateTime, Integer, String
+from datetime import datetime
+
+from sqlalchemy import Boolean, Date, DateTime, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -263,6 +265,105 @@ class Techcard(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    description_full: Mapped[str | None] = mapped_column(Text, nullable=True)
+    id_priorities: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_work_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    working_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_classifier: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_group_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    use_for_order: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    id_users: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_techcard_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_classifier_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_add_to_train_form: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    id_techcard_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    name_short: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_report_filtr_rzd: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    use_only_main_ptoir: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_locked: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    planned_labor_results: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class WorkType(Base):
+    __tablename__ = "work_type"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class GroupType(Base):
+    __tablename__ = "group_type"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class Priorities(Base):
+    __tablename__ = "priorities"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    priority: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ClassifierType(Base):
+    __tablename__ = "classifier_type"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class Classifier(Base):
+    __tablename__ = "classifier"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_classifier_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class Specification(Base):
+    __tablename__ = "specification"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    id_classifier: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_delete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
+class TechcardStatusTypes(Base):
+    __tablename__ = "techcard_status_types"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class TechcardStatus(Base):
+    __tablename__ = "techcard_status"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    techcard_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_techcard_status_types: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date_status: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    id_users: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comment: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class TechcardToSpecification(Base):
+    __tablename__ = "techcard_to_specification"
+    __table_args__ = {"schema": "public"}
+
+    id_techcard: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id_specification: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
 class OrderToActives(Base):

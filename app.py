@@ -23,6 +23,7 @@ from controllers import actives_parser as actives_parser_package
 from controllers.active_hierarchy import ActiveHierarchyController
 from controllers.ptoir_parser import PtoirParserController
 from controllers.order_parser import OrderParserController
+from controllers.techcard_parser import TechcardParserController
 from controllers.mileage_correction import MileageCorrectionController
 from controllers.jira import JiraController
 from controllers.reports import ReportsController
@@ -78,7 +79,7 @@ jinja_engine = JinjaTemplateEngine(directory=base_dir / "templates")
 jinja_engine.register_template_callable("current_db_label", lambda context: db_manager.get_active_label())
 
 app = Litestar(
-    route_handlers=[HomeController, UsersController, AuthController, *parser_package.CONTROLLERS, TrainParserController, DesignNumberParserController, *actives_parser_package.CONTROLLERS, ActiveHierarchyController, PtoirParserController, OrderParserController, MileageCorrectionController, JiraController, ReportsController, SqlConsoleController, SettingsController, AboutController],
+    route_handlers=[HomeController, UsersController, AuthController, *parser_package.CONTROLLERS, TechcardParserController, TrainParserController, DesignNumberParserController, *actives_parser_package.CONTROLLERS, ActiveHierarchyController, PtoirParserController, OrderParserController, MileageCorrectionController, JiraController, ReportsController, SqlConsoleController, SettingsController, AboutController],
     template_config=TemplateConfig(
         engine=jinja_engine,
     ),
