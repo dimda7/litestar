@@ -9,7 +9,8 @@ end the fixture's transaction.
 """
 from sqlalchemy import text
 
-from controllers.techcard_parser import validate_techcard_rows
+from controllers.techcard_parser.create import validate_techcard_rows
+from controllers.techcard_parser.operations import validate_operation_rows
 from sql_builders import techcards as techcards_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import TEST_PREFIX
@@ -76,3 +77,33 @@ async def test_techcards_are_created_with_status_and_specifications(pg_session):
          "specifications": ["И5", "ЭС1"]},
     ]
     assert all(r["date_status"] == moscow_now for r in created)
+
+
+async def test_operations_are_added_to_a_techcard(pg_session):
+    head = f"{TEST_PREFIX}-tc-ops"
+    errors, valid_rows = await validate_techcard_rows(pg_session, [make_row(head)])
+    assert errors == []
+    await run_generated_sql(pg_session, "\n".join(techcards_sql.create(valid_rows)))
+
+    errors, valid_rows = await validate_operation_rows(pg_session, [
+        {"Техкарта": head, "Номер операции в техкарте": 10, "Наименование операции": "Проверить O'Brien :1",
+         "Вложенная техкарта": None, "Описание вложенной техкарты": None},
+        {"Техкарта": head, "Номер операции в техкарте": 40, "Наименование операции": "Замеры КП",
+         "Вложенная техкарта": "USI", "Описание вложенной техкарты": None},
+        {"Техкарта": head, "Номер операции в техкарте": None, "Наименование операции": None,
+         "Вложенная техкарта": None, "Описание вложенной техкарты": None},
+    ])
+    assert errors == []
+
+    await run_generated_sql(pg_session, "\n".join(techcards_sql.add_operations(valid_rows)))
+
+    created = (await pg_session.execute(text(
+        "SELECT w.task, w.task_name, e.name AS nested, w.working_hours, w.comment "
+        "FROM public.techcard_work_operation w "
+        "JOIN public.techcard h ON h.id = w.id_techcard_head "
+        "LEFT JOIN public.techcard e ON e.id = w.id_techcard_early "
+        "WHERE h.name = :head ORDER BY w.task"), {"head": head})).mappings().all()
+    assert [dict(r) for r in created] == [
+        {"task": 10, "task_name": "Проверить O'Brien :1", "nested": None, "working_hours": 0, "comment": None},
+        {"task": 40, "task_name": "Замеры КП", "nested": "USI", "working_hours": 0, "comment": None},
+    ]

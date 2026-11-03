@@ -1,6 +1,8 @@
 from sql_utils import sql_escape
 
 TECHCARD_USER_ID = 505
+# What most existing operations carry; the file has no labour hours.
+OPERATION_WORKING_HOURS = 0
 
 
 def _literal(value: str | int | bool | None) -> str:
@@ -50,3 +52,13 @@ def create(valid_rows: list[dict]) -> list[str]:
             f"SELECT id_techcard, id_status, {', '.join(_literal(v) for v in columns.values())} FROM ids;"
         )
     return sql_lines
+
+
+def add_operations(valid_rows: list[dict]) -> list[str]:
+    return [
+        "INSERT INTO public.techcard_work_operation "
+        "(id_techcard_head, task, task_name, id_techcard_early, working_hours) "
+        f"VALUES ({vr['id_techcard_head']}, {vr['task']}, {_literal(vr['task_name'])}, "
+        f"{_literal(vr['id_techcard_early'])}, {OPERATION_WORKING_HOURS});"
+        for vr in valid_rows
+    ]

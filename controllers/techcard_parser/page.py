@@ -1,0 +1,79 @@
+from litestar import Controller, get, post
+from litestar.connection.request import Request
+from litestar.enums import RequestEncodingType
+from litestar.params import Body
+from litestar.response import Redirect, Response, Template
+
+import excel_upload
+from progress_tasks import progress_response
+from schemas import SelectSheetRequest
+
+from .common import PATH, PREFIX
+
+
+class TechcardParserController(Controller):
+    path = PATH
+
+    @get("/")
+    async def index(
+        self,
+        request: Request,
+        page: int = 1,
+        per_page: int = 10,
+        select_sheet: bool = False,
+    ) -> Template:
+        page = max(page, 1)
+        per_page = min(per_page, 200)
+        error: str = request.session.pop(f"{PREFIX}_error", "")
+
+        pending_sheets: list[str] = []
+        pending_filename: str = ""
+        if select_sheet:
+            pending_sheets = request.session.get(f"{PREFIX}_pending_sheets", [])
+            pending_filename = request.session.get(f"{PREFIX}_pending_filename", "")
+
+        stored = excel_upload.stored_data(request, PREFIX)
+        all_rows: list[dict] = stored["rows"] if stored else []
+        headers: list[str] = stored["headers"] if stored else []
+        filename: str = stored["filename"] if stored else ""
+
+        total = len(all_rows)
+        total_pages = max((total + per_page - 1) // per_page, 1)
+        page = min(page, total_pages)
+        offset = (page - 1) * per_page
+
+        return Template(
+            template_name="techcard_parser.html",
+            context={
+                "headers": headers,
+                "rows": all_rows[offset:offset + per_page],
+                "all_rows": all_rows,
+                "filename": filename,
+                "error": error,
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": total_pages,
+                "user_id": request.session.get("user_id"),
+                "fullname": request.session.get("fullname", ""),
+                "active_page": "techcard_parser",
+                "pending_sheets": pending_sheets,
+                "pending_filename": pending_filename,
+            },
+        )
+
+    @post("/upload")
+    async def upload(self, request: Request) -> Redirect:
+        return await excel_upload.handle_upload(request, PREFIX, PATH)
+
+    @post("/select-sheet")
+    async def select_sheet(
+        self,
+        request: Request,
+        data: SelectSheetRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
+    ) -> Redirect:
+        return excel_upload.handle_sheet_choice(request, PREFIX, PATH, data.sheet_name)
+
+    @get("/progress/{task_id:str}")
+    async def get_progress(self, task_id: str) -> Response:
+        return progress_response(task_id)

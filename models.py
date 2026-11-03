@@ -366,6 +366,19 @@ class TechcardToSpecification(Base):
     id_specification: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
+class TechcardWorkOperation(Base):
+    __tablename__ = "techcard_work_operation"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task: Mapped[int] = mapped_column(Integer)
+    task_name: Mapped[str] = mapped_column(String)
+    id_techcard_head: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_techcard_early: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    working_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comment: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class OrderToActives(Base):
     __tablename__ = "order_to_actives"
     __table_args__ = {"schema": "public"}
