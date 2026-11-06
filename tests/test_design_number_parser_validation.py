@@ -211,3 +211,121 @@ def test_counter_type_and_frequency_type_ids_match_the_database_dictionaries():
             dn_parser.MILEAGE_COUNTER_TYPE_ID) == (1, 2, 3)
     assert (dn_parser.KM_FREQUENCY_TYPE_ID, dn_parser.ENGINE_HOURS_FREQUENCY_TYPE_ID,
             dn_parser.MM_FREQUENCY_TYPE_ID) == (5, 7, 8)
+
+
+# --- validate_rename_rows ----------------------------------------------------
+
+def rename_row(old: str, new: str) -> dict:
+    return {"Старый ТМЦ": old, "Новый ТМЦ": new}
+
+
+async def test_rename_valid_row_passes(db_session):
+    dn_id = await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_rename_rows(db_session, [rename_row("DN-001", "DN-002")])
+
+    assert errors == []
+    assert valid_rows == [(dn_id, "DN-001", "DN-002")]
+
+
+async def test_rename_old_number_is_matched_exactly(db_session):
+    dn_id = await make_design_number(db_session, "ИН-00000237 ")
+
+    errors, valid_rows = await dn_parser.validate_rename_rows(
+        db_session, [rename_row("ИН-00000237 ", "ИН-00000237"), rename_row("ИН-00000237", "ИН-1")]
+    )
+
+    assert valid_rows == [(dn_id, "ИН-00000237 ", "ИН-00000237")]
+    assert errors == [{"row": 2, "field": "Старый ТМЦ", "message": "design_number не найден: 'ИН-00000237'"}]
+
+
+async def test_rename_message_shows_invisible_characters(db_session):
+    errors, _ = await dn_parser.validate_rename_rows(db_session, [rename_row("A2V_\xa0R1", "A2V_R1")])
+
+    assert errors[0]["message"] == "design_number не найден: 'A2V_\\xa0R1'"
+
+
+async def test_rename_empty_cells_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_rename_rows(
+        db_session, [rename_row(None, "DN-002"), rename_row("DN-001", None)]
+    )
+
+    assert valid_rows == []
+    assert errors == [
+        {"row": 1, "field": "Старый ТМЦ", "message": "Поле 'Старый ТМЦ' пустое"},
+        {"row": 2, "field": "Новый ТМЦ", "message": "Поле 'Новый ТМЦ' пустое"},
+    ]
+
+
+@pytest.mark.parametrize("new", ["DN-002 ", " DN-002", "DN-\xa0002"])
+async def test_rename_new_number_with_whitespace_reported(db_session, new):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_rename_rows(db_session, [rename_row("DN-001", new)])
+
+    assert valid_rows == []
+    assert errors == [{"row": 1, "field": "Новый ТМЦ",
+                       "message": f"Новый номер содержит пробельные символы: {new!r}"}]
+
+
+async def test_rename_unchanged_number_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_rename_rows(db_session, [rename_row("DN-001", "DN-001")])
+
+    assert valid_rows == []
+    assert errors == [{"row": 1, "field": "Новый ТМЦ", "message": "Номер не меняется: 'DN-001'"}]
+
+
+async def test_rename_to_existing_number_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+    taken_id = await make_design_number(db_session, "DN-002")
+
+    errors, valid_rows = await dn_parser.validate_rename_rows(db_session, [rename_row("DN-001", "DN-002")])
+
+    assert valid_rows == []
+    assert errors == [{"row": 1, "field": "Новый ТМЦ",
+                       "message": f"ТМЦ 'DN-002' уже существует (id={taken_id})"}]
+
+
+async def test_rename_duplicate_old_number_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, _ = await dn_parser.validate_rename_rows(
+        db_session, [rename_row("DN-001", "DN-002"), rename_row("DN-001", "DN-003")]
+    )
+
+    assert errors == [{"row": 2, "field": "Старый ТМЦ", "message": "Старый номер 'DN-001' уже указан в строке 1"}]
+
+
+async def test_rename_duplicate_new_number_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+    await make_design_number(db_session, "DN-002")
+
+    errors, _ = await dn_parser.validate_rename_rows(
+        db_session, [rename_row("DN-001", "DN-003"), rename_row("DN-002", "DN-003")]
+    )
+
+    assert errors == [{"row": 2, "field": "Новый ТМЦ", "message": "Новый номер 'DN-003' уже указан в строке 1"}]
+
+
+async def test_rename_chains_and_swaps_rejected(db_session):
+    a_id = await make_design_number(db_session, "A")
+    b_id = await make_design_number(db_session, "B")
+
+    chain_errors, chain_valid = await dn_parser.validate_rename_rows(
+        db_session, [rename_row("A", "B"), rename_row("B", "C")]
+    )
+    swap_errors, swap_valid = await dn_parser.validate_rename_rows(
+        db_session, [rename_row("A", "B"), rename_row("B", "A")]
+    )
+
+    assert [old for _, old, _ in chain_valid] == ["B"]
+    assert chain_errors == [{"row": 1, "field": "Новый ТМЦ", "message": f"ТМЦ 'B' уже существует (id={b_id})"}]
+    assert swap_valid == []
+    assert swap_errors == [
+        {"row": 1, "field": "Новый ТМЦ", "message": f"ТМЦ 'B' уже существует (id={b_id})"},
+        {"row": 2, "field": "Новый ТМЦ", "message": f"ТМЦ 'A' уже существует (id={a_id})"},
+    ]

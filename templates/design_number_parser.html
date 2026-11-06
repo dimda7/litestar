@@ -86,6 +86,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
             Синхронизация counter_active
         </button>
+        <button type="button" onclick="showModal('rename')" class="btn" style="background: #00838f; color: #fff;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            Изменить ТМЦ номер
+        </button>
     </div>
 </div>
 {% endif %}
@@ -224,6 +228,11 @@
             desc.textContent = 'Добавить/удалить записи counter_active в зависимости от id_counter_group design_number';
             hint.textContent = 'Файл sync_counter_active.sql';
             btnSql.style.display = 'flex';
+        } else if (action === 'rename') {
+            title.textContent = 'Изменение ТМЦ номера';
+            desc.textContent = 'Переименовать design_number.number из колонки «Старый ТМЦ» в «Новый ТМЦ»';
+            hint.textContent = 'Файл design_number_rename.sql';
+            btnSql.style.display = 'flex';
         }
         modal.style.display = 'flex';
     }
@@ -276,6 +285,12 @@
                 execute: '/design-number-parser/sync-counter-active',
                 sqlFile: 'sync_counter_active.sql'
             };
+        } else if (currentAction === 'rename') {
+            return {
+                generateSql: '/design-number-parser/generate-sql-rename-design-number',
+                execute: '/design-number-parser/rename-design-number',
+                sqlFile: 'design_number_rename.sql'
+            };
         }
         return {
             generateSql: '/design-number-parser/generate-sql-is-serial-1c',
@@ -314,9 +329,12 @@
         document.getElementById('error-box').style.display = 'none';
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
 
-        const confirmMsg = currentAction === 'sync-counter-active'
-            ? 'Синхронизировать counter_active для всех строк? Записи будут добавлены/удалены.'
-            : 'Выполнить обновление всех строк в базе данных?';
+        let confirmMsg = 'Выполнить обновление всех строк в базе данных?';
+        if (currentAction === 'sync-counter-active') {
+            confirmMsg = 'Синхронизировать counter_active для всех строк? Записи будут добавлены/удалены.';
+        } else if (currentAction === 'rename') {
+            confirmMsg = 'Переименовать ' + ALL_ROWS.length + ' ТМЦ в базе данных?';
+        }
         if (!confirm(confirmMsg)) return;
 
         fetch(ep.execute, { method: 'POST', body: buildFormData() })

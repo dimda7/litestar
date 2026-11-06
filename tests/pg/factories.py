@@ -79,3 +79,10 @@ async def make_active(
 
 async def lcn_of(session: AsyncSession, id_active: int) -> str:
     return await session.scalar(text("SELECT lcn::text FROM public.actives WHERE id = :id"), {"id": id_active})
+
+
+async def make_design_number(session: AsyncSession, number: str) -> int:
+    return await session.scalar(
+        text("INSERT INTO public.design_number (number, is_serial) VALUES (:number, false) RETURNING id"),
+        {"number": number},
+    )

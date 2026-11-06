@@ -21,3 +21,10 @@ def update_is_serial_1c(valid_rows: list[tuple[int, str, bool]]) -> list[str]:
         f"WHERE number = '{sql_escape(number)}';"
         for _, number, is_serial_1c in valid_rows
     ]
+
+
+def rename(valid_rows: list[tuple[int, str, str]]) -> list[str]:
+    return [
+        f"UPDATE design_number SET number = '{sql_escape(new)}' WHERE number = '{sql_escape(old)}';"
+        for _, old, new in valid_rows
+    ]
