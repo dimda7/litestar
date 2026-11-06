@@ -315,18 +315,14 @@ async def validate_create_rows(
             continue
         number_rows[number] = row_num
         similar_rows[key] = row_num
-        if number in existing:
-            errors.append({"row": row_num, "field": "number",
-                           "message": f"ТМЦ {number!r} уже существует (id={existing[number]})"})
-            continue
-        if key in similar:
+        if key in similar and number not in existing:
             similar_number, similar_id = similar[key]
             errors.append({"row": row_num, "field": "number",
                            "message": f"В БД есть похожий номер {similar_number!r} (id={similar_id})"})
             continue
         fields = _parse_fields(row, row_num, catalogues, errors)
         if fields is not None:
-            valid_rows.append(design_number_sql.DesignNumberRow(id=None, number=number, **fields))
+            valid_rows.append(design_number_sql.DesignNumberRow(id=existing.get(number), number=number, **fields))
 
     return errors, valid_rows
 
@@ -1214,15 +1210,18 @@ class DesignNumberParserController(Controller):
                 media_type="application/json",
             )
 
-        sql_lines = design_number_sql.create(valid_rows)
+        snapshot = await snapshot_design_numbers(db_session, [row.id for row in valid_rows if row.id is not None])
+        sql_lines = design_number_sql.create_or_update(valid_rows)
+        created = sum(1 for row in valid_rows if row.id is None)
+        updated = len(valid_rows) - created
 
         now = datetime.now()
         log_lines = [
             f"=== Create design_number: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Rows: {len(valid_rows)}",
+            f"Rows: {len(valid_rows)} (created {created}, updated {updated})",
             "",
-            "-- Rollback (deletes the created design numbers):",
-            *design_number_sql.delete_created(valid_rows),
+            "-- Rollback (deletes the created design numbers, restores the updated ones):",
+            *design_number_sql.undo_create_or_update(valid_rows, snapshot),
             "",
             "-- Executed:",
             *sql_lines,
@@ -1244,10 +1243,11 @@ class DesignNumberParserController(Controller):
                 status_code=200,
                 media_type="application/json",
             )
-        logger.info("Created %d design numbers, log: %s", len(valid_rows), log_file)
+        logger.info("Created %d and updated %d design numbers, log: %s", created, updated, log_file)
 
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно создано {len(valid_rows)} ТМЦ"}),
+            content=json.dumps({"status": "ok", "count": len(valid_rows),
+                                "message": f"Успешно создано {created} ТМЦ, обновлено {updated} ТМЦ"}),
             status_code=200,
             media_type="application/json",
         )
@@ -1269,7 +1269,7 @@ class DesignNumberParserController(Controller):
                 media_type="application/json",
             )
 
-        sql_lines = design_number_sql.create(valid_rows)
+        sql_lines = design_number_sql.create_or_update(valid_rows)
         content = "\n".join(sql_lines)
         return Response(
             content=json.dumps({"status": "ok", "sql": content, "count": len(valid_rows)}),

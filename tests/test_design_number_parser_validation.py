@@ -583,7 +583,7 @@ async def test_create_number_format_rules(db_session):
     ]
 
 
-async def test_create_existing_and_similar_numbers_reported(db_session):
+async def test_create_existing_number_is_updated_and_similar_numbers_reported(db_session):
     existing = await make_design_number(db_session, "DN-001")
     dirty = await make_design_number(db_session, "ин-00000237\xa0")
 
@@ -592,9 +592,8 @@ async def test_create_existing_and_similar_numbers_reported(db_session):
         update_row(number="NEW-1"), update_row(number="NEW-1"), update_row(number="new-1"),
     ])
 
-    assert [r.number for r in valid_rows] == ["NEW-1"]
+    assert [(r.id, r.number) for r in valid_rows] == [(existing, "DN-001"), (None, "NEW-1")]
     assert errors == [
-        {"row": 1, "field": "number", "message": f"ТМЦ 'DN-001' уже существует (id={existing})"},
         {"row": 2, "field": "number", "message": f"В БД есть похожий номер 'ин-00000237\\xa0' (id={dirty})"},
         {"row": 3, "field": "number", "message": "Номер 'dn-001' похож на номер из строки 1"},
         {"row": 5, "field": "number", "message": "Номер 'NEW-1' уже указан в строке 4"},

@@ -248,7 +248,7 @@
             btnSql.style.display = 'flex';
         } else if (action === 'create') {
             title.textContent = 'Создание ТМЦ номера';
-            desc.textContent = 'Создать новые design_number и их связи maint_use по данным файла';
+            desc.textContent = 'Создать новые design_number, а существующие перезаписать по данным файла';
             hint.textContent = 'Файл design_number_create.sql';
             btnSql.style.display = 'flex';
         }
@@ -367,7 +367,7 @@
         } else if (currentAction === 'update') {
             confirmMsg = 'Перезаписать все поля у ' + ALL_ROWS.length + ' ТМЦ в базе данных? Старые значения сохранятся в лог.';
         } else if (currentAction === 'create') {
-            confirmMsg = 'Создать ' + ALL_ROWS.length + ' новых ТМЦ в базе данных?';
+            confirmMsg = 'Создать или обновить ' + ALL_ROWS.length + ' ТМЦ в базе данных? Старые значения сохранятся в лог.';
         }
         if (!confirm(confirmMsg)) return;
 

@@ -109,3 +109,12 @@ def delete_created(rows: list[DesignNumberRow]) -> list[str]:
                      f"WHERE id_design_number = (SELECT id FROM design_number WHERE number = {number});")
         lines.append(f"DELETE FROM design_number WHERE number = {number};")
     return lines
+
+
+def create_or_update(rows: list[DesignNumberRow]) -> list[str]:
+    return (create([row for row in rows if row.id is None])
+            + update_full([row for row in rows if row.id is not None]))
+
+
+def undo_create_or_update(rows: list[DesignNumberRow], snapshot: list[DesignNumberRow]) -> list[str]:
+    return delete_created([row for row in rows if row.id is None]) + update_full(snapshot)

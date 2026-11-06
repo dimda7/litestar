@@ -149,3 +149,27 @@ async def test_create_inserts_numbers_with_links_and_the_rollback_removes_them(p
     assert await id_of(pg_session, f"{TEST_PREFIX}-NEW-2") is None
     assert await pg_session.scalar(text(
         "SELECT count(*) FROM public.design_number_to_maint_use WHERE id_design_number = :id"), {"id": first}) == 0
+
+
+async def test_create_updates_existing_numbers_and_the_rollback_restores_them(pg_session):
+    id_existing = await make_design_number(pg_session, f"{TEST_PREFIX}-OLD-1")
+    await pg_session.execute(text(
+        "UPDATE public.design_number SET description = 'old', main_number = 'M-1' WHERE id = :id"), {"id": id_existing})
+    await link_maint_use(pg_session, id_existing, "REV")
+    before = await state_of(pg_session, id_existing)
+    rows = [full_row(f"{TEST_PREFIX}-OLD-1", description="new", maint_use="CM", is_serial="True"),
+            full_row(f"{TEST_PREFIX}-NEW-3", description="created")]
+
+    errors, valid_rows = await validate_create_rows(pg_session, rows)
+    snapshot = await snapshot_design_numbers(pg_session, [r.id for r in valid_rows if r.id is not None])
+    await run_generated_sql(pg_session, "\n".join(design_number_sql.create_or_update(valid_rows)))
+
+    assert errors == []
+    (description, *_), links = await state_of(pg_session, id_existing)
+    assert (description, links) == ("new", ["CM"])
+    assert await id_of(pg_session, f"{TEST_PREFIX}-NEW-3") is not None
+
+    await run_generated_sql(pg_session, "\n".join(design_number_sql.undo_create_or_update(valid_rows, snapshot)))
+
+    assert await state_of(pg_session, id_existing) == before
+    assert await id_of(pg_session, f"{TEST_PREFIX}-NEW-3") is None
