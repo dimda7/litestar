@@ -4,8 +4,8 @@ from sql_utils import sql_escape
 
 
 @dataclass(frozen=True)
-class DesignNumberUpdate:
-    id: int
+class DesignNumberRow:
+    id: int | None
     number: str
     description: str | None
     id_unit_type: int | None
@@ -63,21 +63,49 @@ def _literal(value: str | int | bool | None) -> str:
     return f"'{sql_escape(value)}'"
 
 
-def update_full(rows: list[DesignNumberUpdate]) -> list[str]:
+def _data_columns(row: DesignNumberRow) -> list[tuple[str, str | int | bool | None]]:
+    return [(field.name, getattr(row, field.name))
+            for field in fields(row) if field.name not in ("id", "number", "maint_use_ids")]
+
+
+def _insert_links(row: DesignNumberRow, on_conflict: str = "") -> list[str]:
+    number = _literal(row.number)
+    return [
+        f"INSERT INTO design_number_to_maint_use (id_design_number, id_maint_use) "
+        f"SELECT id, {id_maint_use} FROM design_number WHERE number = {number}{on_conflict};"
+        for id_maint_use in row.maint_use_ids
+    ]
+
+
+def update_full(rows: list[DesignNumberRow]) -> list[str]:
     lines: list[str] = []
     for row in rows:
         number = _literal(row.number)
-        assignments = ", ".join(
-            f"{field.name} = {_literal(getattr(row, field.name))}"
-            for field in fields(row) if field.name not in ("id", "number", "maint_use_ids")
-        )
+        assignments = ", ".join(f"{column} = {_literal(value)}" for column, value in _data_columns(row))
         lines.append(f"UPDATE design_number SET {assignments} WHERE number = {number};")
         id_design_number = f"(SELECT id FROM design_number WHERE number = {number})"
         kept = f" AND id_maint_use NOT IN ({', '.join(map(str, row.maint_use_ids))})" if row.maint_use_ids else ""
         lines.append(f"DELETE FROM design_number_to_maint_use WHERE id_design_number = {id_design_number}{kept};")
-        lines.extend(
-            f"INSERT INTO design_number_to_maint_use (id_design_number, id_maint_use) "
-            f"SELECT id, {id_maint_use} FROM design_number WHERE number = {number} ON CONFLICT DO NOTHING;"
-            for id_maint_use in row.maint_use_ids
-        )
+        lines.extend(_insert_links(row, " ON CONFLICT DO NOTHING"))
+    return lines
+
+
+def create(rows: list[DesignNumberRow]) -> list[str]:
+    lines: list[str] = []
+    for row in rows:
+        columns = _data_columns(row)
+        names = ", ".join(column for column, _ in columns)
+        values = ", ".join(_literal(value) for _, value in columns)
+        lines.append(f"INSERT INTO design_number (number, {names}) VALUES ({_literal(row.number)}, {values});")
+        lines.extend(_insert_links(row))
+    return lines
+
+
+def delete_created(rows: list[DesignNumberRow]) -> list[str]:
+    lines: list[str] = []
+    for row in rows:
+        number = _literal(row.number)
+        lines.append(f"DELETE FROM design_number_to_maint_use "
+                     f"WHERE id_design_number = (SELECT id FROM design_number WHERE number = {number});")
+        lines.append(f"DELETE FROM design_number WHERE number = {number};")
     return lines

@@ -7,7 +7,7 @@ from controllers.design_number_parser import DesignNumberParserController
 from models import (
     CommodityCode, CommodityGroup, CounterGroup, DesignNumberStatus, MaintUse, MeasureType, ProductGroup, UnitType,
 )
-from sql_builders.design_number import DesignNumberUpdate
+from sql_builders.design_number import DesignNumberRow
 from tests.conftest import make_counter_group, make_design_number, make_unit_type
 
 
@@ -379,7 +379,7 @@ async def test_update_full_row_resolves_every_column(db_session):
     errors, valid_rows = await dn_parser.validate_update_rows(db_session, [row])
 
     assert errors == []
-    assert valid_rows == [DesignNumberUpdate(
+    assert valid_rows == [DesignNumberRow(
         id=dn_id, number="DN-001", description="Ось", id_unit_type=refs["unit_type"], is_serial=True,
         is_created_1c=False, id_commodity_group=refs["commodity_group"], id_commodity_code=refs["commodity_code"],
         id_design_number_status=refs["status"], id_measure_type=refs["measure"], is_repairable=True,
@@ -552,3 +552,76 @@ async def test_update_duplicate_measure_type_prefers_code_1c_then_max_id(db_sess
 
     assert errors == []
     assert [r.id_measure_type for r in valid_rows] == [with_code, both_coded_max, none_coded_max]
+
+
+# --- validate_create_rows ----------------------------------------------------
+
+async def test_create_new_number_passes_without_id(db_session):
+    measure = await make_ref(db_session, MeasureType, name="шт")
+
+    errors, valid_rows = await dn_parser.validate_create_rows(
+        db_session, [update_row(number="DN-NEW", description=" Ось ", measure_type="шт", is_serial="True")]
+    )
+
+    assert errors == []
+    assert [(r.id, r.number, r.description, r.id_measure_type, r.is_serial) for r in valid_rows] == [
+        (None, "DN-NEW", "Ось", measure, True)]
+
+
+async def test_create_number_format_rules(db_session):
+    errors, valid_rows = await dn_parser.validate_create_rows(db_session, [
+        update_row(number=None), update_row(number="DN-1 "), update_row(number="DN-\xa02"),
+        update_row(number="X" * 33), update_row(number="X" * 32),
+    ])
+
+    assert [r.number for r in valid_rows] == ["X" * 32]
+    assert errors == [
+        {"row": 1, "field": "number", "message": "Поле 'number' пустое"},
+        {"row": 2, "field": "number", "message": "Номер содержит пробельные символы: 'DN-1 '"},
+        {"row": 3, "field": "number", "message": "Номер содержит пробельные символы: 'DN-\\xa02'"},
+        {"row": 4, "field": "number", "message": f"Номер длиннее 32 символов (33): {'X' * 33!r}"},
+    ]
+
+
+async def test_create_existing_and_similar_numbers_reported(db_session):
+    existing = await make_design_number(db_session, "DN-001")
+    dirty = await make_design_number(db_session, "ин-00000237\xa0")
+
+    errors, valid_rows = await dn_parser.validate_create_rows(db_session, [
+        update_row(number="DN-001"), update_row(number="ИН-00000237"), update_row(number="dn-001"),
+        update_row(number="NEW-1"), update_row(number="NEW-1"), update_row(number="new-1"),
+    ])
+
+    assert [r.number for r in valid_rows] == ["NEW-1"]
+    assert errors == [
+        {"row": 1, "field": "number", "message": f"ТМЦ 'DN-001' уже существует (id={existing})"},
+        {"row": 2, "field": "number", "message": f"В БД есть похожий номер 'ин-00000237\\xa0' (id={dirty})"},
+        {"row": 3, "field": "number", "message": "Номер 'dn-001' похож на номер из строки 1"},
+        {"row": 5, "field": "number", "message": "Номер 'NEW-1' уже указан в строке 4"},
+        {"row": 6, "field": "number", "message": "Номер 'new-1' похож на номер из строки 4"},
+    ]
+
+
+async def test_create_applies_the_shared_field_rules(db_session):
+    row = update_row(number="DN-NEW", measure_type="боб", is_serial="NULL")
+    no_headers = update_row(number="DN-NEW")
+    del no_headers["maint_use"]
+
+    errors, valid_rows = await dn_parser.validate_create_rows(db_session, [row])
+    header_errors, _ = await dn_parser.validate_create_rows(db_session, [no_headers])
+
+    assert valid_rows == []
+    assert errors == [
+        {"row": 1, "field": "measure_type", "message": "measure_type не найден: 'боб'"},
+        {"row": 1, "field": "is_serial", "message": "Поле 'is_serial' не может быть NULL"},
+    ]
+    assert header_errors == [{"row": 0, "field": "*", "message": "В файле нет колонок: maint_use"}]
+
+
+async def test_create_null_text_number_is_empty(db_session):
+    errors, valid_rows = await dn_parser.validate_create_rows(db_session, [update_row(number="NULL"),
+                                                                            update_row(number="null"),
+                                                                            update_row(number="   ")])
+
+    assert valid_rows == []
+    assert [e["message"] for e in errors] == ["Поле 'number' пустое"] * 3

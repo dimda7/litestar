@@ -2,7 +2,9 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from controllers.design_number_parser import snapshot_design_numbers, validate_rename_rows, validate_update_rows
+from controllers.design_number_parser import (
+    snapshot_design_numbers, validate_create_rows, validate_rename_rows, validate_update_rows,
+)
 from sql_builders import design_number as design_number_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import TEST_PREFIX, make_design_number
@@ -112,3 +114,38 @@ async def test_update_full_of_the_snapshot_rolls_the_update_back(pg_session):
     await run_generated_sql(pg_session, "\n".join(design_number_sql.update_full(snapshot)))
 
     assert await state_of(pg_session, id_dn) == before
+
+
+async def id_of(session: AsyncSession, number: str) -> int | None:
+    return await session.scalar(text("SELECT id FROM public.design_number WHERE number = :n"), {"n": number})
+
+
+async def test_create_inserts_numbers_with_links_and_the_rollback_removes_them(pg_session):
+    max_id = await pg_session.scalar(text("SELECT max(id) FROM public.design_number"))
+    rows = [
+        full_row(f"{TEST_PREFIX}-NEW-1", description="Ось 'A' \"Б\"", is_serial="True", measure_type="шт",
+                 is_repairable="False", counter_group="KM", maint_use="CM,TOOLS", is_serial_1c="True"),
+        full_row(f"{TEST_PREFIX}-NEW-2"),
+    ]
+
+    errors, valid_rows = await validate_create_rows(pg_session, rows)
+    await run_generated_sql(pg_session, "\n".join(design_number_sql.create(valid_rows)))
+
+    assert errors == []
+    first, second = await id_of(pg_session, f"{TEST_PREFIX}-NEW-1"), await id_of(pg_session, f"{TEST_PREFIX}-NEW-2")
+    assert first > max_id and second > max_id
+    (description, _, is_serial, _, _, _, _, id_measure_type, is_repairable, _, _, _, id_counter_group,
+     is_serial_1c), links = await state_of(pg_session, first)
+    assert (description, is_serial, is_repairable, is_serial_1c, links) == (
+        "Ось 'A' \"Б\"", True, False, True, ["CM", "TOOLS"])
+    assert id_measure_type == await pg_session.scalar(
+        text("SELECT max(id) FROM public.measure_type WHERE name = 'шт'"))
+    assert id_counter_group == await pg_session.scalar(text("SELECT id FROM public.counter_group WHERE name = 'KM'"))
+    assert await state_of(pg_session, second) == ((None,) * 2 + (False, None) + (None,) * 9 + (False,), [])
+
+    await run_generated_sql(pg_session, "\n".join(design_number_sql.delete_created(valid_rows)))
+
+    assert await id_of(pg_session, f"{TEST_PREFIX}-NEW-1") is None
+    assert await id_of(pg_session, f"{TEST_PREFIX}-NEW-2") is None
+    assert await pg_session.scalar(text(
+        "SELECT count(*) FROM public.design_number_to_maint_use WHERE id_design_number = :id"), {"id": first}) == 0

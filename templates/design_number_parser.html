@@ -94,6 +94,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
             Обновить ТМЦ номер
         </button>
+        <button type="button" onclick="showModal('create')" class="btn" style="background: #2e7d32; color: #fff;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            Создать ТМЦ номер
+        </button>
     </div>
 </div>
 {% endif %}
@@ -242,6 +246,11 @@
             desc.textContent = 'Перезаписать все поля design_number и связи maint_use по данным файла';
             hint.textContent = 'Файл design_number_update.sql';
             btnSql.style.display = 'flex';
+        } else if (action === 'create') {
+            title.textContent = 'Создание ТМЦ номера';
+            desc.textContent = 'Создать новые design_number и их связи maint_use по данным файла';
+            hint.textContent = 'Файл design_number_create.sql';
+            btnSql.style.display = 'flex';
         }
         modal.style.display = 'flex';
     }
@@ -306,6 +315,12 @@
                 execute: '/design-number-parser/update-design-number',
                 sqlFile: 'design_number_update.sql'
             };
+        } else if (currentAction === 'create') {
+            return {
+                generateSql: '/design-number-parser/generate-sql-create-design-number',
+                execute: '/design-number-parser/create-design-number',
+                sqlFile: 'design_number_create.sql'
+            };
         }
         return {
             generateSql: '/design-number-parser/generate-sql-is-serial-1c',
@@ -351,6 +366,8 @@
             confirmMsg = 'Переименовать ' + ALL_ROWS.length + ' ТМЦ в базе данных?';
         } else if (currentAction === 'update') {
             confirmMsg = 'Перезаписать все поля у ' + ALL_ROWS.length + ' ТМЦ в базе данных? Старые значения сохранятся в лог.';
+        } else if (currentAction === 'create') {
+            confirmMsg = 'Создать ' + ALL_ROWS.length + ' новых ТМЦ в базе данных?';
         }
         if (!confirm(confirmMsg)) return;
 
