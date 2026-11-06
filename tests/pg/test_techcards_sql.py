@@ -67,13 +67,13 @@ async def test_techcards_are_created_with_status_and_specifications(pg_session):
     assert [{k: v for k, v in r.items() if k != "date_status"} for r in created] == [
         {"name": names[0], "description": "Инспекция I5", "description_full": "<p>O'Brien: :1 &quot;</p>",
          "work_type": "PM", "priority": 3, "brigade": "SERVICE", "use_only_main_ptoir": True,
-         "classifier_type": "RUS_INSPECTION", "use_for_order": True, "id_users": 505,
-         "status": "ACTIVE", "status_points_back": True, "status_user": 505,
+         "classifier_type": "RUS_INSPECTION", "use_for_order": True, "id_users": None,
+         "status": "ACTIVE", "status_points_back": True, "status_user": None,
          "specifications": ["Большой", "И5", "ЭС1"]},
         {"name": names[1], "description": "Инспекция I5", "description_full": None,
          "work_type": "PM", "priority": None, "brigade": None, "use_only_main_ptoir": False,
-         "classifier_type": "RUS_INSPECTION", "use_for_order": True, "id_users": 505,
-         "status": "ACTIVE", "status_points_back": True, "status_user": 505,
+         "classifier_type": "RUS_INSPECTION", "use_for_order": True, "id_users": None,
+         "status": "ACTIVE", "status_points_back": True, "status_user": None,
          "specifications": ["И5", "ЭС1"]},
     ]
     assert all(r["date_status"] == moscow_now for r in created)
@@ -121,7 +121,7 @@ async def test_techcard_without_status(pg_session):
         "       (SELECT count(*) FROM public.techcard_status s WHERE s.techcard_number = t.id) AS statuses, "
         "       (SELECT count(*) FROM public.techcard_to_specification tts WHERE tts.id_techcard = t.id) AS specs "
         "FROM public.techcard t WHERE t.name = :name"), {"name": name})).mappings().one()
-    assert dict(created) == {"id_techcard_status": None, "id_users": 505, "statuses": 0, "specs": 3}
+    assert dict(created) == {"id_techcard_status": None, "id_users": None, "statuses": 0, "specs": 3}
 
 
 async def test_techcard_without_classifier_type(pg_session):

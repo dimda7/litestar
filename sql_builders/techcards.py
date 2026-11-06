@@ -1,6 +1,5 @@
 from sql_utils import sql_escape
 
-TECHCARD_USER_ID = 505
 # What most existing operations carry; the file has no labour hours.
 OPERATION_WORKING_HOURS = 0
 
@@ -31,7 +30,7 @@ def create(valid_rows: list[dict]) -> list[str]:
             "use_only_main_ptoir": vr["use_only_main_ptoir"],
             "id_classifier_type": vr["id_classifier_type"],
             "use_for_order": True,
-            "id_users": TECHCARD_USER_ID,
+            "id_users": None,
         }
         specifications = ""
         if vr["specification_ids"]:
@@ -49,7 +48,7 @@ def create(valid_rows: list[dict]) -> list[str]:
                 ", status AS (INSERT INTO public.techcard_status "
                 "(id, techcard_number, id_techcard_status_types, date_status, id_users) "
                 f"SELECT id_status, id_techcard, {vr['id_status_type']}, now() AT TIME ZONE 'Europe/Moscow', "
-                f"{TECHCARD_USER_ID} FROM ids)"
+                "NULL FROM ids)"
             )
         sql_lines.append(
             "WITH ids AS (SELECT nextval('public.techcard_id_seq') AS id_techcard, "
