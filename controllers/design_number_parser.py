@@ -4,13 +4,17 @@ from datetime import datetime
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 from litestar import Controller, get, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
-from models import DesignNumber, CounterGroup, UnitType
+from models import (
+    CommodityCode, CommodityGroup, CounterGroup, DesignNumber, DesignNumberStatus, DesignNumberToMaintUse, MaintUse,
+    MeasureType, ProductGroup, UnitType,
+)
 from schemas import DesignNumberSelectSheetRequest
 import excel_upload
 from parser_storage import LOG_DIR
@@ -96,6 +100,166 @@ async def validate_rename_rows(
         valid_rows.append((dn_id, old, new))
 
     return errors, valid_rows
+
+
+# File column -> catalogue column its value is looked up in.
+UPDATE_REFERENCES = {
+    "unit_type": UnitType.name,
+    "commodity_group": CommodityGroup.name,
+    "commodity_code": CommodityCode.name,
+    "design_number_status": DesignNumberStatus.status,
+    "measure_type": MeasureType.name,
+    "product_group": ProductGroup.name,
+    "counter_group": CounterGroup.name,
+}
+# public.unit_type 'Поезд': a train has neither is_repairable nor a measure type.
+TRAIN_UNIT_TYPE_ID = 1
+UPDATE_HEADERS = (
+    "number", "description", "unit_type", "is_serial", "is_created_1c", "commodity_group", "commodity_code",
+    "design_number_status", "measure_type", "is_repairable", "product_group", "description_1c", "main_number",
+    "counter_group", "maint_use", "is_serial_1c",
+)
+TRUE_VALUES = ("true", "1", "да")
+FALSE_VALUES = ("false", "0", "нет")
+UPDATE_FLAGS = ("is_serial", "is_created_1c", "is_repairable", "is_serial_1c")
+NOT_NULL_FLAGS = ("is_serial", "is_serial_1c")
+
+
+def _cell_text(value: object) -> str:
+    # Excel cells arrive with their native types: FALSE and 0 must not read as empty.
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _cell(row: dict, column: str) -> str | None:
+    value = _cell_text(row.get(column)).strip()
+    return None if value == "" or value.upper() == "NULL" else value
+
+
+async def _catalogue(db_session: AsyncSession, name_column: InstrumentedAttribute[str | None]) -> dict[str, list[int]]:
+    model = name_column.class_
+    ids: dict[str, list[int]] = {}
+    for id_, name in (await db_session.execute(select(model.id, name_column))).all():
+        if name:
+            ids.setdefault(name.strip().lower(), []).append(id_)
+    return ids
+
+
+def _lookup(catalogue: dict[str, list[int]], value: str, row_num: int, column: str, errors: list[dict]) -> int | None:
+    ids = catalogue.get(value.lower(), [])
+    if len(ids) == 1:
+        return ids[0]
+    message = f"{column} не найден: {value!r}" if not ids else f"{column} неоднозначен: {value!r} (записей: {len(ids)})"
+    errors.append({"row": row_num, "field": column, "message": message})
+    return None
+
+
+async def validate_update_rows(
+    db_session: AsyncSession, rows: list[dict]
+) -> tuple[list[dict], list[design_number_sql.DesignNumberUpdate]]:
+    errors: list[dict] = []
+    valid_rows: list[design_number_sql.DesignNumberUpdate] = []
+
+    missing = [header for header in UPDATE_HEADERS if rows and header not in rows[0]]
+    if missing:
+        return [{"row": 0, "field": "*", "message": f"В файле нет колонок: {', '.join(missing)}"}], []
+
+    catalogues = {column: await _catalogue(db_session, name_column) for column, name_column in UPDATE_REFERENCES.items()}
+    maint_uses = await _catalogue(db_session, MaintUse.name)
+    numbers = [_cell_text(row.get("number")) for row in rows]
+    dn_ids = dict((await db_session.execute(
+        select(DesignNumber.number, DesignNumber.id).where(DesignNumber.number.in_(numbers))
+    )).all())
+
+    number_rows: dict[str, int] = {}
+
+    for idx, row in enumerate(rows):
+        row_num = idx + 1
+        number = numbers[idx]
+        if not number:
+            errors.append({"row": row_num, "field": "number", "message": "Поле 'number' пустое"})
+            continue
+        if number in number_rows:
+            errors.append({"row": row_num, "field": "number",
+                           "message": f"Номер {number!r} уже указан в строке {number_rows[number]}"})
+            continue
+        number_rows[number] = row_num
+        if number not in dn_ids:
+            errors.append({"row": row_num, "field": "number", "message": f"design_number не найден: {number!r}"})
+            continue
+        row_errors: list[dict] = []
+        refs: dict[str, int | None] = {}
+        for column in UPDATE_REFERENCES:
+            value = _cell(row, column)
+            refs[column] = _lookup(catalogues[column], value, row_num, column, row_errors) if value else None
+        flags: dict[str, bool | None] = {}
+        for column in UPDATE_FLAGS:
+            value = _cell(row, column)
+            if value is None:
+                flags[column] = None
+                if column in NOT_NULL_FLAGS:
+                    row_errors.append({"row": row_num, "field": column, "message": f"Поле '{column}' не может быть NULL"})
+            elif value.lower() in TRUE_VALUES + FALSE_VALUES:
+                flags[column] = value.lower() in TRUE_VALUES
+            else:
+                row_errors.append({"row": row_num, "field": column,
+                                   "message": f"Неверное значение {column}: {value!r} (ожидается true/false)"})
+        if refs["unit_type"] == TRAIN_UNIT_TYPE_ID:
+            for column in ("is_repairable", "measure_type"):
+                if _cell(row, column) is not None:
+                    row_errors.append({"row": row_num, "field": column,
+                                       "message": f"Для unit_type 'Поезд' поле '{column}' должно быть NULL"})
+        maint_use_ids: list[int] = []
+        for item in (_cell(row, "maint_use") or "").split(","):
+            if item.strip():
+                id_maint_use = _lookup(maint_uses, item.strip(), row_num, "maint_use", row_errors)
+                if id_maint_use is not None and id_maint_use not in maint_use_ids:
+                    maint_use_ids.append(id_maint_use)
+        if row_errors:
+            errors.extend(row_errors)
+            continue
+        valid_rows.append(design_number_sql.DesignNumberUpdate(
+            id=dn_ids[number], number=number, description=_cell(row, "description"),
+            id_unit_type=refs["unit_type"], is_serial=flags["is_serial"], is_created_1c=flags["is_created_1c"],
+            id_commodity_group=refs["commodity_group"], id_commodity_code=refs["commodity_code"],
+            id_design_number_status=refs["design_number_status"], id_measure_type=refs["measure_type"],
+            is_repairable=flags["is_repairable"], id_product_group=refs["product_group"],
+            description_1c=_cell(row, "description_1c"), main_number=_cell(row, "main_number"),
+            id_counter_group=refs["counter_group"], is_serial_1c=flags["is_serial_1c"], maint_use_ids=tuple(maint_use_ids),
+        ))
+
+    return errors, valid_rows
+
+
+async def snapshot_design_numbers(
+    db_session: AsyncSession, ids: list[int]
+) -> list[design_number_sql.DesignNumberUpdate]:
+    links: dict[int, list[int]] = {}
+    for id_design_number, id_maint_use in (await db_session.execute(
+        select(DesignNumberToMaintUse.id_design_number, DesignNumberToMaintUse.id_maint_use)
+        .where(DesignNumberToMaintUse.id_design_number.in_(ids))
+        .order_by(DesignNumberToMaintUse.id_maint_use)
+    )).all():
+        links.setdefault(id_design_number, []).append(id_maint_use)
+    design_numbers = (await db_session.execute(
+        select(DesignNumber).where(DesignNumber.id.in_(ids)).order_by(DesignNumber.id)
+    )).scalars().all()
+    return [
+        design_number_sql.DesignNumberUpdate(
+            id=dn.id, number=dn.number, description=dn.description, id_unit_type=dn.id_unit_type,
+            is_serial=dn.is_serial, is_created_1c=dn.is_created_1c, id_commodity_group=dn.id_commodity_group,
+            id_commodity_code=dn.id_commodity_code, id_design_number_status=dn.id_design_number_status,
+            id_measure_type=dn.id_measure_type, is_repairable=dn.is_repairable, id_product_group=dn.id_product_group,
+            description_1c=dn.description_1c, main_number=dn.main_number, id_counter_group=dn.id_counter_group,
+            is_serial_1c=dn.is_serial_1c, maint_use_ids=tuple(links.get(dn.id, [])),
+        )
+        for dn in design_numbers
+    ]
 
 
 class DesignNumberParserController(Controller):
@@ -837,6 +1001,96 @@ class DesignNumberParserController(Controller):
         content = "\n".join(sql_lines)
         return Response(
             content=json.dumps({"status": "ok", "sql": content, "count": len(sql_lines)}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    @post("/update-design-number")
+    async def update_design_number(
+        self,
+        request: Request,
+        db_session: AsyncSession,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        errors, valid_rows = await validate_update_rows(db_session, rows)
+
+        if errors:
+            return Response(
+                content=json.dumps({"status": "error", "errors": errors}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        if not valid_rows:
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        snapshot = await snapshot_design_numbers(db_session, [row.id for row in valid_rows])
+        sql_lines = design_number_sql.update_full(valid_rows)
+
+        # Written before execution: the overwrite is irreversible, so the
+        # rollback SQL has to exist even if the run itself fails half-way.
+        now = datetime.now()
+        log_lines = [
+            f"=== Update design_number: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Rows: {len(valid_rows)}",
+            "",
+            "-- Rollback (state before the update):",
+            *design_number_sql.update_full(snapshot),
+            "",
+            "-- Executed:",
+            *sql_lines,
+            "",
+        ]
+        log_file = LOG_DIR / f"update_design_number_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+
+        try:
+            conn = await db_session.connection()
+            raw_conn = await conn.get_raw_connection()
+            await raw_conn.driver_connection.execute("\n".join(sql_lines))
+            await db_session.commit()
+        except Exception as e:
+            await db_session.rollback()
+            return Response(
+                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+        logger.info("Updated %d design numbers, log: %s", len(valid_rows), log_file)
+
+        return Response(
+            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено {len(valid_rows)} ТМЦ"}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    @post("/generate-sql-update-design-number")
+    async def generate_sql_update_design_number(
+        self,
+        request: Request,
+        db_session: AsyncSession,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        errors, valid_rows = await validate_update_rows(db_session, rows)
+
+        if errors:
+            return Response(
+                content=json.dumps({"status": "error", "errors": errors}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        sql_lines = design_number_sql.update_full(valid_rows)
+        content = "\n".join(sql_lines)
+        return Response(
+            content=json.dumps({"status": "ok", "sql": content, "count": len(valid_rows)}),
             status_code=200,
             media_type="application/json",
         )

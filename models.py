@@ -51,8 +51,74 @@ class DesignNumber(Base):
     number: Mapped[str | None] = mapped_column(String, nullable=True)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     id_unit_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_serial: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_created_1c: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    id_commodity_group: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_commodity_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_design_number_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_measure_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_repairable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    id_product_group: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    description_1c: Mapped[str | None] = mapped_column(String, nullable=True)
+    main_number: Mapped[str | None] = mapped_column(String, nullable=True)
     id_counter_group: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_serial_1c: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+
+
+class DesignNumberToMaintUse(Base):
+    __tablename__ = "design_number_to_maint_use"
+    __table_args__ = {"schema": "public"}
+
+    id_design_number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id_maint_use: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class CommodityGroup(Base):
+    __tablename__ = "commodity_group"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class CommodityCode(Base):
+    __tablename__ = "commodity_code"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class DesignNumberStatus(Base):
+    __tablename__ = "design_number_status"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class MeasureType(Base):
+    __tablename__ = "measure_type"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ProductGroup(Base):
+    __tablename__ = "product_group"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class MaintUse(Base):
+    __tablename__ = "maint_use"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class CounterGroup(Base):

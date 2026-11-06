@@ -4,6 +4,10 @@ import pytest
 
 from controllers import design_number_parser as dn_parser
 from controllers.design_number_parser import DesignNumberParserController
+from models import (
+    CommodityCode, CommodityGroup, CounterGroup, DesignNumberStatus, MaintUse, MeasureType, ProductGroup, UnitType,
+)
+from sql_builders.design_number import DesignNumberUpdate
 from tests.conftest import make_counter_group, make_design_number, make_unit_type
 
 
@@ -329,3 +333,201 @@ async def test_rename_chains_and_swaps_rejected(db_session):
         {"row": 1, "field": "Новый ТМЦ", "message": f"ТМЦ 'B' уже существует (id={b_id})"},
         {"row": 2, "field": "Новый ТМЦ", "message": f"ТМЦ 'A' уже существует (id={a_id})"},
     ]
+
+
+# --- validate_update_rows ----------------------------------------------------
+
+async def make_ref(db_session, model, **columns) -> int:
+    obj = model(**columns)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+def update_row(**overrides) -> dict:
+    row = {
+        "number": "DN-001", "description": "NULL", "unit_type": "NULL", "is_serial": "False",
+        "is_created_1c": "NULL", "commodity_group": "NULL", "commodity_code": "NULL",
+        "design_number_status": "NULL", "measure_type": "NULL", "is_repairable": "NULL",
+        "product_group": "NULL", "description_1c": "NULL", "main_number": "NULL", "counter_group": "NULL",
+        "maint_use": "NULL", "is_serial_1c": "False",
+    }
+    row.update(overrides)
+    return row
+
+
+async def test_update_full_row_resolves_every_column(db_session):
+    dn_id = await make_design_number(db_session, "DN-001")
+    refs = {
+        "unit_type": await make_ref(db_session, UnitType, id=5, name="Вагон"),
+        "commodity_group": await make_ref(db_session, CommodityGroup, name="SPARES"),
+        "commodity_code": await make_ref(db_session, CommodityCode, name="CARBODY"),
+        "status": await make_ref(db_session, DesignNumberStatus, status="ACTIVE"),
+        "measure": await make_ref(db_session, MeasureType, name="шт"),
+        "product_group": await make_ref(db_session, ProductGroup, name="HE"),
+        "counter_group": await make_ref(db_session, CounterGroup, name="KM"),
+        "cm": await make_ref(db_session, MaintUse, name="CM"),
+        "tools": await make_ref(db_session, MaintUse, name="TOOLS"),
+    }
+    row = update_row(
+        description="Ось", unit_type="Вагон", is_serial="True", is_created_1c="False", commodity_group="SPARES",
+        commodity_code="CARBODY", design_number_status="ACTIVE", measure_type="шт", is_repairable="True",
+        product_group="HE", description_1c="ОСЬ 1С", main_number="A2V0001", counter_group="KM",
+        maint_use="CM,TOOLS", is_serial_1c="True",
+    )
+
+    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [row])
+
+    assert errors == []
+    assert valid_rows == [DesignNumberUpdate(
+        id=dn_id, number="DN-001", description="Ось", id_unit_type=refs["unit_type"], is_serial=True,
+        is_created_1c=False, id_commodity_group=refs["commodity_group"], id_commodity_code=refs["commodity_code"],
+        id_design_number_status=refs["status"], id_measure_type=refs["measure"], is_repairable=True,
+        id_product_group=refs["product_group"], description_1c="ОСЬ 1С", main_number="A2V0001",
+        id_counter_group=refs["counter_group"], is_serial_1c=True,
+        maint_use_ids=(refs["cm"], refs["tools"]),
+    )]
+
+
+async def test_update_missing_headers_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+    row = update_row()
+    del row["maint_use"], row["is_serial_1c"]
+
+    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [row])
+
+    assert valid_rows == []
+    assert errors == [{"row": 0, "field": "*", "message": "В файле нет колонок: maint_use, is_serial_1c"}]
+
+
+async def test_update_number_must_exist_exactly_and_once(db_session):
+    dn_id = await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [
+        update_row(number="DN-001"), update_row(number="DN-001 "), update_row(number="DN-001"),
+        update_row(number=None),
+    ])
+
+    assert [r.id for r in valid_rows] == [dn_id]
+    assert errors == [
+        {"row": 2, "field": "number", "message": "design_number не найден: 'DN-001 '"},
+        {"row": 3, "field": "number", "message": "Номер 'DN-001' уже указан в строке 1"},
+        {"row": 4, "field": "number", "message": "Поле 'number' пустое"},
+    ]
+
+
+async def test_update_references_matched_case_and_whitespace_insensitively(db_session):
+    await make_design_number(db_session, "DN-001")
+    wheelset = await make_ref(db_session, UnitType, id=7, name="Колесная\xa0пара")
+    measure = await make_ref(db_session, MeasureType, name="шт")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(
+        db_session, [update_row(unit_type=" колесная\xa0ПАРА ", measure_type="ШТ")]
+    )
+
+    assert errors == []
+    assert (valid_rows[0].id_unit_type, valid_rows[0].id_measure_type) == (wheelset, measure)
+
+
+async def test_update_unknown_and_ambiguous_references_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+    await make_ref(db_session, ProductGroup, name="HE")
+    await make_ref(db_session, ProductGroup, name="he")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(
+        db_session, [update_row(measure_type="боб", product_group="HE", design_number_status="NEW")]
+    )
+
+    assert valid_rows == []
+    assert errors == [
+        {"row": 1, "field": "design_number_status", "message": "design_number_status не найден: 'NEW'"},
+        {"row": 1, "field": "measure_type", "message": "measure_type не найден: 'боб'"},
+        {"row": 1, "field": "product_group", "message": "product_group неоднозначен: 'HE' (записей: 2)"},
+    ]
+
+
+async def test_update_maint_use_list_parsed_and_unknown_item_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+    await make_design_number(db_session, "DN-002")
+    cm = await make_ref(db_session, MaintUse, name="CM")
+    tools = await make_ref(db_session, MaintUse, name="TOOLS")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [
+        update_row(number="DN-001", maint_use=" tools , CM,TOOLS"),
+        update_row(number="DN-002", maint_use="CM,XX"),
+    ])
+
+    assert [r.maint_use_ids for r in valid_rows] == [(tools, cm)]
+    assert errors == [{"row": 2, "field": "maint_use", "message": "maint_use не найден: 'XX'"}]
+
+
+async def test_update_booleans_parsed(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(
+        db_session, [update_row(is_serial="ДА", is_created_1c="0", is_repairable=" null ", is_serial_1c="TRUE")]
+    )
+
+    assert errors == []
+    row = valid_rows[0]
+    assert (row.is_serial, row.is_created_1c, row.is_repairable, row.is_serial_1c) == (True, False, None, True)
+
+
+async def test_update_invalid_booleans_and_null_in_not_null_reported(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(
+        db_session, [update_row(is_serial="NULL", is_created_1c="yes", is_serial_1c="")]
+    )
+
+    assert valid_rows == []
+    assert errors == [
+        {"row": 1, "field": "is_serial", "message": "Поле 'is_serial' не может быть NULL"},
+        {"row": 1, "field": "is_created_1c",
+         "message": "Неверное значение is_created_1c: 'yes' (ожидается true/false)"},
+        {"row": 1, "field": "is_serial_1c", "message": "Поле 'is_serial_1c' не может быть NULL"},
+    ]
+
+
+async def test_update_train_unit_type_requires_null_repairable_and_measure(db_session):
+    await make_design_number(db_session, "DN-001")
+    await make_design_number(db_session, "DN-002")
+    await make_ref(db_session, UnitType, id=1, name="Поезд")
+    await make_ref(db_session, MeasureType, name="шт")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [
+        update_row(number="DN-001", unit_type="Поезд", is_repairable="False", measure_type="шт"),
+        update_row(number="DN-002", unit_type="Поезд"),
+    ])
+
+    assert [r.number for r in valid_rows] == ["DN-002"]
+    assert errors == [
+        {"row": 1, "field": "is_repairable", "message": "Для unit_type 'Поезд' поле 'is_repairable' должно быть NULL"},
+        {"row": 1, "field": "measure_type", "message": "Для unit_type 'Поезд' поле 'measure_type' должно быть NULL"},
+    ]
+
+
+async def test_update_texts_trimmed_and_null_cleared(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [
+        update_row(description="\xa0Ось 'A' \"Б\" ", description_1c="  ", main_number=" A2V0001\xa0"),
+    ])
+
+    assert errors == []
+    row = valid_rows[0]
+    assert (row.description, row.description_1c, row.main_number) == ("Ось 'A' \"Б\"", None, "A2V0001")
+
+
+async def test_update_native_excel_booleans_and_numbers_are_not_lost(db_session):
+    await make_design_number(db_session, "DN-001")
+
+    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [
+        update_row(is_serial=False, is_created_1c=True, is_repairable=0, is_serial_1c=1, main_number=12345.0,
+                   description=0),
+    ])
+
+    assert errors == []
+    row = valid_rows[0]
+    assert (row.is_serial, row.is_created_1c, row.is_repairable, row.is_serial_1c) == (False, True, False, True)
+    assert (row.main_number, row.description) == ("12345", "0")
