@@ -159,6 +159,19 @@ def _lookup(catalogue: dict[str, list[int]], value: str, row_num: int, column: s
     return None
 
 
+async def _measure_types(db_session: AsyncSession) -> dict[str, list[int]]:
+    # measure_type really holds duplicate names ('пог. м', 'рул'): of those, the
+    # one with a code_1c wins, and the highest id breaks any remaining tie.
+    best: dict[str, tuple[bool, int]] = {}
+    for id_, name, code_1c in (await db_session.execute(
+        select(MeasureType.id, MeasureType.name, MeasureType.code_1c)
+    )).all():
+        if name:
+            key = name.strip().lower()
+            best[key] = max(best.get(key, (False, 0)), (code_1c is not None, id_))
+    return {key: [id_] for key, (_, id_) in best.items()}
+
+
 async def validate_update_rows(
     db_session: AsyncSession, rows: list[dict]
 ) -> tuple[list[dict], list[design_number_sql.DesignNumberUpdate]]:
@@ -170,6 +183,7 @@ async def validate_update_rows(
         return [{"row": 0, "field": "*", "message": f"В файле нет колонок: {', '.join(missing)}"}], []
 
     catalogues = {column: await _catalogue(db_session, name_column) for column, name_column in UPDATE_REFERENCES.items()}
+    catalogues["measure_type"] = await _measure_types(db_session)
     maint_uses = await _catalogue(db_session, MaintUse.name)
     numbers = [_cell_text(row.get("number")) for row in rows]
     dn_ids = dict((await db_session.execute(

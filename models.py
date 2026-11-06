@@ -103,6 +103,7 @@ class MeasureType(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str | None] = mapped_column(String, nullable=True)
+    code_1c: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ProductGroup(Base):

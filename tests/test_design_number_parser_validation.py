@@ -531,3 +531,24 @@ async def test_update_native_excel_booleans_and_numbers_are_not_lost(db_session)
     row = valid_rows[0]
     assert (row.is_serial, row.is_created_1c, row.is_repairable, row.is_serial_1c) == (False, True, False, True)
     assert (row.main_number, row.description) == ("12345", "0")
+
+
+async def test_update_duplicate_measure_type_prefers_code_1c_then_max_id(db_session):
+    await make_design_number(db_session, "DN-001")
+    await make_design_number(db_session, "DN-002")
+    await make_design_number(db_session, "DN-003")
+    with_code = await make_ref(db_session, MeasureType, id=13, name="пог. м", code_1c="18")
+    await make_ref(db_session, MeasureType, id=22, name="пог. м", code_1c=None)
+    await make_ref(db_session, MeasureType, id=15, name="рул", code_1c="736")
+    both_coded_max = await make_ref(db_session, MeasureType, id=21, name="рул", code_1c="737")
+    await make_ref(db_session, MeasureType, id=30, name="бухта", code_1c=None)
+    none_coded_max = await make_ref(db_session, MeasureType, id=31, name="бухта", code_1c=None)
+
+    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [
+        update_row(number="DN-001", measure_type="пог. м"),
+        update_row(number="DN-002", measure_type="рул"),
+        update_row(number="DN-003", measure_type="бухта"),
+    ])
+
+    assert errors == []
+    assert [r.id_measure_type for r in valid_rows] == [with_code, both_coded_max, none_coded_max]
