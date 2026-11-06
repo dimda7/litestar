@@ -8,13 +8,15 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from controllers.parser.change_design_number import validate_change_model_design_number_rows
 from controllers.parser.change_okz_active import validate_change_okz_active_rows
 from controllers.parser.common import execute_sql_lines
 
 from sql_builders import models as models_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import (
-    TEST_PREFIX, car_place_name, lcn_of, make_active, make_location, make_train, next_id, reference_ids,
+    TEST_PREFIX, car_place_name, lcn_of, make_active, make_design_number, make_location, make_train, next_id,
+    reference_ids,
     second_car_place_id,
 )
 
@@ -378,3 +380,50 @@ async def test_insert_models_reuses_a_car_place_created_after_generation(pg_sess
     assert await pg_session.scalar(
         text("SELECT id_car_place FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
         {"lcn": lcn, "dn": ids["design_number"]}) == existing_id
+
+
+async def make_default_model(pg_session, ids: dict, id_design_number: int) -> int:
+    model_id = await next_id(pg_session, "models_id_seq")
+    await pg_session.execute(
+        text("INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
+             "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, true)"),
+        {"id": model_id, "tt": ids["train_type"], "lcn": f"M{ids['train_type']}.{model_id}",
+         "cp": ids["car_place"], "dn": id_design_number},
+    )
+    return model_id
+
+
+async def test_change_model_design_number_updates_the_model_only(pg_session):
+    ids = await reference_ids(pg_session)
+    old = await make_design_number(pg_session, f"{TEST_PREFIX}-DN-OLD")
+    new = await make_design_number(pg_session, f"{TEST_PREFIX}-DN-NEW")
+    model_id = await make_default_model(pg_session, ids, old)
+    active = await make_active(pg_session, f"{await make_train(pg_session, ids['train_type'])}.1", old)
+
+    errors, valid_rows = await validate_change_model_design_number_rows(pg_session, [
+        {"id": str(model_id), "itemnum": f"{TEST_PREFIX}-DN-OLD", "new_itemnum": f"{TEST_PREFIX}-DN-NEW"}])
+    assert errors == []
+    await run_generated_sql(pg_session, "\n".join(models_sql.change_model_design_number(valid_rows)))
+
+    assert await pg_session.scalar(
+        text("SELECT id_design_number FROM public.models WHERE id = :id"), {"id": model_id}) == new
+    assert await pg_session.scalar(
+        text("SELECT id_design_number FROM public.actives WHERE id = :id"), {"id": active}) == old
+
+
+async def test_change_model_design_number_catches_the_real_default_index(pg_session):
+    ids = await reference_ids(pg_session)
+    a = await make_design_number(pg_session, f"{TEST_PREFIX}-DN-A")
+    b = await make_design_number(pg_session, f"{TEST_PREFIX}-DN-B")
+    model_id = await make_default_model(pg_session, ids, a)
+    taken = await make_default_model(pg_session, ids, b)
+
+    errors, _ = await validate_change_model_design_number_rows(
+        pg_session, [{"id": str(model_id), "new_itemnum": f"{TEST_PREFIX}-DN-B"}])
+
+    assert errors == [{"row": 1, "field": "new_itemnum",
+                       "message": f"Конфликт с моделью id={taken}: такой ТМЦ уже стоит на этом месте"}]
+    with pytest.raises(IntegrityError):
+        async with pg_session.begin_nested():
+            await pg_session.execute(text("UPDATE public.models SET id_design_number = :dn WHERE id = :id"),
+                                     {"dn": b, "id": model_id})

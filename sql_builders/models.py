@@ -222,3 +222,10 @@ def insert_models(valid_rows: list[tuple[int, int | str, int, str, bool]]) -> li
 
 def delete_models(valid_ids: list[int]) -> list[str]:
     return [f"DELETE FROM public.models WHERE id = {rid};" for rid in valid_ids]
+
+
+def change_model_design_number(valid_rows: list[dict]) -> list[str]:
+    return [
+        f"UPDATE public.models SET id_design_number = {vr['id_design_number']} WHERE id = {vr['id']};"
+        for vr in valid_rows
+    ]
