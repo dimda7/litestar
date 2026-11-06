@@ -1,3 +1,4 @@
+import math
 import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,22 @@ def parse_model_lcn(lcn: str) -> tuple[int, str] | None:
     if not match:
         return None
     return int(match.group(1)), match.group(2) or ""
+
+
+def column_key(rows: list[dict], name: str) -> str | None:
+    return next((k for k in (rows[0] if rows else {}) if str(k).strip().lower() == name), None)
+
+
+def row_text(row: dict, column: str | None) -> str:
+    return str(row.get(column, "") or "").strip() if column else ""
+
+
+def parse_model_id(raw: str) -> int | None:
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return int(value) if math.isfinite(value) and value.is_integer() else None
 
 
 async def execute_sql_lines(

@@ -1,5 +1,4 @@
 import json
-import math
 import logging
 from datetime import datetime
 
@@ -19,26 +18,10 @@ from parser_storage import LOG_DIR
 from progress_tasks import start_task
 from sql_builders import models as models_sql
 
-from .common import execute_sql_lines
+from .common import column_key, execute_sql_lines, parse_model_id, row_text
 
 
 logger = logging.getLogger("parser")
-
-
-def _column(rows: list[dict], name: str) -> str | None:
-    return next((k for k in (rows[0] if rows else {}) if str(k).strip().lower() == name), None)
-
-
-def _text(row: dict, column: str | None) -> str:
-    return str(row.get(column, "") or "").strip() if column else ""
-
-
-def _model_id(raw: str) -> int | None:
-    try:
-        value = float(raw)
-    except ValueError:
-        return None
-    return int(value) if math.isfinite(value) and value.is_integer() else None
 
 
 def _shown(number: str | None) -> str:
@@ -77,9 +60,9 @@ async def validate_change_model_design_number_rows(
 ) -> tuple[list[dict], list[dict]]:
     errors: list[dict] = []
     valid_rows: list[dict] = []
-    id_column = _column(rows, "id")
-    new_column = _column(rows, "new_itemnum")
-    old_column = _column(rows, "itemnum")
+    id_column = column_key(rows, "id")
+    new_column = column_key(rows, "new_itemnum")
+    old_column = column_key(rows, "itemnum")
 
     if rows and id_column is None:
         return [{"row": 0, "field": "id", "message": "В файле не найдена колонка 'id'"}], []
@@ -96,12 +79,12 @@ async def validate_change_model_design_number_rows(
         row_num = idx + 1
         if progress is not None and (idx % 20 == 0 or row_num == len(rows)):
             progress["processed"] = row_num
-        id_raw = _text(row, id_column)
-        new_number = _text(row, new_column)
+        id_raw = row_text(row, id_column)
+        new_number = row_text(row, new_column)
         if not id_raw:
             errors.append({"row": row_num, "field": "id", "message": "Поле 'id' пустое"})
             continue
-        model_id = _model_id(id_raw)
+        model_id = parse_model_id(id_raw)
         if model_id is None:
             errors.append({"row": row_num, "field": "id", "message": f"Некорректный id: '{id_raw}'"})
             continue
@@ -115,7 +98,7 @@ async def validate_change_model_design_number_rows(
             errors.append({"row": row_num, "field": "id", "message": f"Модель с id={model_id} не найдена"})
             continue
         current = model.number
-        old_number = _text(row, old_column)
+        old_number = row_text(row, old_column)
         if old_number and old_number != current:
             errors.append({"row": row_num, "field": "itemnum",
                            "message": f"У модели id={model_id} в БД ТМЦ {_shown(current)}, а в файле '{old_number}'"})

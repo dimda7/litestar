@@ -229,3 +229,32 @@ def change_model_design_number(valid_rows: list[dict]) -> list[str]:
         f"UPDATE public.models SET id_design_number = {vr['id_design_number']} WHERE id = {vr['id']};"
         for vr in valid_rows
     ]
+
+
+# Shared by the UPDATE and the SELECT that logs its targets, so the two cannot drift apart.
+_DESIGN_NUMBER_ACTIVE_MATCH = "act.lcn::text = v.lcn_train AND act.id_design_number = v.old_design_number"
+
+
+def _design_number_active_values(valid_rows: list[dict]) -> str:
+    values_list = ", ".join(
+        f"('{sql_escape(lcn_train)}', {vr['old_id_design_number']}, {vr['id_design_number']})"
+        for vr in valid_rows for lcn_train in vr["lcn_trains"]
+    )
+    return f"(VALUES {values_list}) AS v(lcn_train, old_design_number, new_design_number)" if values_list else ""
+
+
+def change_design_number_active(valid_rows: list[dict]) -> list[str]:
+    values = _design_number_active_values(valid_rows)
+    if not values:
+        return []
+    return [
+        "UPDATE public.actives AS act SET id_design_number = v.new_design_number "
+        f"FROM {values} WHERE {_DESIGN_NUMBER_ACTIVE_MATCH};"
+    ]
+
+
+def design_number_active_targets(valid_rows: list[dict]) -> str:
+    return (
+        "SELECT act.id, act.lcn::text, v.old_design_number, v.new_design_number FROM public.actives AS act "
+        f"JOIN {_design_number_active_values(valid_rows)} ON {_DESIGN_NUMBER_ACTIVE_MATCH} ORDER BY act.id"
+    )

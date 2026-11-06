@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from controllers.parser.change_design_number import validate_change_model_design_number_rows
+from controllers.parser.change_design_number_active import validate_change_design_number_active_rows
 from controllers.parser.change_okz_active import validate_change_okz_active_rows
 from controllers.parser.common import execute_sql_lines
 
@@ -427,3 +428,34 @@ async def test_change_model_design_number_catches_the_real_default_index(pg_sess
         async with pg_session.begin_nested():
             await pg_session.execute(text("UPDATE public.models SET id_design_number = :dn WHERE id = :id"),
                                      {"dn": b, "id": model_id})
+
+
+async def design_number_of_active(pg_session, id_active: int) -> int:
+    return await pg_session.scalar(text("SELECT id_design_number FROM public.actives WHERE id = :id"), {"id": id_active})
+
+
+async def test_change_design_number_active_changes_only_the_models_assets_with_the_old_number(pg_session):
+    ids = await reference_ids(pg_session)
+    old = await make_design_number(pg_session, f"{TEST_PREFIX}-DN-OLD")
+    new = await make_design_number(pg_session, f"{TEST_PREFIX}-DN-NEW")
+    other = await make_design_number(pg_session, f"{TEST_PREFIX}-DN-OTHER")
+    model_id = await make_default_model(pg_session, ids, new)
+    rest = str(model_id)
+    trains = [await make_train(pg_session, ids["train_type"]) for _ in range(3)]
+    matching = [await make_active(pg_session, f"{trains[0]}.{rest}", old),
+                await make_active(pg_session, f"{trains[1]}.{rest}", old)]
+    replaced = await make_active(pg_session, f"{trains[2]}.{rest}", other)
+    elsewhere = await make_active(pg_session, f"{trains[0]}.{rest}9", old)
+    counters = "SELECT count(*) FROM public.counter_active WHERE id_active = ANY(:ids)"
+    all_ids = [*matching, replaced, elsewhere]
+    counters_before = await pg_session.scalar(text(counters), {"ids": all_ids})
+
+    errors, valid_rows = await validate_change_design_number_active_rows(pg_session, [
+        {"id": str(model_id), "lsn": "M0.0", "itemnum": f"{TEST_PREFIX}-DN-OLD", "new_itemnum": f"{TEST_PREFIX}-DN-NEW"}])
+    assert errors == []
+    await run_generated_sql(pg_session, "\n".join(models_sql.change_design_number_active(valid_rows)))
+
+    assert [await design_number_of_active(pg_session, a) for a in matching] == [new, new]
+    assert await design_number_of_active(pg_session, replaced) == other
+    assert await design_number_of_active(pg_session, elsewhere) == old
+    assert await pg_session.scalar(text(counters), {"ids": all_ids}) == counters_before
