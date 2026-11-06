@@ -75,7 +75,7 @@ async def test_row_is_resolved_to_ids(db_session):
     }]
 
 
-@pytest.mark.parametrize("field", ["Номер техкарты", "Название техкарты", "Тип работы", "Классификация техкарты"])
+@pytest.mark.parametrize("field", ["Номер техкарты", "Название техкарты", "Тип работы"])
 @pytest.mark.parametrize("empty", [None, "", "  "])
 async def test_required_field_empty(db_session, field, empty):
     await make_references(db_session)
@@ -85,6 +85,28 @@ async def test_required_field_empty(db_session, field, empty):
     assert valid_rows == []
     assert error_fields(errors) == [field]
     assert errors[0]["row"] == 1
+
+
+@pytest.mark.parametrize("empty", [None, "", "  "])
+async def test_empty_classifier_type_is_stored_as_null(db_session, empty):
+    await make_references(db_session)
+
+    errors, valid_rows = await validate_techcard_rows(db_session, [make_row(**{
+        "Классификация техкарты": empty, "TRAIN_TYPE_MAINT": None, "INSPECTION_TYPE": " "})])
+
+    assert errors == []
+    assert (valid_rows[0]["id_classifier_type"], valid_rows[0]["specification_ids"]) == (None, [])
+
+
+async def test_classifiers_without_a_classifier_type_reported(db_session):
+    await make_references(db_session)
+
+    errors, valid_rows = await validate_techcard_rows(db_session, [make_row(**{"Классификация техкарты": ""})])
+
+    assert valid_rows == []
+    assert errors == [{"row": 1, "field": "Классификация техкарты",
+                       "message": "Поле 'Классификация техкарты' пустое, а классификаторы заполнены: "
+                                  "INSPECTION_TYPE, TRAIN_TYPE_MAINT"}]
 
 
 @pytest.mark.parametrize("field, value", [("Тип работы", "XX"), ("Статус", "XX"), ("Классификация техкарты", "XX"),

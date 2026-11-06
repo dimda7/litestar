@@ -19,10 +19,10 @@ from .common import (
 CLASSIFIER_TYPE_COLUMN = "Классификация техкарты"
 MAIN_PTOIR_COLUMN = "Использовать техкарту только в БПТОиР?"
 MAIN_PTOIR_VALUES = {"да": True, "нет": False, "": False}
-REQUIRED_COLUMNS = ("Номер техкарты", "Название техкарты", "Тип работы", CLASSIFIER_TYPE_COLUMN)
+REQUIRED_COLUMNS = ("Номер техкарты", "Название техкарты", "Тип работы")
 # Every non-classifier column must be present, required or not: a
 # missing 'Бригада' or БПТОиР flag would otherwise silently become NULL / false.
-EXPECTED_COLUMNS = (*REQUIRED_COLUMNS, "Статус", "Полное описание", "Приоритет", "Бригада", MAIN_PTOIR_COLUMN)
+EXPECTED_COLUMNS = (*REQUIRED_COLUMNS, CLASSIFIER_TYPE_COLUMN, "Статус", "Полное описание", "Приоритет", "Бригада", MAIN_PTOIR_COLUMN)
 
 
 async def validate_techcard_rows(
@@ -61,8 +61,17 @@ async def validate_techcard_rows(
             raise RowError(field, f"{field}: ожидается 'Да', 'Нет' или пусто, а не '{value}'")
         use_only_main_ptoir = MAIN_PTOIR_VALUES[value.lower()]
 
+        # An empty 'Классификация техкарты' is stored as NULL; its classifiers are
+        # looked up within that type, so none of them may be filled then.
         field, value = labelled_cell(row, columns, CLASSIFIER_TYPE_COLUMN)
-        id_classifier_type = await one_id(classifier_types, field, value, ClassifierType.name == value)
+        id_classifier_type = None
+        if value:
+            id_classifier_type = await one_id(classifier_types, field, value, ClassifierType.name == value)
+        else:
+            filled = sorted(str(c).strip() for c in classifier_columns
+                            if row.get(c) is not None and str(row[c]).strip())
+            if filled:
+                raise RowError(field, f"Поле '{field}' пустое, а классификаторы заполнены: {', '.join(filled)}")
 
         specification_ids = []
         for column in classifier_columns:

@@ -122,3 +122,17 @@ async def test_techcard_without_status(pg_session):
         "       (SELECT count(*) FROM public.techcard_to_specification tts WHERE tts.id_techcard = t.id) AS specs "
         "FROM public.techcard t WHERE t.name = :name"), {"name": name})).mappings().one()
     assert dict(created) == {"id_techcard_status": None, "id_users": 505, "statuses": 0, "specs": 3}
+
+
+async def test_techcard_without_classifier_type(pg_session):
+    name = f"{TEST_PREFIX}-tc-no-classifier"
+    errors, valid_rows = await validate_techcard_rows(pg_session, [make_row(name, **{
+        "Классификация техкарты": None, "TRAIN_TYPE_MAINT": None, "INSPECTION_TYPE": None, "SIZE": None})])
+    assert errors == []
+
+    await run_generated_sql(pg_session, "\n".join(techcards_sql.create(valid_rows)))
+
+    id_classifier_type, specifications = (await pg_session.execute(text(
+        "SELECT t.id_classifier_type, (SELECT count(*) FROM public.techcard_to_specification tts "
+        "WHERE tts.id_techcard = t.id) FROM public.techcard t WHERE t.name = :name"), {"name": name})).one()
+    assert (id_classifier_type, specifications) == (None, 0)
