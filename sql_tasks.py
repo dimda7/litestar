@@ -11,6 +11,8 @@ from db_manager import get_session_maker
 from parser_storage import LOG_DIR
 from progress_tasks import start_task
 
+EXECUTE_PROGRESS_STEPS = 100
+
 # valid_rows are whatever the validator hands its builder: dicts, or tuples for "Запуск ПТОиР".
 Validator = Callable[[AsyncSession, list[dict], dict | None], Awaitable[tuple[list[dict], list]]]
 
@@ -89,16 +91,20 @@ def start_execute(data: dict, op: SqlOperation) -> Response:
                     return
                 errors, valid_rows = validated
 
-                progress.update(processed=0, total=1, phase="executing")
                 sql_lines = op.build(valid_rows)
+                progress.update(processed=0, total=len(sql_lines), phase="executing")
                 try:
                     # The raw asyncpg connection, as the tests run it: Excel text is
                     # inlined, and a ':1' in it must not be read as a bind parameter;
                     # a multi-statement body cannot go through a parameterised execute().
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
-                    await raw_conn.driver_connection.execute("\n".join(sql_lines))
-                    progress["processed"] = 1
+                    # Every builder line is one whole statement, so the batch can be split
+                    # into parts (still one transaction) to move the progress bar.
+                    step = -(-len(sql_lines) // EXECUTE_PROGRESS_STEPS)
+                    for start in range(0, len(sql_lines), step):
+                        await raw_conn.driver_connection.execute("\n".join(sql_lines[start:start + step]))
+                        progress["processed"] = min(start + step, len(sql_lines))
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
