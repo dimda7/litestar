@@ -33,3 +33,23 @@ def change_hours(valid_rows: list[dict]) -> list[str]:
         ),
         "SET session_replication_role = DEFAULT;",
     ]
+
+
+DELETE_CHUNK = 1000
+
+
+def delete(valid_rows: list[dict]) -> list[str]:
+    # Order is set by the FKs: orders and ptoir_level_warning point at ptoir,
+    # ptoir points at ptoir_status (which keeps the whole history by number, without a FK).
+    sql_lines: list[str] = []
+    for start in range(0, len(valid_rows), DELETE_CHUNK):
+        chunk = valid_rows[start:start + DELETE_CHUNK]
+        ids = ", ".join(str(vr["id"]) for vr in chunk)
+        numbers = ", ".join(f"'{sql_escape(vr['number_ptoir'])}'" for vr in chunk)
+        sql_lines += [
+            f"UPDATE public.orders SET id_ptoir = NULL WHERE id_ptoir IN ({ids});",
+            f"DELETE FROM public.ptoir_level_warning WHERE id_ptoir IN ({ids});",
+            f"DELETE FROM public.ptoir WHERE id IN ({ids});",
+            f"DELETE FROM public.ptoir_status WHERE number_ptoir IN ({numbers});",
+        ]
+    return sql_lines

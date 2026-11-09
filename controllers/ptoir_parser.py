@@ -13,7 +13,7 @@ from litestar.params import Body
 from litestar.response import Template, Response, Redirect
 
 from db_manager import get_session_maker
-from models import Actives, CounterActive, CounterType, Ptoir, PtoirLevelWarning
+from models import Actives, CounterActive, CounterType, Orders, Ptoir, PtoirLevelWarning
 from schemas import SelectSheetRequest
 import excel_upload
 from parser_storage import LOG_DIR
@@ -30,6 +30,9 @@ PREFIX = "ptoir_parser"
 MSK_OFFSET = timedelta(hours=3)
 
 HOURS_MULTIPLIER = 10
+
+# Bulk lookups go in chunks so a huge file stays under the driver's bind-parameter limit.
+LOOKUP_CHUNK = 5000
 
 
 def _find_column(rows: list[dict], name: str) -> str | None:
@@ -156,6 +159,66 @@ async def validate_change_hours_rows(
                            "active_number": active_number, "old_value": counter_row[0],
                            "old_value_source": counter_row[1]})
 
+    return errors, valid_rows
+
+
+async def validate_delete_rows(
+    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Validate the Excel rows for 'удалить ПТОиР'.
+
+    Unlike the other operations a row error does not block the file: valid_rows
+    holds every found ПТОиР (once per number) with the order_number of each
+    order that will be detached from it.
+    """
+    errors: list[dict] = []
+    valid_rows: list[dict] = []
+
+    ptoir_column = _find_column(rows, "птоир")
+    if rows and ptoir_column is None:
+        errors.append({"row": 0, "field": "ПТОиР", "message": "В файле не найдена колонка 'ПТОиР'"})
+        return errors, valid_rows
+
+    if progress is not None:
+        progress.update(processed=0, total=len(rows), phase="validating")
+
+    numbers = [str(row.get(ptoir_column, "") or "").strip() for row in rows]
+    distinct_numbers = list(dict.fromkeys(n for n in numbers if n))
+    found: dict[str, int] = {}
+    for start in range(0, len(distinct_numbers), LOOKUP_CHUNK):
+        chunk = distinct_numbers[start:start + LOOKUP_CHUNK]
+        result = await db_session.execute(select(Ptoir.number_ptoir, Ptoir.id).where(Ptoir.number_ptoir.in_(chunk)))
+        found.update(result.tuples().all())
+
+    order_numbers: dict[int, list[str]] = {}
+    found_ids = list(found.values())
+    for start in range(0, len(found_ids), LOOKUP_CHUNK):
+        result = await db_session.execute(
+            select(Orders.id_ptoir, Orders.order_number)
+            .where(Orders.id_ptoir.in_(found_ids[start:start + LOOKUP_CHUNK]))
+            .order_by(Orders.id)
+        )
+        for id_ptoir, order_number in result.tuples():
+            order_numbers.setdefault(id_ptoir, []).append(order_number)
+
+    seen: set[str] = set()
+    for idx, number_ptoir in enumerate(numbers):
+        row_num = idx + 1
+        if not number_ptoir:
+            errors.append({"row": row_num, "field": "ПТОиР", "message": "Поле 'ПТОиР' пустое"})
+            continue
+        if number_ptoir in seen:
+            continue
+        seen.add(number_ptoir)
+        if number_ptoir not in found:
+            errors.append({"row": row_num, "field": "ПТОиР", "message": f"ПТОиР не найден: '{number_ptoir}'"})
+            continue
+        id_ptoir = found[number_ptoir]
+        valid_rows.append({"id": id_ptoir, "number_ptoir": number_ptoir,
+                           "order_numbers": order_numbers.get(id_ptoir, [])})
+
+    if progress is not None:
+        progress["processed"] = len(rows)
     return errors, valid_rows
 
 
@@ -529,6 +592,93 @@ class PtoirParserController(Controller):
 
         progress.update(status="done", count=len(valid_rows),
                          message=f"Изменены моточасы у активов: {len(valid_rows)} (строк файла: {len(rows)})")
+
+    @post("/delete/generate-sql/start")
+    async def delete_generate_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        return start_task(len(rows), lambda progress: self._run_delete_generate(progress, rows))
+
+    async def _run_delete_generate(self, progress: dict, rows: list[dict]) -> None:
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                errors, valid_rows = await validate_delete_rows(session, rows, progress=progress)
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+            return
+
+        if not valid_rows:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет ПТОиР для удаления"}, *errors])
+            return
+
+        # a cell may hold a line break, which would end the comment and turn the rest into SQL
+        skipped = [f"-- строка {e['row']} пропущена: {' '.join(e['message'].splitlines())}" for e in errors]
+        full_sql = "\n".join([*skipped, "BEGIN;", *ptoir_sql.delete(valid_rows), "COMMIT;"])
+        progress.update(status="done", sql=full_sql, count=len(valid_rows), errors=errors)
+
+    @post("/delete/execute-sql/start")
+    async def delete_execute_sql_start(
+        self,
+        request: Request,
+        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+    ) -> Response:
+        rows: list[dict] = json.loads(data.get("rows", "[]"))
+        return start_task(len(rows), lambda progress: self._run_delete_execute(progress, rows))
+
+    async def _run_delete_execute(self, progress: dict, rows: list[dict]) -> None:
+        try:
+            session_maker = get_session_maker()
+            async with session_maker() as session:
+                try:
+                    errors, valid_rows = await validate_delete_rows(session, rows, progress=progress)
+                except Exception as e:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    return
+
+                if not valid_rows:
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет ПТОиР для удаления"}, *errors])
+                    return
+
+                progress.update(processed=0, total=1, phase="executing")
+                try:
+                    conn = await session.connection()
+                    raw_conn = await conn.get_raw_connection()
+                    await raw_conn.driver_connection.execute("\n".join(ptoir_sql.delete(valid_rows)))
+                    progress["processed"] = 1
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    return
+        except Exception as e:
+            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+            return
+
+        order_numbers = [number for vr in valid_rows for number in vr["order_numbers"]]
+        now = datetime.now()
+        log_lines = [
+            f"=== Execute PTOIR delete: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+            f"Rows in file: {len(rows)}, ptoir deleted: {len(valid_rows)}, "
+            f"orders detached: {len(order_numbers)}, rows skipped: {len(errors)}",
+            "",
+            "Orders with id_ptoir set to NULL:",
+            *order_numbers,
+            "",
+            *ptoir_sql.delete(valid_rows),
+            "",
+        ]
+        log_file = LOG_DIR / f"delete_ptoir_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+        logger.info("Deleted %d ptoir, detached %d orders, log: %s", len(valid_rows), len(order_numbers), log_file)
+
+        progress.update(status="done", count=len(valid_rows), errors=errors,
+                        message=(f"Удалено ПТОиР: {len(valid_rows)}, отвязано ЗН: {len(order_numbers)}, "
+                                 f"пропущено строк: {len(errors)}"))
 
     @get("/progress/{task_id:str}")
     async def get_progress(self, task_id: str) -> Response:

@@ -107,8 +107,8 @@ async def make_ptoir_level_warning(db_session: AsyncSession, id_ptoir: int, id_c
     return obj.id
 
 
-async def make_order(db_session: AsyncSession, order_number: str = "ЗН000001") -> int:
-    obj = Orders(order_number=order_number)
+async def make_order(db_session: AsyncSession, order_number: str = "ЗН000001", id_ptoir: int | None = None) -> int:
+    obj = Orders(order_number=order_number, id_ptoir=id_ptoir)
     db_session.add(obj)
     await db_session.flush()
     return obj.id
