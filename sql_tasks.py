@@ -11,7 +11,8 @@ from db_manager import get_session_maker
 from parser_storage import LOG_DIR
 from progress_tasks import start_task
 
-Validator = Callable[[AsyncSession, list[dict], dict | None], Awaitable[tuple[list[dict], list[dict]]]]
+# valid_rows are whatever the validator hands its builder: dicts, or tuples for "Запуск ПТОиР".
+Validator = Callable[[AsyncSession, list[dict], dict | None], Awaitable[tuple[list[dict], list]]]
 
 
 @dataclass(frozen=True)
@@ -23,10 +24,10 @@ class SqlOperation:
     row errors do not block the file: they are returned alongside the result.
     """
     validate: Validator
-    build: Callable[[list[dict]], list[str]]
+    build: Callable[[list], list[str]]
     log_name: str
     log_title: str
-    summary: Callable[[int, list[dict], list[dict]], tuple[str, list[str]]]
+    summary: Callable[[int, list, list[dict]], tuple[str, list[str]]]
     empty_message: str
     logger: logging.Logger
     partial: bool = False
@@ -38,7 +39,7 @@ def _error(message: str) -> list[dict]:
 
 async def _validated(
     session: AsyncSession, rows: list[dict], op: SqlOperation, progress: dict,
-) -> tuple[list[dict], list[dict]] | None:
+) -> tuple[list[dict], list] | None:
     """(errors, valid_rows), or None once the failure is reported to progress."""
     try:
         errors, valid_rows = await op.validate(session, rows, progress)

@@ -1,19 +1,15 @@
-import json
 from datetime import datetime, timedelta, timezone
 
 from dateutil import parser as date_parser
 from litestar import Controller, post
-from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_manager import get_session_maker
+import sql_tasks
 from models import Actives, CounterType, Ptoir, PtoirLevelWarning
-from parser_storage import LOG_DIR
-from progress_tasks import start_task
 from sql_builders import ptoir as ptoir_sql
 
 from .common import PATH, logger
@@ -141,99 +137,24 @@ async def validate_launch_rows(
     return errors, valid_rows
 
 
+def _launch_summary(total: int, valid_rows: list, errors: list[dict]) -> tuple[str, list[str]]:
+    return f"Успешно обновлено {len(valid_rows)} ПТОиР", [f"Rows updated: {len(valid_rows)}"]
+
+
+LAUNCH_PTOIR = sql_tasks.SqlOperation(
+    validate=validate_launch_rows, build=ptoir_sql.update_ptoir,
+    log_name="update_ptoir", log_title="PTOиR update", summary=_launch_summary,
+    empty_message="Нет валидных строк для обновления", logger=logger,
+)
+
+
 class LaunchPtoirController(Controller):
     path = PATH
 
     @post("/generate-sql/start")
-    async def generate_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_generate(progress, rows))
-
-    async def _run_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_launch_rows(session, rows, progress=progress)
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-
-        sql_lines = ptoir_sql.update_ptoir(valid_rows)
-        progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
+    async def generate_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+        return sql_tasks.start_generate(data, LAUNCH_PTOIR)
 
     @post("/execute-sql/start")
-    async def execute_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_execute(progress, rows))
-
-    async def _run_execute(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                try:
-                    errors, valid_rows = await validate_launch_rows(session, rows, progress=progress)
-                except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
-                    return
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-
-                if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
-                    return
-
-                progress.update(processed=0, total=len(valid_rows), phase="executing")
-                try:
-                    for i, (ptoir_id, date_activation, interval, level_warning_id, zero_point_value) in enumerate(valid_rows, start=1):
-                        await session.execute(
-                            text(
-                                "UPDATE public.ptoir SET date_activation = :da, interval = :iv, is_active = TRUE "
-                                "WHERE id = :id"
-                            ),
-                            {"da": date_activation, "iv": interval, "id": ptoir_id},
-                        )
-                        await session.execute(
-                            text("UPDATE public.ptoir_level_warning SET zero_point_value = :zp WHERE id = :id"),
-                            {"zp": zero_point_value, "id": level_warning_id},
-                        )
-                        if i % 20 == 0 or i == len(valid_rows):
-                            progress["processed"] = i
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Execute PTOиR update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Rows updated: {len(valid_rows)}",
-            "",
-            *ptoir_sql.update_ptoir(valid_rows),
-            "",
-        ]
-
-        log_file = LOG_DIR / f"update_ptoir_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Updated ptoir for %d rows, log: %s", len(valid_rows), log_file)
-
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Успешно обновлено {len(valid_rows)} ПТОиР")
+    async def execute_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+        return sql_tasks.start_execute(data, LAUNCH_PTOIR)
