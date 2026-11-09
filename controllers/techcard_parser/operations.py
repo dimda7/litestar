@@ -5,11 +5,12 @@ from litestar.response import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Techcard, TechcardWorkOperation
+import sql_tasks
 from sql_builders import techcards as techcards_sql
 
 from .common import (
     PATH, RowError, TechcardRepository, TechcardWorkOperationRepository, cell, header_columns, labelled_cell,
-    missing_columns, one_id, parse_int, require, resolve_rows, start_execute, start_generate,
+    missing_columns, one_id, parse_int, require, resolve_rows, operation,
 )
 
 HEAD_COLUMN = "Техкарта"
@@ -86,14 +87,17 @@ async def validate_operation_rows(
     return await resolve_rows(rows, resolve, progress)
 
 
+ADD_OPERATIONS = operation(validate_operation_rows, techcards_sql.add_operations,
+                           "add_techcard_operations", "Добавлено операций: {count}")
+
+
 class AddOperationsController(Controller):
     path = PATH
 
     @post("/operations/generate-sql/start")
     async def generate_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
-        return start_generate(data, validate_operation_rows, techcards_sql.add_operations)
+        return sql_tasks.start_generate(data, ADD_OPERATIONS)
 
     @post("/operations/execute-sql/start")
     async def execute_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
-        return start_execute(data, validate_operation_rows, techcards_sql.add_operations,
-                             "add_techcard_operations", "Добавлено операций: {count}")
+        return sql_tasks.start_execute(data, ADD_OPERATIONS)

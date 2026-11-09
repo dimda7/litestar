@@ -10,7 +10,7 @@ not run here — its COMMIT would end the fixture's transaction.
 """
 from sqlalchemy import text
 
-from controllers.ptoir_parser import validate_change_hours_rows
+from controllers.ptoir_parser.change_hours import validate_change_hours_rows
 from sql_builders import ptoir as ptoir_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import TEST_PREFIX, make_active, make_train, reference_ids

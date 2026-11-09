@@ -7,13 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import (
     Classifier, ClassifierType, GroupType, Priorities, Specification, Techcard, TechcardStatusTypes, WorkType,
 )
+import sql_tasks
 from sql_builders import techcards as techcards_sql
 
 from .common import (
     PATH, ClassifierRepository, ClassifierTypeRepository, GroupTypeRepository, PrioritiesRepository, RowError,
     SpecificationRepository, TechcardRepository, TechcardStatusTypesRepository, WorkTypeRepository, cell,
     header_columns, labelled_cell, missing_columns, one_id, parse_int, require, resolve_rows,
-    start_execute, start_generate,
+    operation,
 )
 
 CLASSIFIER_TYPE_COLUMN = "Классификация техкарты"
@@ -131,14 +132,17 @@ async def validate_techcard_rows(
     return await resolve_rows(rows, resolve, progress)
 
 
+CREATE_TECHCARDS = operation(validate_techcard_rows, techcards_sql.create,
+                             "create_techcards", "Создано техкарт: {count}")
+
+
 class CreateTechcardsController(Controller):
     path = PATH
 
     @post("/generate-sql/start")
     async def generate_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
-        return start_generate(data, validate_techcard_rows, techcards_sql.create)
+        return sql_tasks.start_generate(data, CREATE_TECHCARDS)
 
     @post("/execute-sql/start")
     async def execute_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
-        return start_execute(data, validate_techcard_rows, techcards_sql.create,
-                             "create_techcards", "Создано техкарт: {count}")
+        return sql_tasks.start_execute(data, CREATE_TECHCARDS)

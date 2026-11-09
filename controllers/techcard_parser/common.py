@@ -1,28 +1,20 @@
-import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from litestar.response import Response
 from sqlalchemy import ColumnElement
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_manager import get_session_maker
 from models import (
     Classifier, ClassifierType, GroupType, Priorities, Specification, Techcard, TechcardStatusTypes,
     TechcardWorkOperation, WorkType,
 )
-from parser_storage import LOG_DIR
-from progress_tasks import start_task
+from sql_tasks import SqlOperation, Validator
 
 logger = logging.getLogger("techcard_parser")
 
 PREFIX = "techcard_parser"
 PATH = "/techcard-parser"
-
-Validator = Callable[[AsyncSession, list[dict], dict | None], Awaitable[tuple[list[dict], list[dict]]]]
 
 
 class WorkTypeRepository(SQLAlchemyAsyncRepository[WorkType]):
@@ -138,93 +130,11 @@ async def one_id(repo: SQLAlchemyAsyncRepository, field: str, value: str, *filte
     return found[0].id
 
 
-def _error(message: str) -> list[dict]:
-    return [{"row": 0, "field": "*", "message": message}]
-
-
-async def _validated(
-    session: AsyncSession, rows: list[dict], validate: Validator, progress: dict,
-) -> list[dict] | None:
-    """The valid rows, or None once the errors are reported to progress."""
-    try:
-        errors, valid_rows = await validate(session, rows, progress)
-    except Exception as e:
-        progress.update(status="error", errors=_error(f"Ошибка валидации: {e}"))
-        return None
-    if errors:
-        progress.update(status="error", errors=errors)
-        return None
-    if not valid_rows:
-        progress.update(status="error", errors=_error("Нет строк для записи в базу"))
-        return None
-    return valid_rows
-
-
-def start_generate(data: dict, validate: Validator, build: Callable[[list[dict]], list[str]]) -> Response:
-    rows: list[dict] = json.loads(data.get("rows", "[]"))
-
-    async def run(progress: dict) -> None:
-        try:
-            async with get_session_maker()() as session:
-                valid_rows = await _validated(session, rows, validate, progress)
-        except Exception as e:
-            progress.update(status="error", errors=_error(f"Ошибка валидации: {e}"))
-            return
-        if valid_rows is None:
-            return
-
-        full_sql = "\n".join(["BEGIN;", *build(valid_rows), "COMMIT;"])
-        progress.update(status="done", sql=full_sql, count=len(valid_rows))
-
-    return start_task(len(rows), run)
-
-
-def start_execute(
-    data: dict, validate: Validator, build: Callable[[list[dict]], list[str]], log_name: str, message: str,
-) -> Response:
-    """Validate, then run the builder's SQL in one transaction and echo it to log/<log_name>_<time>.log.
-
-    message is formatted with {count} — the number of valid rows written.
-    """
-    rows: list[dict] = json.loads(data.get("rows", "[]"))
-
-    async def run(progress: dict) -> None:
-        try:
-            async with get_session_maker()() as session:
-                valid_rows = await _validated(session, rows, validate, progress)
-                if valid_rows is None:
-                    return
-
-                progress.update(processed=0, total=1, phase="executing")
-                sql_lines = build(valid_rows)
-                try:
-                    # The raw asyncpg connection, as the tests run it: Excel text is
-                    # inlined, and a ':1' in it must not be read as a bind parameter.
-                    conn = await session.connection()
-                    raw_conn = await conn.get_raw_connection()
-                    await raw_conn.driver_connection.execute("\n".join(sql_lines))
-                    progress["processed"] = 1
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(status="error", errors=_error(f"Ошибка выполнения: {e}"))
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=_error(f"Ошибка выполнения: {e}"))
-            return
-
-        now = datetime.now()
-        log_file = LOG_DIR / f"{log_name}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join([
-                f"=== Execute {log_name}: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-                f"Rows written: {len(valid_rows)}",
-                "",
-                *sql_lines,
-                "",
-            ]))
-        logger.info("%s: %d rows, log: %s", log_name, len(valid_rows), log_file)
-
-        progress.update(status="done", count=len(valid_rows), message=message.format(count=len(valid_rows)))
-
-    return start_task(len(rows), run)
+def operation(validate: Validator, build: Callable[[list[dict]], list[str]], log_name: str, message: str) -> SqlOperation:
+    """A techcards operation for sql_tasks; message is formatted with {count}, the number of rows written."""
+    return SqlOperation(
+        validate=validate, build=build, log_name=log_name, log_title=log_name,
+        summary=lambda total, valid_rows, errors: (message.format(count=len(valid_rows)),
+                                                   [f"Rows written: {len(valid_rows)}"]),
+        empty_message="Нет строк для записи в базу", logger=logger,
+    )

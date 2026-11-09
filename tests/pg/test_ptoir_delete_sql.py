@@ -8,7 +8,7 @@ fixture's transaction.
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from controllers.ptoir_parser import validate_delete_rows
+from controllers.ptoir_parser.delete import validate_delete_rows
 from sql_builders import ptoir as ptoir_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import TEST_PREFIX

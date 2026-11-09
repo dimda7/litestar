@@ -1,6 +1,6 @@
-"""Validation tests for validate_delete_rows (controllers/ptoir_parser.py)."""
+"""Validation tests for validate_delete_rows (controllers/ptoir_parser/delete.py)."""
 
-from controllers.ptoir_parser import validate_delete_rows
+from controllers.ptoir_parser.delete import validate_delete_rows
 from tests.conftest import make_order, make_ptoir
 
 

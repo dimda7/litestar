@@ -1,8 +1,8 @@
-"""Validation tests for validate_change_hours_rows (controllers/ptoir_parser.py) and its SQL builder."""
+"""Validation tests for validate_change_hours_rows (controllers/ptoir_parser/change_hours.py) and its SQL builder."""
 
 import pytest
 
-from controllers.ptoir_parser import validate_change_hours_rows
+from controllers.ptoir_parser.change_hours import validate_change_hours_rows
 from sql_builders import ptoir as ptoir_sql
 from tests.conftest import make_active, make_counter_active, make_ptoir
 

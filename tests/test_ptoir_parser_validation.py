@@ -1,8 +1,8 @@
-"""Validation tests for PtoirParserController._validate_and_build_rows (controllers/ptoir_parser.py)."""
+"""Validation tests for validate_launch_rows (controllers/ptoir_parser/launch.py)."""
 
 from datetime import datetime
 
-from controllers.ptoir_parser import PtoirParserController
+from controllers.ptoir_parser.launch import validate_launch_rows
 from tests.conftest import make_active, make_counter_type, make_ptoir, make_ptoir_level_warning
 
 
@@ -19,8 +19,7 @@ def make_row(number_ptoir="ТО0001", active="", counter_type="Пробег", in
 
 
 async def validate(db_session, rows):
-    controller = PtoirParserController(owner=None)
-    return await controller._validate_and_build_rows(db_session, rows)
+    return await validate_launch_rows(db_session, rows)
 
 
 def error_fields(errors: list[dict]) -> list[str]:

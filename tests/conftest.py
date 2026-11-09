@@ -12,7 +12,7 @@ from models import (
 
 
 @pytest_asyncio.fixture
-async def db_session():
+async def session_maker():
     """In-memory SQLite session standing in for the app's Postgres database.
 
     All ORM models are mapped with schema="public", and some controllers
@@ -37,11 +37,15 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    session_maker = async_sessionmaker(engine, expire_on_commit=False)
-    async with session_maker() as session:
-        yield session
+    yield async_sessionmaker(engine, expire_on_commit=False)
 
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def db_session(session_maker):
+    async with session_maker() as session:
+        yield session
 
 
 async def make_train_type(db_session: AsyncSession, name: str = "Ласточка") -> int:
