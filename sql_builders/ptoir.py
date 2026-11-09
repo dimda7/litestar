@@ -53,3 +53,38 @@ def delete(valid_rows: list[dict]) -> list[str]:
             f"DELETE FROM public.ptoir_status WHERE number_ptoir IN ({numbers});",
         ]
     return sql_lines
+
+
+MAIN_PTOIR_LINKS = ("actives_to_main_ptoir", "design_number_to_main_ptoir", "main_ptoir_trigger")
+
+# (link table, its column, the table it links to): rows reached only through a deleted
+# БПТОиР's link would be orphaned, so they go with it.
+MAIN_PTOIR_OWNED = (
+    ("main_ptoir_to_config_counter", "id_main_ptoir_config", "main_ptoir_config"),
+    ("main_ptoir_to_techcard_interval", "id_techcard_interval", "techcard_interval"),
+)
+
+
+def delete_main(valid_rows: list[dict]) -> list[str]:
+    # The ПТОиР go first through delete() itself, so both operations stay identical;
+    # main_ptoir points at main_ptoir_status (the history by number, without a FK back).
+    sql_lines = delete([ptoir for vr in valid_rows for ptoir in vr["ptoirs"]])
+    for start in range(0, len(valid_rows), DELETE_CHUNK):
+        chunk = valid_rows[start:start + DELETE_CHUNK]
+        ids = ", ".join(str(vr["id"]) for vr in chunk)
+        numbers = ", ".join(f"'{sql_escape(vr['number_ptoir'])}'" for vr in chunk)
+        sql_lines += [f"DELETE FROM public.{table} WHERE id_main_ptoir IN ({ids});" for table in MAIN_PTOIR_LINKS]
+        # One statement per link table: the CTE removes the links, the outer DELETE the rows
+        # they pointed at. Both see the same snapshot, so a link of another БПТОиР is told
+        # apart by its id_main_ptoir; the FK is checked at the end of the statement.
+        sql_lines += [
+            f"WITH links AS (DELETE FROM public.{link} WHERE id_main_ptoir IN ({ids}) RETURNING {column}) "
+            f"DELETE FROM public.{owned} o USING links WHERE o.id = links.{column} AND NOT EXISTS "
+            f"(SELECT 1 FROM public.{link} l WHERE l.{column} = o.id AND l.id_main_ptoir NOT IN ({ids}));"
+            for link, column, owned in MAIN_PTOIR_OWNED
+        ]
+        sql_lines += [
+            f"DELETE FROM public.main_ptoir WHERE id IN ({ids});",
+            f"DELETE FROM public.main_ptoir_status WHERE number_ptoir IN ({numbers});",
+        ]
+    return sql_lines

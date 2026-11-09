@@ -80,6 +80,9 @@
         <button type="button" onclick="showDeleteModal()" class="btn btn-secondary">
             Удалить ПТОиР
         </button>
+        <button type="button" onclick="showDeleteMainModal()" class="btn btn-secondary">
+            Удалить БПТОиР
+        </button>
     </div>
 </div>
 {% endif %}
@@ -227,6 +230,30 @@
     </div>
 </div>
 
+<div id="delete-main-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: #fff; border-radius: 16px; padding: 28px 32px; min-width: 380px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
+        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 600;">Удалить БПТОиР</h3>
+        <p style="margin: 0 0 24px; font-size: 14px; color: var(--text-secondary);">Удалить main_ptoir, его связи и историю main_ptoir_status, а все его ПТОиР — как «Удалить ПТОиР». Ненайденные номера пропускаются</p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button onclick="downloadDeleteMainSQL()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#1976d2"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Скачать SQL-файл</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Файл delete_main_ptoir.sql для ручного запуска</div>
+                </div>
+            </button>
+            <button onclick="executeDeleteMain()" style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer; transition: border-color 0.15s, background 0.15s; text-align: left; font-size: 14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#2e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                <div>
+                    <div style="font-weight: 500;">Выполнить в базе данных</div>
+                    <div style="font-size: 12px; color: var(--text-hint); margin-top: 2px;">Атомарное удаление всех найденных БПТОиР</div>
+                </div>
+            </button>
+        </div>
+        <button onclick="closeDeleteMainModal()" style="margin-top: 16px; width: 100%; padding: 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px;">Отмена</button>
+    </div>
+</div>
+
 <div id="progress-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center;">
     <div style="background: var(--bg-card); border-radius: 16px; padding: 32px 40px; min-width: 340px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.25);">
         <div class="spinner" style="margin: 0 auto 20px;"></div>
@@ -286,6 +313,18 @@
 
     document.getElementById('delete-modal').addEventListener('click', function(e) {
         if (e.target === this) closeDeleteModal();
+    });
+
+    function showDeleteMainModal() {
+        document.getElementById('delete-main-modal').style.display = 'flex';
+    }
+
+    function closeDeleteMainModal() {
+        document.getElementById('delete-main-modal').style.display = 'none';
+    }
+
+    document.getElementById('delete-main-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeDeleteMainModal();
     });
 
     function handleErrors(data, title = 'Ошибки валидации:') {
@@ -487,6 +526,58 @@
         showProgress();
 
         postForm('/ptoir-parser/delete/execute-sql/start', buildFormData())
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                    return;
+                }
+                if (data.errors.length) {
+                    handleErrors(data, data.message + '. Пропущенные строки:');
+                    alert(data.message);
+                } else {
+                    alert(data.message);
+                    location.reload();
+                }
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
+    }
+
+    function downloadDeleteMainSQL() {
+        closeDeleteMainModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+        showProgress();
+
+        postForm('/ptoir-parser/delete-main/generate-sql/start', buildFormData())
+            .then(({ task_id }) => pollProgress(task_id, (data) => {
+                hideProgress();
+                if (data.status === 'error') {
+                    handleErrors(data);
+                    return;
+                }
+                if (data.errors.length) handleErrors(data, 'Пропущенные строки:');
+                const blob = new Blob([data.sql], { type: 'text/sql' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'delete_main_ptoir.sql';
+                a.click();
+                URL.revokeObjectURL(url);
+            }))
+            .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
+    }
+
+    function executeDeleteMain() {
+        closeDeleteMainModal();
+        document.getElementById('error-box').style.display = 'none';
+        document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
+
+        if (!confirm('УДАЛИТЬ все БПТОиР из файла вместе с их ПТОиР из базы данных? Действие необратимо.')) return;
+
+        showProgress();
+
+        postForm('/ptoir-parser/delete-main/execute-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {

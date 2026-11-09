@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from models import (
     Actives, Base, CarPlace, Consignment, CounterActive, CounterGroup, CounterType, DesignNumber,
-    MileageTrain, Orders, Ptoir, PtoirLevelWarning, Storage, Train, TrainType, UnitType, User,
+    MainPtoir, MileageTrain, Orders, Ptoir, PtoirLevelWarning, Storage, Train, TrainType, UnitType, User,
 )
 
 
@@ -97,8 +97,16 @@ async def make_active(db_session: AsyncSession, active_number: str = "SPV000001"
     return obj.id
 
 
-async def make_ptoir(db_session: AsyncSession, number_ptoir: str = "ТО0001", id_active: int | None = None) -> int:
-    obj = Ptoir(number_ptoir=number_ptoir, id_active=id_active)
+async def make_main_ptoir(db_session: AsyncSession, number_ptoir: str = "VR_SPEC_0001") -> int:
+    obj = MainPtoir(number_ptoir=number_ptoir)
+    db_session.add(obj)
+    await db_session.flush()
+    return obj.id
+
+
+async def make_ptoir(db_session: AsyncSession, number_ptoir: str = "ТО0001", id_active: int | None = None,
+                     id_main_ptoir: int | None = None) -> int:
+    obj = Ptoir(number_ptoir=number_ptoir, id_active=id_active, id_main_ptoir=id_main_ptoir)
     db_session.add(obj)
     await db_session.flush()
     return obj.id

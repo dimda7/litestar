@@ -216,6 +216,14 @@ class CounterType(Base):
     type: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class MainPtoir(Base):
+    __tablename__ = "main_ptoir"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    number_ptoir: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class Ptoir(Base):
     __tablename__ = "ptoir"
     __table_args__ = {"schema": "public"}

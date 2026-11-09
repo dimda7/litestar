@@ -2,17 +2,13 @@ from litestar import Controller, post
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sql_tasks
-from models import Orders, Ptoir
+from models import Ptoir
 from sql_builders import ptoir as ptoir_sql
 
-from .common import PATH, find_column, logger
-
-# Bulk lookups go in chunks so a huge file stays under the driver's bind-parameter limit.
-LOOKUP_CHUNK = 5000
+from .common import PATH, cell_numbers, find_column, load_ptoirs, logger, match_rows
 
 
 async def validate_delete_rows(
@@ -24,55 +20,20 @@ async def validate_delete_rows(
     holds every found ПТОиР (once per number) with the order_number of each
     order that will be detached from it.
     """
-    errors: list[dict] = []
-    valid_rows: list[dict] = []
-
     ptoir_column = find_column(rows, "птоир")
     if rows and ptoir_column is None:
-        errors.append({"row": 0, "field": "ПТОиР", "message": "В файле не найдена колонка 'ПТОиР'"})
-        return errors, valid_rows
+        return [{"row": 0, "field": "ПТОиР", "message": "В файле не найдена колонка 'ПТОиР'"}], []
 
     if progress is not None:
         progress.update(processed=0, total=len(rows), phase="validating")
 
-    numbers = [str(row.get(ptoir_column, "") or "").strip() for row in rows]
-    distinct_numbers = list(dict.fromkeys(n for n in numbers if n))
-    found: dict[str, int] = {}
-    for start in range(0, len(distinct_numbers), LOOKUP_CHUNK):
-        chunk = distinct_numbers[start:start + LOOKUP_CHUNK]
-        result = await db_session.execute(select(Ptoir.number_ptoir, Ptoir.id).where(Ptoir.number_ptoir.in_(chunk)))
-        found.update(result.tuples().all())
-
-    order_numbers: dict[int, list[str]] = {}
-    found_ids = list(found.values())
-    for start in range(0, len(found_ids), LOOKUP_CHUNK):
-        result = await db_session.execute(
-            select(Orders.id_ptoir, Orders.order_number)
-            .where(Orders.id_ptoir.in_(found_ids[start:start + LOOKUP_CHUNK]))
-            .order_by(Orders.id)
-        )
-        for id_ptoir, order_number in result.tuples():
-            order_numbers.setdefault(id_ptoir, []).append(order_number)
-
-    seen: set[str] = set()
-    for idx, number_ptoir in enumerate(numbers):
-        row_num = idx + 1
-        if not number_ptoir:
-            errors.append({"row": row_num, "field": "ПТОиР", "message": "Поле 'ПТОиР' пустое"})
-            continue
-        if number_ptoir in seen:
-            continue
-        seen.add(number_ptoir)
-        if number_ptoir not in found:
-            errors.append({"row": row_num, "field": "ПТОиР", "message": f"ПТОиР не найден: '{number_ptoir}'"})
-            continue
-        id_ptoir = found[number_ptoir]
-        valid_rows.append({"id": id_ptoir, "number_ptoir": number_ptoir,
-                           "order_numbers": order_numbers.get(id_ptoir, [])})
+    numbers = cell_numbers(rows, ptoir_column)
+    ptoirs = await load_ptoirs(db_session, Ptoir.number_ptoir, list(dict.fromkeys(n for n in numbers if n)))
+    errors, matched = match_rows(numbers, ptoirs, "ПТОиР")
 
     if progress is not None:
         progress["processed"] = len(rows)
-    return errors, valid_rows
+    return errors, [ptoirs[number][0] for number in matched]
 
 
 def _delete_summary(total: int, valid_rows: list[dict], errors: list[dict]) -> tuple[str, list[str]]:
