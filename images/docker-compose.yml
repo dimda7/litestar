@@ -29,6 +29,10 @@ services:
       # would fall back to the .env seed on every image rebuild.
       - config_data:/app/config_data
     restart: unless-stopped
+    # The default bridge (docker0) instead of a per-project network: a new network takes
+    # the next subnet from the daemon's address pool, which may cover a real LAN range
+    # (10.210.1.0/24 hid grom-prod at 10.210.1.150 on a host whose pool is 10.210.0.0/16).
+    network_mode: bridge
 
 volumes:
   parser_data:
