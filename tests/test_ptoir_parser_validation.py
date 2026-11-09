@@ -37,6 +37,17 @@ async def test_valid_mileage_row_passes(db_session):
     assert valid_rows == [(ptoir_id, datetime(2026, 7, 12, 21, 0), 2, lw_id, 7362771)]
 
 
+async def test_mileage_stored_as_text_passes(db_session):
+    ct_id = await make_counter_type(db_session, "Пробег")
+    ptoir_id = await make_ptoir(db_session, "ТО0001")
+    lw_id = await make_ptoir_level_warning(db_session, ptoir_id, ct_id)
+
+    errors, valid_rows = await validate(db_session, [make_row(service_value=" 3753457 ")])
+
+    assert errors == []
+    assert valid_rows == [(ptoir_id, datetime(2026, 7, 12, 21, 0), 2, lw_id, 3753457)]
+
+
 async def test_missing_ptoir_reported(db_session):
     await make_counter_type(db_session, "Пробег")
 

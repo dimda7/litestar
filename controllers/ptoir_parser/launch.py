@@ -122,6 +122,9 @@ async def validate_launch_rows(
 
         if isinstance(service_raw, (int, float)) and not isinstance(service_raw, bool):
             zero_point_value = int(service_raw)
+        elif str(service_raw).strip().isdecimal():
+            # a number stored as text in Excel
+            zero_point_value = int(str(service_raw).strip())
         else:
             try:
                 service_dt = date_parser.parse(str(service_raw), dayfirst=True) - MSK_OFFSET
