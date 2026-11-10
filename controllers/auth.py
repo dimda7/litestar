@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import db_manager
 import db_profiles
+import login_lockout
+from config import settings
 from models import User
 from schemas import DbSelectRequest, LoginRequest
 
@@ -92,13 +94,17 @@ class AuthController(Controller):
         if not user or not user.active:
             return Template(
                 template_name="login.html",
-                context={"error": "Неверный логин или пароль"},
+                context={"error": login_lockout.WRONG_CREDENTIALS},
             )
+        locked = await login_lockout.check_before_password(
+            db_session, user, settings.login_max_attempts, settings.login_lock_minutes
+        )
+        if locked:
+            return Template(template_name="login.html", context={"error": locked})
         if not user.password or not bcrypt.checkpw(password.encode(), user.password.encode()):
-            return Template(
-                template_name="login.html",
-                context={"error": "Неверный логин или пароль"},
-            )
+            error = await login_lockout.record_wrong_password(db_session, user.id, settings.login_lock_minutes)
+            return Template(template_name="login.html", context={"error": error})
+        await login_lockout.record_success(db_session, user, settings.login_max_attempts)
 
         request.session["user_id"] = user.id
         request.session["db_epoch"] = db_manager.get_target_epoch()

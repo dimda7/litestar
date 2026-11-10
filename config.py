@@ -47,6 +47,8 @@ class Settings:
     server_port: int = field(default_factory=lambda: int(environ.get("SERVER_PORT", "8011")))
     session_secret: bytes = field(default_factory=lambda: bytes.fromhex(environ["SESSION_SECRET"]))
     log_level: str = field(default_factory=lambda: environ.get("LOG_LEVEL", "INFO"))
+    login_max_attempts: int = field(default_factory=lambda: int(environ.get("LOGIN_MAX_ATTEMPTS", "5")))
+    login_lock_minutes: int = field(default_factory=lambda: int(environ.get("LOGIN_LOCK_MINUTES", "15")))
 
 
 settings = Settings()
