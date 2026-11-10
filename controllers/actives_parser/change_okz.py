@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -8,10 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import excel_upload
-from db_manager import get_session_maker
+import sql_tasks
 from models import Actives, CarPlace
-from parser_storage import LOG_DIR
-from progress_tasks import error_response, start_task
+from progress_tasks import error_response
 from sql_builders import actives as actives_sql
 
 from .common import PREFIX
@@ -110,6 +108,28 @@ async def validate_change_okz(
     return errors, valid_rows
 
 
+def _change_okz_summary(
+    total: int, valid_rows: list[tuple[str, int]], errors: list[dict], rowcounts: list[int]
+) -> tuple[str, list[str]]:
+    [updated] = rowcounts
+    return (
+        f"Изменено окз у активов: {updated} (строк файла: {len(valid_rows)})",
+        [f"Rows processed: {len(valid_rows)}, locations updated: {updated}"],
+    )
+
+
+CHANGE_OKZ = sql_tasks.SqlOperation(
+    validate=validate_change_okz,
+    build=actives_sql.change_okz,
+    log_name="change_okz_actives",
+    log_title="change okz (location.id_car_place)",
+    summary=_change_okz_summary,
+    empty_message="Нет валидных строк для обновления",
+    logger=logger,
+    per_statement=True,
+)
+
+
 class ChangeOkzController(Controller):
     path = "/actives-parser"
 
@@ -119,29 +139,7 @@ class ChangeOkzController(Controller):
         rows = excel_upload.stored_rows(request, PREFIX)
         if rows is None:
             return error_response("Данные не загружены")
-
-        return start_task(len(rows), lambda progress: self._run_change_okz_generate(progress, rows))
-
-    async def _run_change_okz_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_change_okz(session, rows, progress=progress)
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-        if not valid_rows:
-            progress.update(
-                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]
-            )
-            return
-
-        sql_lines = actives_sql.change_okz(valid_rows)
-        progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
+        return sql_tasks.generate_rows(rows, CHANGE_OKZ)
 
     @post("/change-okz/execute/start")
     async def change_okz_execute_start(self, request: Request) -> Response:
@@ -149,60 +147,4 @@ class ChangeOkzController(Controller):
         rows = excel_upload.stored_rows(request, PREFIX)
         if rows is None:
             return error_response("Данные не загружены")
-
-        return start_task(len(rows), lambda progress: self._run_change_okz_execute(progress, rows))
-
-    async def _run_change_okz_execute(self, progress: dict, rows: list[dict]) -> None:
-        valid_rows: list[tuple[str, int]] = []
-        updated = 0
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_change_okz(session, rows, progress=progress)
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-                if not valid_rows:
-                    progress.update(
-                        status="error",
-                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
-                    )
-                    return
-
-                progress.update(processed=0, total=1, phase="executing")
-
-                try:
-                    conn = await session.connection()
-                    result = await conn.exec_driver_sql(actives_sql.change_okz(valid_rows)[0])
-                    updated = result.rowcount
-                    progress["processed"] = 1
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Change okz (location.id_car_place): {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Rows processed: {len(valid_rows)}, locations updated: {updated}",
-            "",
-            *actives_sql.change_okz(valid_rows),
-            "",
-        ]
-        log_file = LOG_DIR / f"change_okz_actives_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Changed okz for %d assets, log: %s", updated, log_file)
-
-        progress.update(
-            status="done",
-            count=len(valid_rows),
-            message=f"Изменено окз у активов: {updated} (строк файла: {len(valid_rows)})",
-        )
+        return sql_tasks.execute_rows(rows, CHANGE_OKZ)

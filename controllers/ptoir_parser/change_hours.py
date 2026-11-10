@@ -180,7 +180,9 @@ async def validate_change_hours_rows(
     return errors, valid_rows
 
 
-def _change_hours_summary(total: int, valid_rows: list[dict], errors: list[dict]) -> tuple[str, list[str]]:
+def _change_hours_summary(
+    total: int, valid_rows: list[dict], errors: list[dict], rowcounts: list[int]
+) -> tuple[str, list[str]]:
     return (
         f"Изменены моточасы у активов: {len(valid_rows)} (строк файла: {total})",
         [

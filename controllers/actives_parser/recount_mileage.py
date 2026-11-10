@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -9,10 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 import excel_upload
-from db_manager import get_session_maker
+import sql_tasks
 from models import Actives, CounterActive, Location, MileageStart, MileageTrain, Relocate
-from parser_storage import LOG_DIR
-from progress_tasks import error_response, start_task
+from progress_tasks import error_response
 from sql_builders import actives as actives_sql
 from sql_builders.actives import MILEAGE_COUNTER_TYPE_ID
 
@@ -223,6 +222,20 @@ async def validate_recount_mileage(
     return errors, valid_rows
 
 
+RECOUNT_MILEAGE = sql_tasks.SqlOperation(
+    validate=validate_recount_mileage,
+    build=actives_sql.recount_mileage,
+    log_name="recount_mileage",
+    log_title="recount mileage",
+    summary=lambda total, valid_rows, errors, rowcounts: (
+        f"Пробег пересчитан для {len(valid_rows)} активов",
+        [f"Actives recounted: {len(valid_rows)}"],
+    ),
+    empty_message="Нет валидных строк для пересчёта",
+    logger=logger,
+)
+
+
 class RecountMileageController(Controller):
     path = "/actives-parser"
 
@@ -232,98 +245,12 @@ class RecountMileageController(Controller):
         rows = excel_upload.stored_rows(request, PREFIX)
         if rows is None:
             return error_response("Данные не загружены")
-
-        return start_task(len(rows), lambda progress: self._run_recount_mileage_generate(progress, rows))
-
-    async def _run_recount_mileage_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_recount_mileage(session, rows, progress=progress)
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-        if not valid_rows:
-            progress.update(
-                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для пересчёта"}]
-            )
-            return
-
-        sql_lines = actives_sql.recount_mileage(valid_rows)
-        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
-        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+        return sql_tasks.generate_rows(rows, RECOUNT_MILEAGE)
 
     @post("/recount-mileage/execute/start")
     async def recount_mileage_execute_start(self, request: Request) -> Response:
-        """Start the background atomic mileage recount in the database; returns a task_id."""
+        """Start the background mileage recount in the database; returns a task_id."""
         rows = excel_upload.stored_rows(request, PREFIX)
         if rows is None:
             return error_response("Данные не загружены")
-
-        return start_task(len(rows), lambda progress: self._run_recount_mileage_execute(progress, rows))
-
-    async def _run_recount_mileage_execute(self, progress: dict, rows: list[dict]) -> None:
-        valid_rows: list[dict] = []
-        sql_lines: list[str] = []
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_recount_mileage(session, rows, progress=progress)
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-                if not valid_rows:
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для пересчёта"}]
-                    )
-                    return
-
-                progress.update(processed=0, total=1, phase="executing")
-
-                sql_lines = actives_sql.recount_mileage(valid_rows)
-                sql_body = "\n".join(sql_lines)
-
-                try:
-                    # IMPORTANT: as in create-actives, session.rollback() below also rolls this
-                    # raw call back only because the session opened a real transaction earlier
-                    # (the repository queries inside validate_recount_mileage). Do not remove
-                    # the session usage before this point.
-                    conn = await session.connection()
-                    raw_conn = await conn.get_raw_connection()
-                    assert raw_conn.driver_connection is not None
-                    await raw_conn.driver_connection.execute(sql_body)
-
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-
-                progress["processed"] = 1
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Recount Mileage: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Actives recounted: {len(valid_rows)}",
-            "",
-            *sql_lines,
-            "",
-        ]
-        log_file = LOG_DIR / f"recount_mileage_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Recounted mileage for %d actives, log: %s", len(valid_rows), log_file)
-
-        progress.update(
-            status="done", count=len(valid_rows), message=f"Пробег пересчитан для {len(valid_rows)} активов"
-        )
+        return sql_tasks.execute_rows(rows, RECOUNT_MILEAGE)

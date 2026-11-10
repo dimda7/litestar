@@ -50,7 +50,7 @@ def operation(
         build=build,
         log_name="test_op",
         log_title="test op",
-        summary=lambda total, valid_rows, errors: (f"Готово: {len(valid_rows)}", [f"Rows: {total}"]),
+        summary=lambda total, valid_rows, errors, rowcounts: (f"Готово: {len(valid_rows)}", [f"Rows: {total}"]),
         empty_message="Нечего делать",
         logger=logging.getLogger("test"),
         **kwargs,
@@ -152,3 +152,38 @@ async def test_failed_execute_rolls_back_and_writes_no_log(session_maker, tmp_pa
     assert state["errors"][0]["message"].startswith("Ошибка выполнения: ")
     assert await ptoir_numbers(session_maker) == []
     assert list(tmp_path.iterdir()) == []
+
+
+async def test_per_statement_hands_each_rowcount_to_the_summary(session_maker):
+    def insert_then_rename(valid_rows: list[dict]) -> list[str]:
+        return [
+            *insert_ptoir(valid_rows),
+            "UPDATE public.ptoir SET number_ptoir = number_ptoir || '!' WHERE number_ptoir LIKE 'ТО%';",
+            "UPDATE public.ptoir SET number_ptoir = 'x' WHERE number_ptoir = 'нет такого';",
+        ]
+
+    op = sql_tasks.SqlOperation(
+        validate=validator([], [{"number": "ТО1"}, {"number": "ТО2"}]),
+        build=insert_then_rename,
+        log_name="test_op",
+        log_title="test op",
+        summary=lambda total, valid_rows, errors, rowcounts: (f"Затронуто: {rowcounts}", []),
+        empty_message="Нечего делать",
+        logger=logging.getLogger("test"),
+        per_statement=True,
+    )
+
+    state = await settled(sql_tasks.execute_rows([{}, {}], op))
+
+    assert state["status"] == "done"
+    assert state["message"] == "Затронуто: [2, 2, 0]"
+    assert await ptoir_numbers(session_maker) == ["ТО1!", "ТО2!"]
+
+
+async def test_execute_rows_takes_the_rows_directly(session_maker):
+    op = operation(validator([], [{"number": "ТО1"}]), build=insert_ptoir)
+
+    state = await settled(sql_tasks.execute_rows([{}], op))
+
+    assert state["status"] == "done"
+    assert await ptoir_numbers(session_maker) == ["ТО1"]

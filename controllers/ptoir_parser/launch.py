@@ -149,7 +149,7 @@ async def validate_launch_rows(
     return errors, valid_rows
 
 
-def _launch_summary(total: int, valid_rows: list, errors: list[dict]) -> tuple[str, list[str]]:
+def _launch_summary(total: int, valid_rows: list, errors: list[dict], rowcounts: list[int]) -> tuple[str, list[str]]:
     return f"Успешно обновлено {len(valid_rows)} ПТОиР", [f"Rows updated: {len(valid_rows)}"]
 
 
