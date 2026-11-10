@@ -33,6 +33,14 @@ jobs:
       - name: mypy
         run: mypy .
 
+      # Same version as biome.json's $schema, so CI and a local `biome lint static/js` agree.
+      - uses: biomejs/setup-biome@v2
+        with:
+          version: 2.6.6
+
+      - name: biome (static/js)
+        run: biome ci static/js
+
       # tests/pg needs a copy of the grom database, which CI does not have.
       - name: pytest
         run: pytest -m "not pg"

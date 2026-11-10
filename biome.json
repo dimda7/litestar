@@ -1,0 +1,34 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.6/schema.json",
+  "files": { "includes": ["static/js/**/*.js"] },
+  "formatter": { "enabled": false },
+  "javascript": {
+    "globals": [
+      "appendCsrfToken",
+      "throwIfUnauthorized",
+      "readJsonResponse",
+      "postForm",
+      "getJson",
+      "pageData",
+      "showProgress",
+      "updateProgress",
+      "hideProgress",
+      "pollProgress",
+      "handleErrors",
+      "downloadFile",
+      "changePerPage"
+    ]
+  },
+  "linter": {
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUndeclaredVariables": "error",
+        "noUnusedVariables": "off"
+      },
+      "suspicious": { "useIterableCallbackReturn": "off" },
+      "style": { "useTemplate": "off" },
+      "complexity": { "useArrowFunction": "off" }
+    }
+  }
+}
