@@ -437,8 +437,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showCreateActivesProgress();
 
-        fetch('/actives-parser/serial-number/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/serial-number/generate-sql/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error' || !data.sql) {
@@ -465,8 +464,7 @@
 
         showCreateActivesProgress();
 
-        fetch('/actives-parser/serial-number/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/serial-number/execute/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error') {
@@ -485,8 +483,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showCreateActivesProgress();
 
-        fetch('/actives-parser/design-number/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/design-number/generate-sql/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error' || !data.sql) {
@@ -513,8 +510,7 @@
 
         showCreateActivesProgress();
 
-        fetch('/actives-parser/design-number/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/design-number/execute/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error') {
@@ -628,8 +624,7 @@
 
     function pollCreateActivesProgress(taskId, onFinished) {
         createActivesProgressPollTimer = setInterval(() => {
-            fetch('/actives-parser/progress/' + taskId)
-                .then(resp => resp.json())
+            getJson('/actives-parser/progress/' + taskId)
                 .then(state => {
                     if (state.status === 'running') {
                         updateCreateActivesProgress(state);
@@ -654,8 +649,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showCreateActivesProgress();
 
-        fetch('/actives-parser/create-actives/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/create-actives/generate-sql/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error' || !data.sql) {
@@ -691,8 +685,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showCreateActivesProgress();
 
-        fetch('/actives-parser/delete-actives/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/delete-actives/generate-sql/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error' || !data.sql) {
@@ -719,8 +712,7 @@
 
         showCreateActivesProgress();
 
-        fetch('/actives-parser/delete-actives/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/delete-actives/execute/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error') {
@@ -751,8 +743,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showCreateActivesProgress();
 
-        fetch('/actives-parser/create-named-actives/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/create-named-actives/generate-sql/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error' || !data.sql) {
@@ -779,8 +770,7 @@
 
         showCreateActivesProgress();
 
-        fetch('/actives-parser/create-named-actives/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/create-named-actives/execute/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error') {
@@ -811,8 +801,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showCreateActivesProgress();
 
-        fetch('/actives-parser/recount-mileage/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/recount-mileage/generate-sql/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error' || !data.sql) {
@@ -839,8 +828,7 @@
 
         showCreateActivesProgress();
 
-        fetch('/actives-parser/recount-mileage/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/recount-mileage/execute/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error') {
@@ -871,8 +859,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showCreateActivesProgress();
 
-        fetch('/actives-parser/create-active-from-model/generate-sql/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/create-active-from-model/generate-sql/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error' || !data.sql) {
@@ -899,8 +886,7 @@
 
         showCreateActivesProgress();
 
-        fetch('/actives-parser/create-active-from-model/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/create-active-from-model/execute/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error') {
@@ -922,8 +908,7 @@
 
         showCreateActivesProgress();
 
-        fetch('/actives-parser/create-actives/execute/start', { method: 'POST', body: appendCsrfToken(new FormData()) })
-            .then(resp => resp.json())
+        postForm('/actives-parser/create-actives/execute/start', appendCsrfToken(new FormData()))
             .then(({ task_id }) => pollCreateActivesProgress(task_id, (data) => {
                 hideCreateActivesProgress();
                 if (data.status === 'error') {

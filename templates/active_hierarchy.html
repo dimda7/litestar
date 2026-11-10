@@ -142,8 +142,7 @@
         const formData = new FormData();
         appendCsrfToken(formData);
 
-        fetch('/active-hierarchy/preview/' + kind, { method: 'POST', body: formData })
-            .then(resp => resp.json())
+        postForm('/active-hierarchy/preview/' + kind, formData)
             .then(data => {
                 if (data.status === 'error') {
                     box.innerHTML = '';
@@ -176,8 +175,7 @@
         const formData = new FormData();
         appendCsrfToken(formData);
 
-        fetch('/active-hierarchy/execute/' + kind, { method: 'POST', body: formData })
-            .then(resp => resp.json())
+        postForm('/active-hierarchy/execute/' + kind, formData)
             .then(data => {
                 const box = document.getElementById('result-' + kind);
                 box.innerHTML = '';

@@ -335,8 +335,7 @@
         document.getElementById('error-box').style.display = 'none';
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
 
-        fetch(ep.generateSql, { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm(ep.generateSql, buildFormData())
             .then(data => {
                 if (data.status === 'error') {
                     handleErrors(data);
@@ -371,8 +370,7 @@
         }
         if (!confirm(confirmMsg)) return;
 
-        fetch(ep.execute, { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm(ep.execute, buildFormData())
             .then(data => {
                 if (data.status === 'error') {
                     handleErrors(data);
