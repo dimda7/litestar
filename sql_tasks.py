@@ -21,19 +21,23 @@ Validator = Callable[[AsyncSession, list[dict], dict | None], Awaitable[tuple[li
 class SqlOperation:
     """One parser operation run through start_generate / start_execute.
 
-    summary(rows in file, valid_rows, errors) gives the success message and the
-    lines the log carries between its header and the executed SQL. With partial,
-    row errors do not block the file: they are returned alongside the result.
+    summary(rows in file, valid_rows, errors, rowcounts) gives the success message
+    and the lines the log carries between its header and the executed SQL. With
+    partial, row errors do not block the file: they are returned alongside the result.
+    With per_statement, the builder's statements run one at a time and rowcounts holds
+    each one's rowcount, for messages that report how many rows were touched;
+    otherwise they run in batches and rowcounts is empty.
     """
 
     validate: Validator
     build: Callable[[list], list[str]]
     log_name: str
     log_title: str
-    summary: Callable[[int, list, list[dict]], tuple[str, list[str]]]
+    summary: Callable[[int, list, list[dict], list[int]], tuple[str, list[str]]]
     empty_message: str
     logger: logging.Logger
     partial: bool = False
+    per_statement: bool = False
 
 
 def _error(message: str) -> list[dict]:
@@ -62,8 +66,16 @@ async def _validated(
 
 
 def start_generate(data: dict, op: SqlOperation) -> Response:
-    rows: list[dict] = json.loads(data.get("rows", "[]"))
+    """generate_rows for a page that posts its rows in the form."""
+    return generate_rows(json.loads(data.get("rows", "[]")), op)
 
+
+def start_execute(data: dict, op: SqlOperation) -> Response:
+    """execute_rows for a page that posts its rows in the form."""
+    return execute_rows(json.loads(data.get("rows", "[]")), op)
+
+
+def generate_rows(rows: list[dict], op: SqlOperation) -> Response:
     async def run(progress: dict) -> None:
         try:
             async with get_session_maker()() as session:
@@ -83,11 +95,11 @@ def start_generate(data: dict, op: SqlOperation) -> Response:
     return start_task(len(rows), run)
 
 
-def start_execute(data: dict, op: SqlOperation) -> Response:
+def execute_rows(rows: list[dict], op: SqlOperation) -> Response:
     """Validate, run the builder's SQL in one transaction, then log it to log/<log_name>_<time>.log."""
-    rows: list[dict] = json.loads(data.get("rows", "[]"))
 
     async def run(progress: dict) -> None:
+        rowcounts: list[int] = []
         try:
             async with get_session_maker()() as session:
                 validated = await _validated(session, rows, op, progress)
@@ -98,18 +110,25 @@ def start_execute(data: dict, op: SqlOperation) -> Response:
                 sql_lines = op.build(valid_rows)
                 progress.update(processed=0, total=len(sql_lines), phase="executing")
                 try:
-                    # The raw asyncpg connection, as the tests run it: Excel text is
-                    # inlined, and a ':1' in it must not be read as a bind parameter;
-                    # a multi-statement body cannot go through a parameterised execute().
                     conn = await session.connection()
-                    raw_conn = await conn.get_raw_connection()
-                    assert raw_conn.driver_connection is not None
-                    # Every builder line is one whole statement, so the batch can be split
-                    # into parts (still one transaction) to move the progress bar.
-                    step = -(-len(sql_lines) // EXECUTE_PROGRESS_STEPS)
-                    for start in range(0, len(sql_lines), step):
-                        await raw_conn.driver_connection.execute("\n".join(sql_lines[start : start + step]))
-                        progress["processed"] = min(start + step, len(sql_lines))
+                    if op.per_statement:
+                        # exec_driver_sql, not text(): Excel text is inlined, and text()
+                        # would read a ':1' in it as a bind parameter.
+                        for i, line in enumerate(sql_lines, start=1):
+                            rowcounts.append((await conn.exec_driver_sql(line)).rowcount)
+                            progress["processed"] = i
+                    else:
+                        # The raw asyncpg connection, as the tests run it: Excel text is
+                        # inlined, and a ':1' in it must not be read as a bind parameter;
+                        # a multi-statement body cannot go through a parameterised execute().
+                        raw_conn = await conn.get_raw_connection()
+                        assert raw_conn.driver_connection is not None
+                        # Every builder line is one whole statement, so the batch can be split
+                        # into parts (still one transaction) to move the progress bar.
+                        step = -(-len(sql_lines) // EXECUTE_PROGRESS_STEPS)
+                        for start in range(0, len(sql_lines), step):
+                            await raw_conn.driver_connection.execute("\n".join(sql_lines[start : start + step]))
+                            progress["processed"] = min(start + step, len(sql_lines))
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
@@ -119,7 +138,7 @@ def start_execute(data: dict, op: SqlOperation) -> Response:
             progress.update(status="error", errors=_error(f"Ошибка выполнения: {e}"))
             return
 
-        message, log_lines = op.summary(len(rows), valid_rows, errors)
+        message, log_lines = op.summary(len(rows), valid_rows, errors, rowcounts)
         now = datetime.now()
         log_file = LOG_DIR / f"{op.log_name}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:

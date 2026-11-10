@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 from typing import Any
 
 from litestar import Controller, post
@@ -10,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 import excel_upload
-from db_manager import get_session_maker
+import sql_tasks
 from models import (
     ActiveAdditionalField,
     Actives,
@@ -22,8 +21,7 @@ from models import (
     Ptoir,
     Relocate,
 )
-from parser_storage import LOG_DIR
-from progress_tasks import error_response, start_task
+from progress_tasks import error_response
 from sql_builders import actives as actives_sql
 
 from .common import PREFIX, ActivesRepository
@@ -200,6 +198,20 @@ async def validate_delete_actives(
     return errors, valid_rows
 
 
+DELETE_ACTIVES = sql_tasks.SqlOperation(
+    validate=validate_delete_actives,
+    build=actives_sql.delete_actives,
+    log_name="delete_actives",
+    log_title="delete actives",
+    summary=lambda total, valid_rows, errors, rowcounts: (
+        f"Успешно удалено активов: {len(valid_rows)}",
+        [f"Actives deleted: {len(valid_rows)}"],
+    ),
+    empty_message="Нет валидных строк для удаления",
+    logger=logger,
+)
+
+
 class DeleteActivesController(Controller):
     path = "/actives-parser"
 
@@ -209,96 +221,12 @@ class DeleteActivesController(Controller):
         rows = excel_upload.stored_rows(request, PREFIX)
         if rows is None:
             return error_response("Данные не загружены")
-
-        return start_task(len(rows), lambda progress: self._run_delete_actives_generate(progress, rows))
-
-    async def _run_delete_actives_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_delete_actives(session, rows, progress=progress)
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-        if not valid_rows:
-            progress.update(
-                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для удаления"}]
-            )
-            return
-
-        sql_lines = actives_sql.delete_actives(valid_rows)
-        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
-        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+        return sql_tasks.generate_rows(rows, DELETE_ACTIVES)
 
     @post("/delete-actives/execute/start")
     async def delete_actives_execute_start(self, request: Request) -> Response:
-        """Start the background atomic asset deletion; returns a task_id."""
+        """Start the background asset deletion in the database; returns a task_id."""
         rows = excel_upload.stored_rows(request, PREFIX)
         if rows is None:
             return error_response("Данные не загружены")
-
-        return start_task(len(rows), lambda progress: self._run_delete_actives_execute(progress, rows))
-
-    async def _run_delete_actives_execute(self, progress: dict, rows: list[dict]) -> None:
-        valid_rows: list[dict] = []
-        sql_lines: list[str] = []
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_delete_actives(session, rows, progress=progress)
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-                if not valid_rows:
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для удаления"}]
-                    )
-                    return
-
-                progress.update(processed=0, total=1, phase="executing")
-
-                sql_lines = actives_sql.delete_actives(valid_rows)
-                sql_body = "\n".join(sql_lines)
-
-                try:
-                    # IMPORTANT: as in create-actives, session.rollback() below also rolls this
-                    # raw call back only because the session opened a real transaction earlier
-                    # (the repository queries inside validate_delete_actives). Do not remove
-                    # the session usage before this point.
-                    conn = await session.connection()
-                    raw_conn = await conn.get_raw_connection()
-                    assert raw_conn.driver_connection is not None
-                    await raw_conn.driver_connection.execute(sql_body)
-
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-
-                progress["processed"] = 1
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Delete Actives: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Actives deleted: {len(valid_rows)}",
-            "",
-            *sql_lines,
-            "",
-        ]
-        log_file = LOG_DIR / f"delete_actives_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Deleted %d actives, log: %s", len(valid_rows), log_file)
-
-        progress.update(status="done", count=len(valid_rows), message=f"Успешно удалено активов: {len(valid_rows)}")
+        return sql_tasks.execute_rows(rows, DELETE_ACTIVES)

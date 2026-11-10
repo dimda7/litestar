@@ -1,17 +1,15 @@
 import logging
-from datetime import datetime
 
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import excel_upload
-from db_manager import get_session_maker
+import sql_tasks
 from models import Actives, DesignNumber
-from parser_storage import LOG_DIR
-from progress_tasks import error_response, start_task
+from progress_tasks import error_response
 from sql_builders import actives as actives_sql
 
 from .common import PREFIX
@@ -91,6 +89,24 @@ async def validate_design_number(
     return errors, valid_rows
 
 
+def _build_design_number(valid_rows: list[tuple[str, int, str]]) -> list[str]:
+    return actives_sql.update_design_number(valid_rows, with_comment=True)
+
+
+DESIGN_NUMBER = sql_tasks.SqlOperation(
+    validate=validate_design_number,
+    build=_build_design_number,
+    log_name="update_design_number",
+    log_title="id_design_number update",
+    summary=lambda total, valid_rows, errors, rowcounts: (
+        f"Успешно обновлено id_design_number для {len(valid_rows)} записей",
+        [f"Rows updated: {len(valid_rows)}"],
+    ),
+    empty_message="Нет валидных строк для обновления",
+    logger=logger,
+)
+
+
 class DesignNumberController(Controller):
     path = "/actives-parser"
 
@@ -100,29 +116,7 @@ class DesignNumberController(Controller):
         rows = excel_upload.stored_rows(request, PREFIX)
         if rows is None:
             return error_response("Данные не загружены")
-
-        return start_task(len(rows), lambda progress: self._run_design_number_generate(progress, rows))
-
-    async def _run_design_number_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_design_number(session, rows, progress=progress)
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-        if not valid_rows:
-            progress.update(
-                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]
-            )
-            return
-
-        sql_lines = actives_sql.update_design_number(valid_rows)
-        progress.update(status="done", sql="\n".join(sql_lines), count=len(sql_lines))
+        return sql_tasks.generate_rows(rows, DESIGN_NUMBER)
 
     @post("/design-number/execute/start")
     async def design_number_execute_start(self, request: Request) -> Response:
@@ -130,63 +124,4 @@ class DesignNumberController(Controller):
         rows = excel_upload.stored_rows(request, PREFIX)
         if rows is None:
             return error_response("Данные не загружены")
-
-        return start_task(len(rows), lambda progress: self._run_design_number_execute(progress, rows))
-
-    async def _run_design_number_execute(self, progress: dict, rows: list[dict]) -> None:
-        valid_rows: list[tuple[str, int, str]] = []
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_design_number(session, rows, progress=progress)
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-                if not valid_rows:
-                    progress.update(
-                        status="error",
-                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
-                    )
-                    return
-
-                progress.update(processed=0, total=len(valid_rows), phase="executing")
-
-                try:
-                    for i, (active_number, design_number_id, _) in enumerate(valid_rows, start=1):
-                        await session.execute(
-                            text("UPDATE public.actives SET id_design_number = :dn_id WHERE active_number = :an"),
-                            {"dn_id": design_number_id, "an": active_number},
-                        )
-                        if i % 20 == 0 or i == len(valid_rows):
-                            progress["processed"] = i
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Update id_design_number: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Rows updated: {len(valid_rows)}",
-            "",
-        ]
-        log_lines.extend(actives_sql.update_design_number(valid_rows, with_comment=True))
-        log_lines.append("")
-
-        log_file = LOG_DIR / f"update_design_number_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Updated id_design_number for %d rows, log: %s", len(valid_rows), log_file)
-
-        progress.update(
-            status="done",
-            count=len(valid_rows),
-            message=f"Успешно обновлено id_design_number для {len(valid_rows)} записей",
-        )
+        return sql_tasks.execute_rows(rows, DESIGN_NUMBER)

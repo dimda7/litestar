@@ -151,7 +151,7 @@ def operation(
         build=build,
         log_name=log_name,
         log_title=log_name,
-        summary=lambda total, valid_rows, errors: (
+        summary=lambda total, valid_rows, errors, rowcounts: (
             message.format(count=len(valid_rows)),
             [f"Rows written: {len(valid_rows)}"],
         ),

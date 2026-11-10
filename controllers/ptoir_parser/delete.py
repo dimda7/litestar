@@ -38,7 +38,9 @@ async def validate_delete_rows(
     return errors, [ptoirs[number][0] for number in matched]
 
 
-def _delete_summary(total: int, valid_rows: list[dict], errors: list[dict]) -> tuple[str, list[str]]:
+def _delete_summary(
+    total: int, valid_rows: list[dict], errors: list[dict], rowcounts: list[int]
+) -> tuple[str, list[str]]:
     order_numbers = [number for vr in valid_rows for number in vr["order_numbers"]]
     return (
         f"Удалено ПТОиР: {len(valid_rows)}, отвязано ЗН: {len(order_numbers)}, пропущено строк: {len(errors)}",

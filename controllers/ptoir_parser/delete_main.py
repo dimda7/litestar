@@ -47,7 +47,9 @@ async def validate_delete_main_rows(
     ]
 
 
-def _delete_main_summary(total: int, valid_rows: list[dict], errors: list[dict]) -> tuple[str, list[str]]:
+def _delete_main_summary(
+    total: int, valid_rows: list[dict], errors: list[dict], rowcounts: list[int]
+) -> tuple[str, list[str]]:
     ptoirs = [ptoir for vr in valid_rows for ptoir in vr["ptoirs"]]
     order_numbers = [number for ptoir in ptoirs for number in ptoir["order_numbers"]]
     return (
