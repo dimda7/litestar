@@ -683,7 +683,7 @@ class DesignNumberParserController(Controller):
             )
 
         try:
-            for dn_id, number, cg_id in valid_rows:
+            for _dn_id, number, cg_id in valid_rows:
                 await db_session.execute(
                     text("UPDATE public.design_number SET id_counter_group = :cg_id WHERE number = :number"),
                     {"cg_id": cg_id, "number": number},
@@ -755,7 +755,7 @@ class DesignNumberParserController(Controller):
             )
 
         try:
-            for dn_id, number, ut_id in valid_rows:
+            for _dn_id, number, ut_id in valid_rows:
                 await db_session.execute(
                     text("UPDATE public.design_number SET id_unit_type = :ut_id WHERE number = :number"),
                     {"ut_id": ut_id, "number": number},
@@ -991,7 +991,7 @@ class DesignNumberParserController(Controller):
 
         sql_lines: list[str] = []
 
-        for dn_id, number, cg_id in valid_rows:
+        for dn_id, _number, cg_id in valid_rows:
             ct_result = await db_session.execute(
                 text(
                     "SELECT ctg.id_counter_type "
@@ -1097,7 +1097,7 @@ class DesignNumberParserController(Controller):
             )
 
         try:
-            for dn_id, number, is_serial_1c in valid_rows:
+            for _dn_id, number, is_serial_1c in valid_rows:
                 await db_session.execute(
                     text("UPDATE public.design_number SET is_serial_1c = :val WHERE number = :number"),
                     {"val": is_serial_1c, "number": number},

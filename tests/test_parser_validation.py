@@ -221,10 +221,10 @@ async def test_unique_conflict_lcn_car_place_default_against_existing(db_session
 
 async def test_unique_conflict_lcn_car_place_default_within_batch(db_session):
     tt1 = await make_train_type(db_session, "Ласточка")
-    tt2 = await make_train_type(db_session, "Финист")
+    await make_train_type(db_session, "Финист")
     cp_id = await make_car_place(db_session, "Вагон 1")
     dn1 = await make_design_number(db_session, "DN-001")
-    dn2 = await make_design_number(db_session, "DN-002")
+    await make_design_number(db_session, "DN-002")
 
     rows = [
         make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.1", is_default=True),

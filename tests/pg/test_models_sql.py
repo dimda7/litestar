@@ -159,7 +159,7 @@ async def test_change_model_okz_survives_a_swap(pg_session):
         pytest.skip("copy needs at least two public.car_place rows")
 
     made = []
-    for suffix in ("1", "2"):
+    for _ in ("1", "2"):
         model_id = await next_id(pg_session, "models_id_seq")
         await pg_session.execute(
             text(

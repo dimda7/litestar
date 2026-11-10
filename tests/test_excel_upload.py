@@ -95,7 +95,7 @@ def test_read_sheet_reads_the_named_sheet(tmp_path):
 async def test_upload_without_a_file_reports_an_error():
     request = FakeRequest(upload=None)
 
-    response = await excel_upload.handle_upload(request, "parser", "/parser")
+    await excel_upload.handle_upload(request, "parser", "/parser")
 
     assert request.session["parser_error"] == "Файл не выбран"
     assert "parser_session_id" not in request.session

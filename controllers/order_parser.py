@@ -234,7 +234,7 @@ class OrderParserController(Controller):
 
                 progress.update(processed=0, total=len(valid_rows), phase="executing")
                 try:
-                    for i, (child_id, parent_id, child_number, parent_number) in enumerate(valid_rows, start=1):
+                    for i, (child_id, parent_id, _child_number, _parent_number) in enumerate(valid_rows, start=1):
                         await session.execute(
                             text(
                                 "INSERT INTO public.order_to_order (id_parent, id_child) "

@@ -5,6 +5,9 @@ extend-exclude = ["venv", ".venv", "log", "parser_data", "design_number_data", "
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "ANN"]
+# E501: what the formatter leaves is long strings and SQL
+# ASYNC230/240: only small local log-file writes after an operation
+ignore = ["E501", "ASYNC230", "ASYNC240"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["litestar.params.Body", "litestar.params.Parameter", "litestar.di.Provide"]

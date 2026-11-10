@@ -131,10 +131,10 @@ def merge_serial_none_lcns(valid_rows: list[dict]) -> list[str]:
     seen: set[str] = set()
     merged: list[str] = []
     for vr in valid_rows:
-        for l in vr["lcn_trains"]:
-            if l not in seen:
-                seen.add(l)
-                merged.append(l)
+        for lcn in vr["lcn_trains"]:
+            if lcn not in seen:
+                seen.add(lcn)
+                merged.append(lcn)
     return merged
 
 
@@ -142,7 +142,7 @@ def set_serial_none(valid_rows: list[dict]) -> list[str]:
     lcns = merge_serial_none_lcns(valid_rows)
     if not lcns:
         return []
-    lcn_list = ", ".join(f"'{sql_escape(l)}'" for l in lcns)
+    lcn_list = ", ".join(f"'{sql_escape(lcn)}'" for lcn in lcns)
     return [f"UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN ({lcn_list});"]
 
 

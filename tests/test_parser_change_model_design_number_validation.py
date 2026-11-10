@@ -174,7 +174,7 @@ async def test_full_index_conflict_with_the_db_reported(db_session):
 async def test_conflict_between_rows_and_swaps_reported(db_session):
     a = await make_design_number(db_session, "KP-A")
     b = await make_design_number(db_session, "KP-B")
-    c = await make_design_number(db_session, "KP-C")
+    await make_design_number(db_session, "KP-C")
     first = await make_model(db_session, a, lcn="M1.1")
     second = await make_model(db_session, b, lcn="M1.2")
     third = await make_model(db_session, a, lcn="M2.1", id_car_place=3)
