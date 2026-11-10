@@ -308,9 +308,11 @@ async def validate_update_rows(
     catalogues = await _field_catalogues(db_session)
     numbers = [_cell_text(row.get("number")) for row in rows]
     dn_ids: dict[str | None, int] = dict(
-        (await db_session.execute(select(DesignNumber.number, DesignNumber.id).where(DesignNumber.number.in_(numbers))))
-        .tuples()
-        .all()
+        (
+            await db_session.execute(
+                select(DesignNumber.number, DesignNumber.id).where(DesignNumber.number.in_(numbers))
+            )
+        ).all()
     )
 
     number_rows: dict[str, int] = {}

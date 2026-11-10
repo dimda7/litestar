@@ -61,7 +61,7 @@ async def load_ptoirs(
         result = await db_session.execute(
             select(key, Ptoir.id, Ptoir.number_ptoir).where(key.in_(chunk)).order_by(Ptoir.id)
         )
-        for value, id_ptoir, number_ptoir in result.tuples():
+        for value, id_ptoir, number_ptoir in result:
             ptoirs.setdefault(value, []).append({"id": id_ptoir, "number_ptoir": number_ptoir, "order_numbers": []})
 
     by_id = {ptoir["id"]: ptoir for group in ptoirs.values() for ptoir in group}
@@ -69,6 +69,6 @@ async def load_ptoirs(
         result = await db_session.execute(
             select(Orders.id_ptoir, Orders.order_number).where(Orders.id_ptoir.in_(chunk)).order_by(Orders.id)
         )
-        for id_ptoir, order_number in result.tuples():
+        for id_ptoir, order_number in result:
             by_id[id_ptoir]["order_numbers"].append(order_number)
     return ptoirs

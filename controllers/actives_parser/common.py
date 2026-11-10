@@ -31,33 +31,33 @@ def parse_model_lcn(lcn: str) -> tuple[int, str] | None:
     return int(match.group(1)), match.group(2) or ""
 
 
-class StorageRepository(SQLAlchemyAsyncRepository[Storage]):  # type: ignore[type-var]
+class StorageRepository(SQLAlchemyAsyncRepository[Storage]):
     model_type = Storage
 
 
-class StoragePlaceRepository(SQLAlchemyAsyncRepository[StoragePlace]):  # type: ignore[type-var]
+class StoragePlaceRepository(SQLAlchemyAsyncRepository[StoragePlace]):
     model_type = StoragePlace
 
 
-class ConsignmentRepository(SQLAlchemyAsyncRepository[Consignment]):  # type: ignore[type-var]
+class ConsignmentRepository(SQLAlchemyAsyncRepository[Consignment]):
     model_type = Consignment
 
 
-class DesignNumberRepository(SQLAlchemyAsyncRepository[DesignNumber]):  # type: ignore[type-var]
+class DesignNumberRepository(SQLAlchemyAsyncRepository[DesignNumber]):
     model_type = DesignNumber
 
 
-class IteratorNumberLastRepository(SQLAlchemyAsyncRepository[IteratorNumberLast]):  # type: ignore[type-var]
+class IteratorNumberLastRepository(SQLAlchemyAsyncRepository[IteratorNumberLast]):
     model_type = IteratorNumberLast
 
 
-class ActivesRepository(SQLAlchemyAsyncRepository[Actives]):  # type: ignore[type-var]
+class ActivesRepository(SQLAlchemyAsyncRepository[Actives]):
     model_type = Actives
 
 
-class MileageStartRepository(SQLAlchemyAsyncRepository[MileageStart]):  # type: ignore[type-var]
+class MileageStartRepository(SQLAlchemyAsyncRepository[MileageStart]):
     model_type = MileageStart
 
 
-class CounterActiveRepository(SQLAlchemyAsyncRepository[CounterActive]):  # type: ignore[type-var]
+class CounterActiveRepository(SQLAlchemyAsyncRepository[CounterActive]):
     model_type = CounterActive

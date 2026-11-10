@@ -11,27 +11,27 @@ from models import Actives, Orders, Relocate, Techcard, Train, User
 logger = logging.getLogger("app")
 
 
-class TrainRepository(SQLAlchemyAsyncRepository[Train]):  # type: ignore[type-var]
+class TrainRepository(SQLAlchemyAsyncRepository[Train]):
     model_type = Train
 
 
-class UserRepository(SQLAlchemyAsyncRepository[User]):  # type: ignore[type-var]
+class UserRepository(SQLAlchemyAsyncRepository[User]):
     model_type = User
 
 
-class TechcardRepository(SQLAlchemyAsyncRepository[Techcard]):  # type: ignore[type-var]
+class TechcardRepository(SQLAlchemyAsyncRepository[Techcard]):
     model_type = Techcard
 
 
-class ActivesRepository(SQLAlchemyAsyncRepository[Actives]):  # type: ignore[type-var]
+class ActivesRepository(SQLAlchemyAsyncRepository[Actives]):
     model_type = Actives
 
 
-class OrdersRepository(SQLAlchemyAsyncRepository[Orders]):  # type: ignore[type-var]
+class OrdersRepository(SQLAlchemyAsyncRepository[Orders]):
     model_type = Orders
 
 
-class RelocateRepository(SQLAlchemyAsyncRepository[Relocate]):  # type: ignore[type-var]
+class RelocateRepository(SQLAlchemyAsyncRepository[Relocate]):
     model_type = Relocate
 
 

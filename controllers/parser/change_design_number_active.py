@@ -1,7 +1,9 @@
 import json
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -236,7 +238,9 @@ class ChangeDesignNumberActiveController(Controller):
                 sql_lines = models_sql.change_design_number_active(valid_rows)
                 try:
                     conn = await session.connection()
-                    targets = (await conn.exec_driver_sql(models_sql.design_number_active_targets(valid_rows))).all()
+                    targets: Sequence[tuple[Any, ...]] = (
+                        await conn.exec_driver_sql(models_sql.design_number_active_targets(valid_rows))
+                    ).all()
                     numbers = {vr["old_id_design_number"]: vr["old_number"] for vr in valid_rows}
                     numbers.update((vr["id_design_number"], vr["new_number"]) for vr in valid_rows)
                     # Written before the UPDATE: it is the only record of which
