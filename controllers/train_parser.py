@@ -3,6 +3,8 @@ from datetime import datetime
 
 from litestar import Controller, get, post
 from litestar.connection.request import Request
+from litestar.di import NamedDependency
+from litestar.params import FromPath, FromQuery
 from litestar.response import Redirect, Response, Template
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -154,7 +156,13 @@ class TrainParserController(Controller):
         return errors, valid_rows
 
     @get("/")
-    async def index(self, request: Request, db_session: AsyncSession, page: int = 1, per_page: int = 10) -> Template:
+    async def index(
+        self,
+        request: Request,
+        db_session: NamedDependency[AsyncSession],
+        page: FromQuery[int] = 1,
+        per_page: FromQuery[int] = 10,
+    ) -> Template:
         page = max(page, 1)
         per_page = min(per_page, 200)
         error: str = request.session.pop("train_parser_error", "")
@@ -389,5 +397,5 @@ class TrainParserController(Controller):
         )
 
     @get("/progress/{task_id:str}")
-    async def get_progress(self, task_id: str) -> Response:
+    async def get_progress(self, task_id: FromPath[str]) -> Response:
         return progress_response(task_id)

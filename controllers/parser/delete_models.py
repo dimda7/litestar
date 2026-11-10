@@ -1,8 +1,7 @@
 import logging
 
 from litestar import Controller, post
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,11 +52,11 @@ class DeleteModelsController(Controller):
     path = "/parser"
 
     @post("/delete-rows/start")
-    async def delete_rows_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+    async def delete_rows_start(self, data: MultipartBody[dict]) -> Response:
         """Start background generation of the models row deletion SQL file; returns a task_id to poll."""
         return sql_tasks.start_generate(data, DELETE_MODELS)
 
     @post("/execute-delete/start")
-    async def execute_delete_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+    async def execute_delete_start(self, data: MultipartBody[dict]) -> Response:
         """Start the background models row deletion in the database; returns a task_id to poll."""
         return sql_tasks.start_execute(data, DELETE_MODELS)

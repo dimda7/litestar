@@ -1,8 +1,7 @@
 import logging
 
 from litestar import Controller, post
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,15 +112,11 @@ class SerialNoneController(Controller):
     path = "/parser"
 
     @post("/serial-none/generate-sql/start")
-    async def serial_none_generate_sql_start(
-        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
-    ) -> Response:
+    async def serial_none_generate_sql_start(self, data: MultipartBody[dict]) -> Response:
         """Start background generation of the serial_number = 'none' SQL file; returns a task_id to poll."""
         return sql_tasks.start_generate(data, SERIAL_NONE)
 
     @post("/serial-none/execute-sql/start")
-    async def serial_none_execute_sql_start(
-        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
-    ) -> Response:
+    async def serial_none_execute_sql_start(self, data: MultipartBody[dict]) -> Response:
         """Start the background serial_number = 'none' in the database; returns a task_id to poll."""
         return sql_tasks.start_execute(data, SERIAL_NONE)

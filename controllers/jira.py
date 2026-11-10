@@ -2,6 +2,7 @@ import json
 import logging
 
 from litestar import Controller, get
+from litestar.params import FromQuery
 from litestar.response import Response
 
 import jira_client
@@ -13,7 +14,7 @@ class JiraController(Controller):
     path = "/jira"
 
     @get("/attachments")
-    async def list_attachments(self, issue: str) -> Response:
+    async def list_attachments(self, issue: FromQuery[str]) -> Response:
         try:
             result = await jira_client.get_issue(issue)
         except ValueError as e:
@@ -43,7 +44,7 @@ class JiraController(Controller):
         )
 
     @get("/attachments/download")
-    async def download_attachment(self, content_url: str) -> Response:
+    async def download_attachment(self, content_url: FromQuery[str]) -> Response:
         try:
             content, mime_type = await jira_client.download_attachment(content_url)
         except ValueError as e:

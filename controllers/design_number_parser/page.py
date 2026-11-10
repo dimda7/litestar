@@ -1,7 +1,6 @@
 from litestar import Controller, get, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import FromQuery, URLEncodedBody
 from litestar.response import Redirect, Template
 
 import excel_upload
@@ -17,9 +16,9 @@ class DesignNumberParserController(Controller):
     async def index(
         self,
         request: Request,
-        page: int = 1,
-        per_page: int = 10,
-        select_sheet: bool = False,
+        page: FromQuery[int] = 1,
+        per_page: FromQuery[int] = 10,
+        select_sheet: FromQuery[bool] = False,
     ) -> Template:
         page = max(page, 1)
         per_page = min(per_page, 200)
@@ -74,7 +73,7 @@ class DesignNumberParserController(Controller):
     async def select_sheet(
         self,
         request: Request,
-        data: DesignNumberSelectSheetRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
+        data: URLEncodedBody[DesignNumberSelectSheetRequest],
     ) -> Redirect:
         """Sheet choice for a multi-sheet Excel file — see excel_upload.handle_sheet_choice."""
         return excel_upload.handle_sheet_choice(request, PREFIX, "/design-number-parser", data.sheet_name)

@@ -4,8 +4,7 @@ from datetime import datetime
 
 from litestar import Controller, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy import String, and_, cast, or_, select
 from sqlalchemy.engine import Row
@@ -192,7 +191,7 @@ class ChangeModelDesignNumberController(Controller):
     async def change_design_number_generate_sql_start(
         self,
         request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[dict],
     ) -> Response:
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         return start_task(len(rows), lambda progress: self._run_generate(progress, rows))
@@ -217,7 +216,7 @@ class ChangeModelDesignNumberController(Controller):
     async def change_design_number_execute_sql_start(
         self,
         request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[dict],
     ) -> Response:
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         return start_task(len(rows), lambda progress: self._run_execute(progress, rows))

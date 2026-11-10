@@ -2,8 +2,7 @@ import logging
 
 from litestar import Controller, get, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import FromPath, FromQuery, MultipartBody, URLEncodedBody
 from litestar.response import Redirect, Response, Template
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,9 +121,9 @@ class OrderParserController(Controller):
     async def index(
         self,
         request: Request,
-        page: int = 1,
-        per_page: int = 10,
-        select_sheet: bool = False,
+        page: FromQuery[int] = 1,
+        per_page: FromQuery[int] = 10,
+        select_sheet: FromQuery[bool] = False,
     ) -> Template:
         page = max(page, 1)
         per_page = min(per_page, 200)
@@ -179,19 +178,19 @@ class OrderParserController(Controller):
     async def select_sheet(
         self,
         request: Request,
-        data: SelectSheetRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
+        data: URLEncodedBody[SelectSheetRequest],
     ) -> Redirect:
         """Sheet choice for a multi-sheet Excel file — see excel_upload.handle_sheet_choice."""
         return excel_upload.handle_sheet_choice(request, PREFIX, "/order-parser", data.sheet_name, skip_blank_rows=True)
 
     @post("/generate-sql/start")
-    async def generate_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+    async def generate_sql_start(self, data: MultipartBody[dict]) -> Response:
         return sql_tasks.start_generate(data, ASSIGN_PARENT_ORDER)
 
     @post("/execute-sql/start")
-    async def execute_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+    async def execute_sql_start(self, data: MultipartBody[dict]) -> Response:
         return sql_tasks.start_execute(data, ASSIGN_PARENT_ORDER)
 
     @get("/progress/{task_id:str}")
-    async def get_progress(self, task_id: str) -> Response:
+    async def get_progress(self, task_id: FromPath[str]) -> Response:
         return progress_response(task_id)

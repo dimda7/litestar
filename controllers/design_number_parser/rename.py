@@ -3,8 +3,8 @@ from datetime import datetime
 
 from litestar import Controller, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.di import NamedDependency
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,8 +99,8 @@ class RenameDesignNumberController(Controller):
     async def rename_design_number(
         self,
         request: Request,
-        db_session: AsyncSession,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        db_session: NamedDependency[AsyncSession],
+        data: MultipartBody[dict],
     ) -> Response:
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         errors, valid_rows = await validate_rename_rows(db_session, rows)
@@ -168,8 +168,8 @@ class RenameDesignNumberController(Controller):
     async def generate_sql_rename_design_number(
         self,
         request: Request,
-        db_session: AsyncSession,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        db_session: NamedDependency[AsyncSession],
+        data: MultipartBody[dict],
     ) -> Response:
         rows: list[dict] = json.loads(data.get("rows", "[]"))
         errors, valid_rows = await validate_rename_rows(db_session, rows)

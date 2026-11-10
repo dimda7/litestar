@@ -3,8 +3,7 @@ import logging
 
 from litestar import Controller, get, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response, Template
 
 import db_manager
@@ -65,7 +64,7 @@ class SettingsController(Controller):
     async def test_connection(
         self,
         request: Request,
-        data: DBProfileRequest = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[DBProfileRequest],
     ) -> Response:
         ok, message = await db_manager.test_connection(data.profile)
         return _json("ok" if ok else "error", message)
@@ -74,7 +73,7 @@ class SettingsController(Controller):
     async def password(
         self,
         request: Request,
-        data: DBProfileRequest = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[DBProfileRequest],
     ) -> Response:
         """One connection's password — to prefill the edit form."""
         profile = db_profiles.get(data.profile)
@@ -86,7 +85,7 @@ class SettingsController(Controller):
     async def test_params(
         self,
         request: Request,
-        data: DBProfileFormRequest = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[DBProfileFormRequest],
     ) -> Response:
         """Test parameters that are not saved yet — the button inside the form."""
         ok, message = await db_manager.test_url(_form_url(data))
@@ -96,7 +95,7 @@ class SettingsController(Controller):
     async def connect(
         self,
         request: Request,
-        data: DBProfileRequest = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[DBProfileRequest],
     ) -> Response:
         ok, message = await db_manager.test_connection(data.profile)
         if not ok:
@@ -120,7 +119,7 @@ class SettingsController(Controller):
     async def add(
         self,
         request: Request,
-        data: DBProfileFormRequest = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[DBProfileFormRequest],
     ) -> Response:
         try:
             created = db_profiles.add(
@@ -149,7 +148,7 @@ class SettingsController(Controller):
     async def update(
         self,
         request: Request,
-        data: DBProfileUpdateRequest = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[DBProfileUpdateRequest],
     ) -> Response:
         existing = db_profiles.get(data.profile)
         if existing is None:
@@ -200,7 +199,7 @@ class SettingsController(Controller):
     async def delete(
         self,
         request: Request,
-        data: DBProfileRequest = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[DBProfileRequest],
     ) -> Response:
         profile = db_profiles.get(data.profile)
         try:
