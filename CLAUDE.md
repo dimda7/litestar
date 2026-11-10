@@ -92,6 +92,13 @@
 - Reference rows (train types, design numbers, storages) are taken from the copy as they are; anything the tests write they create themselves (`tests/pg/factories.py`). The asset move is the exception — it is exercised on a real asset, because `relocate_triger` recomputes the mileage counter from the asset's own history and fails on a synthetic one with an empty counter.
 - `car_place.is_delete` defaults to `false` on the working database but still to `true` on the grom copy, so `tests/pg/` compares a created car place's `is_active`/`is_delete` with the catalog's column defaults instead of hardcoding them.
 
+## Linting
+- Config in `pyproject.toml`. Before committing: `venv/bin/ruff check --fix . && venv/bin/ruff format .` — both must be clean.
+- `E501` is off (what the formatter leaves is long strings/SQL); `ASYNC230/240` are off (only small log-file writes after an operation). `Body`/`Parameter`/`Provide` are marked immutable for `B008`.
+- `venv/bin/mypy .` is not clean yet (215 errors in 45 files on 2026-11-10, mostly Litestar `scope`/`session` union types and unchecked `X | None`). Do not mass-fix: when touching a module, leave it with no new mypy errors and fix the existing ones in it if cheap.
+- Bandit is deliberately not used: SQL is built as strings via `sql_escape()` by design, so its SQL-injection check would flag every builder.
+- The `ruff format` commit is listed in `.git-blame-ignore-revs`; run `git config blame.ignoreRevsFile .git-blame-ignore-revs` in a fresh clone.
+
 ## Known Bugs / Data Issues
 - When looking up `CarPlace` by `name`, use `.scalars().all()` and handle 0/1/many explicitly — `.scalar_one_or_none()` raises `MultipleResultsFound` if duplicate names ever reappear in DB
 
