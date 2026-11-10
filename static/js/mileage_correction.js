@@ -143,12 +143,7 @@ async function downloadSQL() {
             showError(data.message);
             return;
         }
-        const url = URL.createObjectURL(new Blob([data.sql], { type: 'text/sql' }));
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'mileage_correction.sql';
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadFile([data.sql], 'text/sql', 'mileage_correction.sql');
     } catch (err) {
         showError('Ошибка запроса: ' + err.message);
     }

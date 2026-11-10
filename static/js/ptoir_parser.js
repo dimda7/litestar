@@ -1,12 +1,5 @@
 const ALL_ROWS = pageData('all-rows');
 
-function changePerPage(val) {
-    const url = new URL(window.location);
-    url.searchParams.set('per_page', val);
-    url.searchParams.set('page', '1');
-    window.location = url;
-}
-
 function showModal() {
     document.getElementById('action-modal').style.display = 'flex';
 }
@@ -55,6 +48,8 @@ document.getElementById('delete-main-modal').addEventListener('click', function(
     if (e.target === this) closeDeleteMainModal();
 });
 
+// Replaces the shared handleErrors from tasks.js: this page titles the box per
+// operation and also lists plain-string errors.
 function handleErrors(data, title = 'Ошибки валидации:') {
     document.getElementById('error-title').textContent = title;
     const box = document.getElementById('error-box');
@@ -77,56 +72,6 @@ function buildFormData() {
     return appendCsrfToken(formData);
 }
 
-let progressPollTimer = null;
-
-function showProgress() {
-    document.getElementById('progress-text').textContent = 'Проверка данных...';
-    document.getElementById('progress-bar-fill').style.width = '0%';
-    document.getElementById('progress-percent').textContent = '0%';
-    document.getElementById('progress-counts').textContent = '';
-    document.getElementById('progress-overlay').style.display = 'flex';
-}
-
-function updateProgress(state) {
-    const total = state.total || 0;
-    const processed = state.processed || 0;
-    const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-    document.getElementById('progress-bar-fill').style.width = pct + '%';
-    document.getElementById('progress-percent').textContent = pct + '%';
-    document.getElementById('progress-counts').textContent = processed + ' из ' + total;
-    document.getElementById('progress-text').textContent =
-        state.phase === 'executing' ? 'Запись в базу данных...' : 'Проверка данных...';
-}
-
-function hideProgress() {
-    if (progressPollTimer) {
-        clearInterval(progressPollTimer);
-        progressPollTimer = null;
-    }
-    document.getElementById('progress-overlay').style.display = 'none';
-}
-
-function pollProgress(taskId, onFinished) {
-    progressPollTimer = setInterval(() => {
-        getJson('/ptoir-parser/progress/' + taskId)
-            .then(state => {
-                if (state.status === 'running') {
-                    updateProgress(state);
-                    return;
-                }
-                clearInterval(progressPollTimer);
-                progressPollTimer = null;
-                onFinished(state);
-            })
-            .catch(err => {
-                clearInterval(progressPollTimer);
-                progressPollTimer = null;
-                hideProgress();
-                alert('Ошибка получения прогресса: ' + err.message);
-            });
-    }, 400);
-}
-
 function downloadSQL() {
     closeModal();
     document.getElementById('error-box').style.display = 'none';
@@ -134,18 +79,12 @@ function downloadSQL() {
     showProgress();
 
     postForm('/ptoir-parser/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/ptoir-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'update_ptoir.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'update_ptoir.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -161,7 +100,7 @@ function executeUpdate() {
     showProgress();
 
     postForm('/ptoir-parser/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/ptoir-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -180,18 +119,12 @@ function downloadHoursSQL() {
     showProgress();
 
     postForm('/ptoir-parser/change-hours/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/ptoir-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'change_hours.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'change_hours.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -207,7 +140,7 @@ function executeHours() {
     showProgress();
 
     postForm('/ptoir-parser/change-hours/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/ptoir-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -226,20 +159,14 @@ function downloadDeleteSQL() {
     showProgress();
 
     postForm('/ptoir-parser/delete/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/ptoir-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
                 return;
             }
             if (data.errors.length) handleErrors(data, 'Пропущенные строки:');
-            const blob = new Blob([data.sql], { type: 'text/sql' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'delete_ptoir.sql';
-            a.click();
-            URL.revokeObjectURL(url);
+            downloadFile([data.sql], 'text/sql', 'delete_ptoir.sql');
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
 }
@@ -254,7 +181,7 @@ function executeDelete() {
     showProgress();
 
     postForm('/ptoir-parser/delete/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/ptoir-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -278,20 +205,14 @@ function downloadDeleteMainSQL() {
     showProgress();
 
     postForm('/ptoir-parser/delete-main/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/ptoir-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
                 return;
             }
             if (data.errors.length) handleErrors(data, 'Пропущенные строки:');
-            const blob = new Blob([data.sql], { type: 'text/sql' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'delete_main_ptoir.sql';
-            a.click();
-            URL.revokeObjectURL(url);
+            downloadFile([data.sql], 'text/sql', 'delete_main_ptoir.sql');
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
 }
@@ -306,7 +227,7 @@ function executeDeleteMain() {
     showProgress();
 
     postForm('/ptoir-parser/delete-main/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/ptoir-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
