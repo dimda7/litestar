@@ -1,6 +1,6 @@
-"""Validation tests for OrderParserController._validate_and_build_rows (controllers/order_parser.py)."""
+"""Validation tests for validate_parent_order_rows (controllers/order_parser.py)."""
 
-from controllers.order_parser import OrderParserController
+from controllers.order_parser import validate_parent_order_rows
 from sql_builders import orders as orders_sql
 from tests.conftest import make_order
 
@@ -10,8 +10,7 @@ def make_row(child="ЗН000783610", parent="ЗН000464234") -> dict:
 
 
 async def validate(db_session, rows):
-    controller = OrderParserController(owner=None)
-    return await controller._validate_and_build_rows(db_session, rows)
+    return await validate_parent_order_rows(db_session, rows)
 
 
 def error_fields(errors: list[dict]) -> list[str]:
