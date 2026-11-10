@@ -5,6 +5,8 @@ from typing import Any, cast
 
 from litestar import Controller, get, post
 from litestar.connection.request import Request
+from litestar.di import NamedDependency
+from litestar.params import FromPath
 from litestar.response import Response, Template
 from sqlalchemy import text
 from sqlalchemy.engine import CursorResult
@@ -74,7 +76,7 @@ class ActiveHierarchyController(Controller):
         )
 
     @post("/preview/{kind:str}")
-    async def preview(self, kind: str, db_session: AsyncSession) -> Response:
+    async def preview(self, kind: FromPath[str], db_session: NamedDependency[AsyncSession]) -> Response:
         cfg = HIERARCHY_KINDS.get(kind)
         if cfg is None:
             return Response(
@@ -106,7 +108,7 @@ class ActiveHierarchyController(Controller):
         )
 
     @post("/execute/{kind:str}")
-    async def execute(self, kind: str, db_session: AsyncSession) -> Response:
+    async def execute(self, kind: FromPath[str], db_session: NamedDependency[AsyncSession]) -> Response:
         cfg = HIERARCHY_KINDS.get(kind)
         if cfg is None:
             return Response(

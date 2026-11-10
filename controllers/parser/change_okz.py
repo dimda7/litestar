@@ -4,8 +4,7 @@ from datetime import datetime
 
 from litestar import Controller, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -135,7 +134,7 @@ class ChangeModelOkzController(Controller):
     async def change_okz_generate_sql_start(
         self,
         request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[dict],
     ) -> Response:
         """Start background generation of the 'изменить okz в модели' SQL file; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
@@ -167,7 +166,7 @@ class ChangeModelOkzController(Controller):
     async def change_okz_execute_sql_start(
         self,
         request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[dict],
     ) -> Response:
         """Start the background atomic okz change on models; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))

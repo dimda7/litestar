@@ -1,8 +1,7 @@
 import logging
 
 from litestar import Controller, post
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -175,15 +174,11 @@ class ChangeOkzActiveController(Controller):
     path = "/parser"
 
     @post("/change-okz-active/generate-sql/start")
-    async def change_okz_active_generate_sql_start(
-        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
-    ) -> Response:
+    async def change_okz_active_generate_sql_start(self, data: MultipartBody[dict]) -> Response:
         """Start background generation of the 'изменить okz в активе по модели' SQL file; returns a task_id to poll."""
         return sql_tasks.start_generate(data, CHANGE_OKZ_ACTIVE)
 
     @post("/change-okz-active/execute-sql/start")
-    async def change_okz_active_execute_sql_start(
-        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
-    ) -> Response:
+    async def change_okz_active_execute_sql_start(self, data: MultipartBody[dict]) -> Response:
         """Start the background 'изменить okz в активе по модели' in the database; returns a task_id to poll."""
         return sql_tasks.start_execute(data, CHANGE_OKZ_ACTIVE)

@@ -4,11 +4,11 @@ from pathlib import Path
 from litestar import Controller, Litestar, get
 from litestar.config.csrf import CSRFConfig
 from litestar.connection.request import Request
-from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.datastructures import CacheControlHeader
 from litestar.di import Provide
 from litestar.middleware.session.client_side import CookieBackendConfig
 from litestar.openapi.config import OpenAPIConfig
+from litestar.plugins.jinja import JinjaTemplateEngine
 from litestar.response import Template
 from litestar.static_files import create_static_files_router
 from litestar.template.config import TemplateConfig

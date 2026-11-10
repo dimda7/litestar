@@ -3,8 +3,8 @@ import time
 import bcrypt
 from litestar import Controller, get, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.di import NamedDependency
+from litestar.params import URLEncodedBody
 from litestar.response import Redirect, Template
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,7 +37,7 @@ class AuthController(Controller):
     async def db_select(
         self,
         request: Request,
-        data: DbSelectRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
+        data: URLEncodedBody[DbSelectRequest],
     ) -> Template | Redirect:
         """Test the chosen database connection and make it the active one."""
         if db_profiles.get(data.profile) is None:
@@ -70,8 +70,8 @@ class AuthController(Controller):
     async def login(
         self,
         request: Request,
-        db_session: AsyncSession,
-        data: LoginRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
+        db_session: NamedDependency[AsyncSession],
+        data: URLEncodedBody[LoginRequest],
     ) -> Template | Redirect:
         """Authenticate the user.
 

@@ -1,8 +1,7 @@
 import logging
 
 from litestar import Controller, post
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -204,15 +203,11 @@ class MoveNoRelocateController(Controller):
     path = "/parser"
 
     @post("/move-no-relocate/generate-sql/start")
-    async def move_no_relocate_generate_sql_start(
-        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
-    ) -> Response:
+    async def move_no_relocate_generate_sql_start(self, data: MultipartBody[dict]) -> Response:
         """Start background generation of the asset move without relocate SQL file; returns a task_id to poll."""
         return sql_tasks.start_generate(data, MOVE_NO_RELOCATE)
 
     @post("/move-no-relocate/execute-sql/start")
-    async def move_no_relocate_execute_sql_start(
-        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
-    ) -> Response:
+    async def move_no_relocate_execute_sql_start(self, data: MultipartBody[dict]) -> Response:
         """Start the background asset move without relocate in the database; returns a task_id to poll."""
         return sql_tasks.start_execute(data, MOVE_NO_RELOCATE)

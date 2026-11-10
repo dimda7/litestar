@@ -73,7 +73,8 @@
 - Static files: `create_static_files_router(path="/static", directories=[...], cache_control=CacheControlHeader(no_cache=True))` in `route_handlers` (`from litestar.static_files import create_static_files_router`). `no-cache` makes browsers revalidate every page script; without a `Cache-Control` they cache it heuristically for days and pair an old `.js` with new HTML. Litestar does not answer `If-None-Match` with `304`, so a revalidation re-downloads the file — acceptable on the intranet.
 - `litestar run --reload` works correctly only if entrypoint imports without side effects
 - In Litestar 2.24: `Template` argument is `template_name`, not `name`
-- Jinja2 imports: `from litestar.contrib.jinja import JinjaTemplateEngine` + `from litestar.template.config import TemplateConfig`
+- Jinja2 imports: `from litestar.plugins.jinja import JinjaTemplateEngine` + `from litestar.template.config import TemplateConfig` (`litestar.contrib.jinja` is deprecated)
+- Handler parameters use the explicit styles Litestar 3.0 requires: `data: MultipartBody[T]` / `URLEncodedBody[T]` (not `= Body(media_type=...)`), `db_session: NamedDependency[AsyncSession]`, `FromQuery[T]` / `FromPath[T]` for query and path parameters (`from litestar.params` / `litestar.di`). Only route handlers need them — validators and helpers keep a plain `AsyncSession`. `pytest.ini` turns `LitestarDeprecationWarning` into an error, and `tests/test_auth_middleware_json.py` builds the real app, so a deprecated style anywhere in the routes fails the suite.
 - File uploads: DI parsing of `UploadFile` via function parameter does not work — use `await request.form()` and `.get("file")` directly
 - Exception handlers registered in `exception_handlers` must be synchronous `def`, not `async def` — Litestar calls them without `await`
 

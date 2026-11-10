@@ -4,8 +4,7 @@ from datetime import datetime, timedelta
 
 from litestar import Controller, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,7 +138,7 @@ class MoveActivesController(Controller):
     async def move_actives_generate_sql_start(
         self,
         request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[dict],
     ) -> Response:
         """Start background generation of the asset move SQL file; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))
@@ -210,7 +209,7 @@ class MoveActivesController(Controller):
     async def move_actives_execute_sql_start(
         self,
         request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[dict],
     ) -> Response:
         """Start the background atomic asset move; returns a task_id to poll."""
         rows: list[dict] = json.loads(data.get("rows", "[]"))

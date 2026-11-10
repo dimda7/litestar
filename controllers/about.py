@@ -3,6 +3,7 @@ import logging
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 from litestar import Controller, get
 from litestar.connection.request import Request
+from litestar.di import NamedDependency
 from litestar.response import Template
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,7 +44,7 @@ class AboutController(Controller):
     path = "/about"
 
     @get("/")
-    async def index(self, request: Request, db_session: AsyncSession) -> Template:
+    async def index(self, request: Request, db_session: NamedDependency[AsyncSession]) -> Template:
         try:
             counts: dict[str, int] = {
                 "trains": await TrainRepository(session=db_session).count(),

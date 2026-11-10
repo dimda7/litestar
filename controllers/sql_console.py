@@ -6,8 +6,8 @@ from typing import Any, cast
 
 from litestar import Controller, get, post
 from litestar.connection.request import Request
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.di import NamedDependency
+from litestar.params import MultipartBody
 from litestar.response import Response, Template
 from sqlalchemy import text
 from sqlalchemy.engine import CursorResult
@@ -69,8 +69,8 @@ class SqlConsoleController(Controller):
     async def execute(
         self,
         request: Request,
-        db_session: AsyncSession,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        db_session: NamedDependency[AsyncSession],
+        data: MultipartBody[dict],
     ) -> Response:
         script = str(data.get("sql", "") or "")
         execution_id = str(data.get("execution_id", "") or "") or uuid.uuid4().hex
@@ -142,7 +142,7 @@ class SqlConsoleController(Controller):
     async def cancel(
         self,
         request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        data: MultipartBody[dict],
     ) -> Response:
         execution_id = str(data.get("execution_id", "") or "")
         task = _running_tasks.get(execution_id)

@@ -2,6 +2,7 @@ from datetime import datetime
 from io import BytesIO
 
 from litestar import Controller, get
+from litestar.di import NamedDependency
 from litestar.response import Response, Template
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
@@ -124,11 +125,11 @@ class ReportsController(Controller):
         return Template(template_name="reports.html", context={"active_page": "reports"})
 
     @get("/techcards-operations")
-    async def techcards_operations(self, db_session: AsyncSession) -> Response:
+    async def techcards_operations(self, db_session: NamedDependency[AsyncSession]) -> Response:
         content = await report_xlsx(db_session, TECHCARDS_OPERATIONS_SQL, TECHCARDS_OPERATIONS_HEADERS)
         return xlsx_response(content, "techcards_operations")
 
     @get("/design-numbers")
-    async def design_numbers(self, db_session: AsyncSession) -> Response:
+    async def design_numbers(self, db_session: NamedDependency[AsyncSession]) -> Response:
         content = await report_xlsx(db_session, DESIGN_NUMBERS_SQL, DESIGN_NUMBERS_HEADERS)
         return xlsx_response(content, "design_numbers")

@@ -1,6 +1,5 @@
 from litestar import Controller, post
-from litestar.enums import RequestEncodingType
-from litestar.params import Body
+from litestar.params import MultipartBody
 from litestar.response import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -181,9 +180,9 @@ class CreateTechcardsController(Controller):
     path = PATH
 
     @post("/generate-sql/start")
-    async def generate_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+    async def generate_sql_start(self, data: MultipartBody[dict]) -> Response:
         return sql_tasks.start_generate(data, CREATE_TECHCARDS)
 
     @post("/execute-sql/start")
-    async def execute_sql_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+    async def execute_sql_start(self, data: MultipartBody[dict]) -> Response:
         return sql_tasks.start_execute(data, CREATE_TECHCARDS)

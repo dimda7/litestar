@@ -1,5 +1,7 @@
 from litestar import Controller, get
 from litestar.connection.request import Request
+from litestar.di import NamedDependency
+from litestar.params import FromQuery
 from litestar.response import Template
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,9 +16,9 @@ class UsersController(Controller):
     async def list_users(
         self,
         request: Request,
-        db_session: AsyncSession,
-        page: int = 1,
-        per_page: int = 25,
+        db_session: NamedDependency[AsyncSession],
+        page: FromQuery[int] = 1,
+        per_page: FromQuery[int] = 25,
     ) -> Template:
         """Paginated list of users."""
         per_page = min(per_page, 200)
