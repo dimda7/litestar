@@ -2,9 +2,9 @@
 
 Only the branches that stop short of `text("... FROM public.models WHERE lcn::text = ...")`
 are covered: that part uses the Postgres-specific `::text` cast, which SQLite cannot parse
-at all (see tests/conftest.py on ATTACH DATABASE ... AS public for the other queries). A full
-happy-path run with real car_place_id and id_actives_parent resolution needs a real Postgres
-(testcontainers, say) — left uncovered here deliberately, not by oversight.
+at all (see tests/conftest.py on ATTACH DATABASE ... AS public for the other queries). The
+happy path, with car_place_id and id_actives_parent resolution, is covered on the grom copy in
+tests/pg/test_train_parser_validation_pg.py.
 """
 
 from controllers.train_parser import TrainParserController
