@@ -14,12 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import sql_tasks
 from controllers.actives_parser.change_okz import CHANGE_OKZ
+from controllers.parser.change_lcn import CHANGE_LCN
 from progress_tasks import progress_response
 from tests.pg.factories import (
     car_place_name,
     make_active,
     make_location,
     make_train,
+    next_id,
     reference_ids,
     second_car_place_id,
 )
@@ -63,3 +65,25 @@ async def test_change_okz_reports_the_rowcount_of_its_update(pg_session, run_in_
 
     assert state["status"] == "done", state
     assert state["message"] == "Изменено окз у активов: 2 (строк файла: 2)"
+
+
+async def test_change_lcn_reports_the_rowcount_of_its_second_step(pg_session, run_in_test_session):
+    ids = await reference_ids(pg_session)
+    made = []
+    for suffix in ("1", "2"):
+        model_id = await next_id(pg_session, "models_id_seq")
+        lcn = f"M{ids['train_type']}.{model_id}.{suffix}"
+        await pg_session.execute(
+            text(
+                "INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
+                "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"
+            ),
+            {"id": model_id, "tt": ids["train_type"], "lcn": lcn, "cp": ids["car_place"], "dn": ids["design_number"]},
+        )
+        made.append((model_id, lcn))
+    rows = [{"id": model_id, "lsn": f"{lcn}.9"} for model_id, lcn in made]
+
+    state = await settled(sql_tasks.start_execute({"rows": json.dumps(rows)}, CHANGE_LCN))
+
+    assert state["status"] == "done", state
+    assert state["message"] == "Изменено lcn у моделей: 2 (строк файла: 2)"

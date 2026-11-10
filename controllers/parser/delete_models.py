@@ -1,17 +1,12 @@
-import json
 import logging
-from datetime import datetime
 
 from litestar import Controller, post
-from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
-from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_manager import get_session_maker
-from parser_storage import LOG_DIR
-from progress_tasks import start_task
+import sql_tasks
 from sql_builders import models as models_sql
 
 logger = logging.getLogger("parser")
@@ -34,80 +29,35 @@ def parse_delete_ids(rows: list[dict], progress: dict | None = None) -> tuple[li
     return errors, valid_ids
 
 
+async def validate_delete_rows(
+    session: AsyncSession, rows: list[dict], progress: dict | None = None
+) -> tuple[list[dict], list[int]]:
+    return parse_delete_ids(rows, progress=progress)
+
+
+DELETE_MODELS = sql_tasks.SqlOperation(
+    validate=validate_delete_rows,
+    build=models_sql.delete_models,
+    log_name="delete_models",
+    log_title="delete models",
+    summary=lambda total, valid_ids, errors, rowcounts: (
+        f"Успешно удалено {len(valid_ids)} строк",
+        [f"Rows deleted: {len(valid_ids)}"],
+    ),
+    empty_message="Нет валидных строк для удаления",
+    logger=logger,
+)
+
+
 class DeleteModelsController(Controller):
     path = "/parser"
 
     @post("/delete-rows/start")
-    async def delete_rows_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        """Start background generation of the SQL file deleting rows from models; returns a task_id to poll."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_delete_generate(progress, rows))
-
-    async def _run_delete_generate(self, progress: dict, rows: list[dict]) -> None:
-        errors, valid_ids = parse_delete_ids(rows, progress=progress)
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-
-        sql_lines = models_sql.delete_models(valid_ids)
-        progress.update(status="done", sql="\n".join(sql_lines), count=len(sql_lines))
+    async def delete_rows_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+        """Start background generation of the models row deletion SQL file; returns a task_id to poll."""
+        return sql_tasks.start_generate(data, DELETE_MODELS)
 
     @post("/execute-delete/start")
-    async def execute_delete_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
-    ) -> Response:
-        """Start the background atomic delete of rows from public.models; returns a task_id to poll."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_delete_execute(progress, rows))
-
-    async def _run_delete_execute(self, progress: dict, rows: list[dict]) -> None:
-        errors, valid_ids = parse_delete_ids(rows, progress=progress)
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-
-        if not valid_ids:
-            progress.update(
-                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для удаления"}]
-            )
-            return
-
-        progress.update(processed=0, total=len(valid_ids), phase="executing")
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                try:
-                    for i, rid in enumerate(valid_ids, start=1):
-                        await session.execute(text("DELETE FROM public.models WHERE id = :id"), {"id": rid})
-                        progress["processed"] = i
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Execute Delete: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Rows deleted: {len(valid_ids)}",
-            "",
-            *models_sql.delete_models(valid_ids),
-            "",
-        ]
-        log_file = LOG_DIR / f"delete_models_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("SQL executed: %d rows deleted, log saved to %s", len(valid_ids), log_file)
-
-        progress.update(status="done", count=len(valid_ids), message=f"Успешно удалено {len(valid_ids)} строк")
+    async def execute_delete_start(self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)) -> Response:
+        """Start the background models row deletion in the database; returns a task_id to poll."""
+        return sql_tasks.start_execute(data, DELETE_MODELS)

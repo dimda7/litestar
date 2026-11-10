@@ -1,21 +1,14 @@
-import json
 import logging
-from datetime import datetime
-from typing import Any, cast
 
 from litestar import Controller, post
-from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy import bindparam, select, text
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_manager import get_session_maker
+import sql_tasks
 from models import Train
-from parser_storage import LOG_DIR
-from progress_tasks import start_task
 from sql_builders import models as models_sql
 
 from .common import parse_model_lcn
@@ -184,111 +177,42 @@ async def check_lcn_collisions(db_session: AsyncSession, pair_list: list[dict]) 
     return errors
 
 
+def _move_no_relocate_summary(
+    total: int, valid_rows: list[dict], errors: list[dict], rowcounts: list[int]
+) -> tuple[str, list[str]]:
+    # Two-phase UPDATE as in change-lcn: the second step is the one that lands.
+    updated = rowcounts[1]
+    return (
+        f"Перемещено активов: {updated} (пар: {len(valid_rows)})",
+        [f"Pairs processed: {len(valid_rows)}, actives updated: {updated}"],
+    )
+
+
+MOVE_NO_RELOCATE = sql_tasks.SqlOperation(
+    validate=validate_move_no_relocate_rows,
+    build=models_sql.move_no_relocate,
+    log_name="move_no_relocate",
+    log_title="move-no-relocate update",
+    summary=_move_no_relocate_summary,
+    empty_message="Нет валидных строк для перемещения",
+    logger=logger,
+    per_statement=True,
+)
+
+
 class MoveNoRelocateController(Controller):
     path = "/parser"
 
     @post("/move-no-relocate/generate-sql/start")
     async def move_no_relocate_generate_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
     ) -> Response:
-        """Start background generation of the 'Переместить активы без relocate' SQL file; returns a task_id."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_move_no_relocate_generate(progress, rows))
-
-    async def _run_move_no_relocate_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                # The same lcn pair validation and parsing as 'Изменить lcn в модели'
-                # (Старый lsn -> lsn, both columns resolved as in 'set serial=none lcn').
-                errors, valid_rows = await validate_move_no_relocate_rows(session, rows, progress=progress)
-                if not errors:
-                    errors.extend(await check_lcn_collisions(session, valid_rows))
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-
-        sql_lines = models_sql.move_no_relocate(valid_rows)
-        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
-        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+        """Start background generation of the asset move without relocate SQL file; returns a task_id to poll."""
+        return sql_tasks.start_generate(data, MOVE_NO_RELOCATE)
 
     @post("/move-no-relocate/execute-sql/start")
     async def move_no_relocate_execute_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
     ) -> Response:
-        """Start the background atomic asset move without relocate; returns a task_id."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_move_no_relocate_execute(progress, rows))
-
-    async def _run_move_no_relocate_execute(self, progress: dict, rows: list[dict]) -> None:
-        total_updated = 0
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                try:
-                    errors, valid_rows = await validate_move_no_relocate_rows(session, rows, progress=progress)
-                    if not errors:
-                        errors.extend(await check_lcn_collisions(session, valid_rows))
-                except Exception as e:
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
-                    )
-                    return
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-
-                if not valid_rows:
-                    progress.update(
-                        status="error",
-                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}],
-                    )
-                    return
-
-                progress.update(processed=0, total=1, phase="executing")
-                try:
-                    # Two-phase UPDATE as in change-lcn, but additionally resetting
-                    # id_actves_parent/id_actives_root; id_location and relocate are untouched.
-                    sql_lines = models_sql.move_no_relocate(valid_rows)
-                    await session.execute(text(sql_lines[0]))
-                    result = cast(CursorResult[Any], await session.execute(text(sql_lines[1])))
-                    total_updated = result.rowcount
-                    progress["processed"] = 1
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Execute move-no-relocate update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Pairs processed: {len(valid_rows)}, actives updated: {total_updated}",
-            "",
-            *models_sql.move_no_relocate(valid_rows),
-            "",
-        ]
-        log_file = LOG_DIR / f"move_no_relocate_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Moved (no relocate) %d pairs (%d actives), log: %s", len(valid_rows), total_updated, log_file)
-
-        progress.update(
-            status="done",
-            count=len(valid_rows),
-            message=f"Перемещено активов: {total_updated} (пар: {len(valid_rows)})",
-        )
+        """Start the background asset move without relocate in the database; returns a task_id to poll."""
+        return sql_tasks.start_execute(data, MOVE_NO_RELOCATE)

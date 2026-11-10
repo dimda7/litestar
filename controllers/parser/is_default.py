@@ -1,21 +1,14 @@
-import json
 import logging
-from datetime import datetime
-from typing import Any, cast
 
 from litestar import Controller, post
-from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
-from sqlalchemy import select, text
-from sqlalchemy.engine import CursorResult
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_manager import get_session_maker
+import sql_tasks
 from models import Models
-from parser_storage import LOG_DIR
-from progress_tasks import start_task
 from sql_builders import models as models_sql
 
 logger = logging.getLogger("parser")
@@ -181,106 +174,41 @@ async def validate_is_default_rows(
     return errors, valid_rows
 
 
+def _is_default_summary(
+    total: int, valid_rows: list[dict], errors: list[dict], rowcounts: list[int]
+) -> tuple[str, list[str]]:
+    updated = sum(rowcounts)
+    return (
+        f"Изменена серийность (is_default) у моделей: {updated} (строк файла: {len(valid_rows)})",
+        [f"Rows processed: {len(valid_rows)}, models updated: {updated}"],
+    )
+
+
+IS_DEFAULT = sql_tasks.SqlOperation(
+    validate=validate_is_default_rows,
+    build=models_sql.set_is_default,
+    log_name="is_default",
+    log_title="is-default update",
+    summary=_is_default_summary,
+    empty_message="Нет валидных строк для изменения",
+    logger=logger,
+    per_statement=True,
+)
+
+
 class IsDefaultController(Controller):
     path = "/parser"
 
     @post("/is-default/generate-sql/start")
     async def is_default_generate_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
     ) -> Response:
-        """Start background generation of the 'Изменить серийность в модели' SQL file; returns a task_id."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_is_default_generate(progress, rows))
-
-    async def _run_is_default_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_is_default_rows(session, rows, progress=progress)
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-
-        sql_lines = models_sql.set_is_default(valid_rows)
-        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
-        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+        """Start background generation of the is_default change SQL file; returns a task_id to poll."""
+        return sql_tasks.start_generate(data, IS_DEFAULT)
 
     @post("/is-default/execute-sql/start")
     async def is_default_execute_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
     ) -> Response:
-        """Start the background atomic is_default change on models; returns a task_id."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_is_default_execute(progress, rows))
-
-    async def _run_is_default_execute(self, progress: dict, rows: list[dict]) -> None:
-        total_updated = 0
-        valid_rows: list[dict] = []
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                try:
-                    errors, valid_rows = await validate_is_default_rows(session, rows, progress=progress)
-                except Exception as e:
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
-                    )
-                    return
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-
-                if not valid_rows:
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}]
-                    )
-                    return
-
-                # FALSE rows before TRUE ones (see models_sql.set_is_default) — one
-                # UPDATE per model, each its own transaction step, so the order stays
-                # predictable for the partial UNIQUE index over is_default=true.
-                sql_lines = models_sql.set_is_default(valid_rows)
-                progress.update(processed=0, total=len(sql_lines), phase="executing")
-                try:
-                    for i, line in enumerate(sql_lines, start=1):
-                        result = cast(CursorResult[Any], await session.execute(text(line)))
-                        total_updated += result.rowcount
-                        progress["processed"] = i
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Execute is-default update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Rows processed: {len(valid_rows)}, models updated: {total_updated}",
-            "",
-            *models_sql.set_is_default(valid_rows),
-            "",
-        ]
-        log_file = LOG_DIR / f"is_default_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Changed is_default for %d models, log: %s", total_updated, log_file)
-
-        progress.update(
-            status="done",
-            count=len(valid_rows),
-            message=f"Изменена серийность (is_default) у моделей: {total_updated} (строк файла: {len(valid_rows)})",
-        )
+        """Start the background is_default change in the database; returns a task_id to poll."""
+        return sql_tasks.start_execute(data, IS_DEFAULT)

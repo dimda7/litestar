@@ -1,20 +1,13 @@
-import json
 import logging
-from datetime import datetime
-from typing import Any, cast
 
 from litestar import Controller, post
-from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy import text
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_manager import get_session_maker
-from parser_storage import LOG_DIR
-from progress_tasks import start_task
+import sql_tasks
 from sql_builders import models as models_sql
 
 logger = logging.getLogger("parser")
@@ -121,105 +114,42 @@ async def validate_change_model_lcn_rows(
     return errors, valid_rows
 
 
+def _change_lcn_summary(
+    total: int, valid_rows: list[dict], errors: list[dict], rowcounts: list[int]
+) -> tuple[str, list[str]]:
+    # Two-phase UPDATE (see models_sql.change_model_lcn): the second step is the one that lands.
+    updated = rowcounts[1]
+    return (
+        f"Изменено lcn у моделей: {updated} (строк файла: {len(valid_rows)})",
+        [f"Rows processed: {len(valid_rows)}, models updated: {updated}"],
+    )
+
+
+CHANGE_LCN = sql_tasks.SqlOperation(
+    validate=validate_change_model_lcn_rows,
+    build=models_sql.change_model_lcn,
+    log_name="change_lcn",
+    log_title="change-lcn update",
+    summary=_change_lcn_summary,
+    empty_message="Нет валидных строк для изменения",
+    logger=logger,
+    per_statement=True,
+)
+
+
 class ChangeModelLcnController(Controller):
     path = "/parser"
 
     @post("/change-lcn/generate-sql/start")
     async def change_lcn_generate_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
     ) -> Response:
         """Start background generation of the 'изменить lcn в модели' SQL file; returns a task_id to poll."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_change_lcn_generate(progress, rows))
-
-    async def _run_change_lcn_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_change_model_lcn_rows(session, rows, progress=progress)
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-
-        sql_lines = models_sql.change_model_lcn(valid_rows)
-        full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
-        progress.update(status="done", sql=full_sql, count=len(valid_rows))
+        return sql_tasks.start_generate(data, CHANGE_LCN)
 
     @post("/change-lcn/execute-sql/start")
     async def change_lcn_execute_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
     ) -> Response:
-        """Start the background atomic lcn change on models; returns a task_id to poll."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_change_lcn_execute(progress, rows))
-
-    async def _run_change_lcn_execute(self, progress: dict, rows: list[dict]) -> None:
-        total_updated = 0
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                try:
-                    errors, valid_rows = await validate_change_model_lcn_rows(session, rows, progress=progress)
-                except Exception as e:
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
-                    )
-                    return
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-
-                if not valid_rows:
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}]
-                    )
-                    return
-
-                progress.update(processed=0, total=1, phase="executing")
-                try:
-                    # Two-phase UPDATE (see models_sql.change_model_lcn) — both steps must
-                    # run in one transaction, or after the first step the models rows are
-                    # left carrying the temporary 'Z' prefix in lcn.
-                    sql_lines = models_sql.change_model_lcn(valid_rows)
-                    await session.execute(text(sql_lines[0]))
-                    result = cast(CursorResult[Any], await session.execute(text(sql_lines[1])))
-                    total_updated = result.rowcount
-                    progress["processed"] = 1
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Execute change-lcn update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Rows processed: {len(valid_rows)}, models updated: {total_updated}",
-            "",
-            *models_sql.change_model_lcn(valid_rows),
-            "",
-        ]
-        log_file = LOG_DIR / f"change_lcn_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Changed lcn for %d models, log: %s", total_updated, log_file)
-
-        progress.update(
-            status="done",
-            count=len(valid_rows),
-            message=f"Изменено lcn у моделей: {total_updated} (строк файла: {len(valid_rows)})",
-        )
+        """Start the background 'изменить lcn в модели' in the database; returns a task_id to poll."""
+        return sql_tasks.start_execute(data, CHANGE_LCN)
