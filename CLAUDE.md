@@ -25,7 +25,8 @@
 - **Async**: All route handlers must be `async def`.
 - **Structure**: Group routes into controllers (`class MyController(Controller)`). Do not put everything in one file.
 - **Templates**: Render HTML via `Template(template_name="...")`. Do not return raw HTML strings from controllers.
-- **Static files**: Serve CSS/JS via `StaticFilesConfig` or `create_static_files_router`.
+- **Static files**: Serve CSS/JS via `create_static_files_router` (`StaticFilesConfig` is deprecated).
+- **Page JS**: lives in `static/js/<template>.js`, loaded with `<script src>` where the inline block used to be — no inline `<script>` in templates except the pre-paint theme and the clock in `base.html`. Template data reaches it as `<script id="..." type="application/json">{{ x | tojson }}</script>`, read with `pageData(id)` from `static/js/api.js`; never interpolate Jinja into a `.js` file.
 - **Errors**: Use custom exception handlers. Do not expose tracebacks in production.
 - **Style**: PEP 8, 4-space indentation, clear variable names.
 
@@ -69,11 +70,10 @@
 
 ## Litestar Specifics
 - Jinja2: `TemplateConfig(engine=JinjaTemplateEngine(directory="templates"))`
-- Static files: `StaticFilesConfig(directories=["static"], path="/static")` passed as list in `static_files_config=[...]`
+- Static files: `create_static_files_router(path="/static", directories=[...], cache_control=CacheControlHeader(no_cache=True))` in `route_handlers` (`from litestar.static_files import create_static_files_router`). `no-cache` makes browsers revalidate every page script; without a `Cache-Control` they cache it heuristically for days and pair an old `.js` with new HTML. Litestar does not answer `If-None-Match` with `304`, so a revalidation re-downloads the file — acceptable on the intranet.
 - `litestar run --reload` works correctly only if entrypoint imports without side effects
 - In Litestar 2.24: `Template` argument is `template_name`, not `name`
 - Jinja2 imports: `from litestar.contrib.jinja import JinjaTemplateEngine` + `from litestar.template.config import TemplateConfig`
-- Static files import: `from litestar.static_files import StaticFilesConfig` (not `litestar.config.static_files`)
 - File uploads: DI parsing of `UploadFile` via function parameter does not work — use `await request.form()` and `.get("file")` directly
 - Exception handlers registered in `exception_handlers` must be synchronous `def`, not `async def` — Litestar calls them without `await`
 

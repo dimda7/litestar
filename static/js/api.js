@@ -37,3 +37,8 @@ async function postForm(url, formData) {
 async function getJson(url) {
     return readJsonResponse(await fetch(url));
 }
+
+// Data the template hands to the page script: <script id="..." type="application/json">{{ x | tojson }}</script>.
+function pageData(id) {
+    return JSON.parse(document.getElementById(id).textContent);
+}
