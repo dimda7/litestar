@@ -1,13 +1,6 @@
 const ALL_ROWS = pageData('all-rows');
 let currentAction = '';
 
-function changePerPage(val) {
-    const url = new URL(window.location);
-    url.searchParams.set('per_page', val);
-    url.searchParams.set('page', '1');
-    window.location = url;
-}
-
 function showModal(action) {
     currentAction = action;
     const modal = document.getElementById('action-modal');
@@ -62,21 +55,6 @@ function closeModal() {
 document.getElementById('action-modal').addEventListener('click', function(e) {
     if (e.target === this) closeModal();
 });
-
-function handleErrors(data) {
-    const box = document.getElementById('error-box');
-    const list = document.getElementById('error-list');
-    list.innerHTML = '';
-    data.errors.forEach(e => {
-        const li = document.createElement('li');
-        li.textContent = 'Строка ' + e.row + ': ' + e.message;
-        list.appendChild(li);
-        const tr = document.querySelector('[data-row-num="' + e.row + '"]');
-        if (tr) tr.classList.add('error-row');
-    });
-    box.style.display = 'block';
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-}
 
 function buildFormData() {
     const formData = new FormData();
@@ -140,13 +118,7 @@ function downloadSQL() {
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = ep.sqlFile;
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', ep.sqlFile);
             }
         })
         .catch(err => alert('Ошибка запроса: ' + err));

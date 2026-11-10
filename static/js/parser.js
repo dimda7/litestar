@@ -1,13 +1,6 @@
 const HEADERS = pageData('headers');
 const ALL_ROWS = pageData('all-rows');
 
-function changePerPage(val) {
-    const url = new URL(window.location);
-    url.searchParams.set('per_page', val);
-    url.searchParams.set('page', '1');
-    window.location = url;
-}
-
 function showActionModal() {
     document.getElementById('action-modal').style.display = 'flex';
 }
@@ -19,21 +12,6 @@ function closeActionModal() {
 document.getElementById('action-modal').addEventListener('click', function(e) {
     if (e.target === this) closeActionModal();
 });
-
-function handleErrors(data) {
-    const box = document.getElementById('error-box');
-    const list = document.getElementById('error-list');
-    list.innerHTML = '';
-    data.errors.forEach(e => {
-        const li = document.createElement('li');
-        li.textContent = 'Строка ' + e.row + ': ' + e.message;
-        list.appendChild(li);
-        const tr = document.querySelector('[data-row-num="' + e.row + '"]');
-        if (tr) tr.classList.add('error-row');
-    });
-    box.style.display = 'block';
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-}
 
 function buildFormData() {
     const formData = new FormData();
@@ -55,18 +33,12 @@ function generateSQL() {
     showProgress();
 
     postForm('/parser/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'models_insert.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'models_insert.sql');
                 alertNewCarPlaces(data);
             }
         }))
@@ -86,7 +58,7 @@ function executeSQL(skipErrors) {
     if (skipErrors) formData.append('skip_errors', 'true');
 
     postForm('/parser/execute-sql/start', formData)
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'confirm_errors') {
                 handleErrors(data);
@@ -129,18 +101,12 @@ function deleteAllRows() {
     showProgress();
 
     postForm('/parser/delete-rows/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'models_delete.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'models_delete.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -156,7 +122,7 @@ function executeDelete() {
     showProgress();
 
     postForm('/parser/execute-delete/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -180,56 +146,6 @@ document.getElementById('serial-none-modal').addEventListener('click', function(
     if (e.target === this) closeSerialNoneModal();
 });
 
-let progressPollTimer = null;
-
-function showProgress() {
-    document.getElementById('progress-text').textContent = 'Проверка данных...';
-    document.getElementById('progress-bar-fill').style.width = '0%';
-    document.getElementById('progress-percent').textContent = '0%';
-    document.getElementById('progress-counts').textContent = '';
-    document.getElementById('progress-overlay').style.display = 'flex';
-}
-
-function updateProgress(state) {
-    const total = state.total || 0;
-    const processed = state.processed || 0;
-    const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-    document.getElementById('progress-bar-fill').style.width = pct + '%';
-    document.getElementById('progress-percent').textContent = pct + '%';
-    document.getElementById('progress-counts').textContent = processed + ' из ' + total;
-    document.getElementById('progress-text').textContent =
-        state.phase === 'executing' ? 'Запись в базу данных...' : 'Проверка данных...';
-}
-
-function hideProgress() {
-    if (progressPollTimer) {
-        clearInterval(progressPollTimer);
-        progressPollTimer = null;
-    }
-    document.getElementById('progress-overlay').style.display = 'none';
-}
-
-function pollProgress(taskId, onFinished) {
-    progressPollTimer = setInterval(() => {
-        getJson('/parser/progress/' + taskId)
-            .then(state => {
-                if (state.status === 'running') {
-                    updateProgress(state);
-                    return;
-                }
-                clearInterval(progressPollTimer);
-                progressPollTimer = null;
-                onFinished(state);
-            })
-            .catch(err => {
-                clearInterval(progressPollTimer);
-                progressPollTimer = null;
-                hideProgress();
-                alert('Ошибка получения прогресса: ' + err.message);
-            });
-    }, 400);
-}
-
 function downloadSerialNoneSQL() {
     closeSerialNoneModal();
     document.getElementById('error-box').style.display = 'none';
@@ -237,18 +153,12 @@ function downloadSerialNoneSQL() {
     showProgress();
 
     postForm('/parser/serial-none/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'serial_none.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'serial_none.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -264,7 +174,7 @@ function executeSerialNoneUpdate() {
     showProgress();
 
     postForm('/parser/serial-none/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -306,18 +216,12 @@ function downloadMoveActivesSQL() {
     showProgress();
 
     postForm('/parser/move-actives/generate-sql/start', buildMoveActivesFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'move_actives.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'move_actives.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -333,7 +237,7 @@ function executeMoveActives() {
     showProgress();
 
     postForm('/parser/move-actives/execute-sql/start', buildMoveActivesFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -364,18 +268,12 @@ function downloadChangeLcnSQL() {
     showProgress();
 
     postForm('/parser/change-lcn/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'change_lcn.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'change_lcn.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -391,7 +289,7 @@ function executeChangeLcn() {
     showProgress();
 
     postForm('/parser/change-lcn/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -422,18 +320,12 @@ function downloadChangeOkzSQL() {
     showProgress();
 
     postForm('/parser/change-okz/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'change_okz.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'change_okz.sql');
                 alertNewCarPlaces(data);
             }
         }))
@@ -450,7 +342,7 @@ function executeChangeOkz() {
     showProgress();
 
     postForm('/parser/change-okz/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -481,18 +373,12 @@ function downloadChangeDesignNumberSQL() {
     showProgress();
 
     postForm('/parser/change-design-number/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'change_model_design_number.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'change_model_design_number.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -508,7 +394,7 @@ function executeChangeDesignNumber() {
     showProgress();
 
     postForm('/parser/change-design-number/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -539,18 +425,12 @@ function downloadChangeOkzActiveSQL() {
     showProgress();
 
     postForm('/parser/change-okz-active/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'change_okz_active.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'change_okz_active.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -566,7 +446,7 @@ function executeChangeOkzActive() {
     showProgress();
 
     postForm('/parser/change-okz-active/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -597,18 +477,12 @@ function downloadChangeDesignNumberActiveSQL() {
     showProgress();
 
     postForm('/parser/change-design-number-active/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'change_design_number_active.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'change_design_number_active.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -624,7 +498,7 @@ function executeChangeDesignNumberActive() {
     showProgress();
 
     postForm('/parser/change-design-number-active/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -655,18 +529,12 @@ function downloadIsDefaultSQL() {
     showProgress();
 
     postForm('/parser/is-default/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'is_default.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'is_default.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -682,7 +550,7 @@ function executeIsDefaultUpdate() {
     showProgress();
 
     postForm('/parser/is-default/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
@@ -713,18 +581,12 @@ function downloadMoveNoRelocateSQL() {
     showProgress();
 
     postForm('/parser/move-no-relocate/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'move_no_relocate.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'move_no_relocate.sql');
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -740,7 +602,7 @@ function executeMoveNoRelocate() {
     showProgress();
 
     postForm('/parser/move-no-relocate/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);

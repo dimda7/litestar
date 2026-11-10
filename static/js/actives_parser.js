@@ -1,9 +1,3 @@
-function changePerPage(val) {
-    const url = new URL(window.location);
-    url.searchParams.set('per_page', val);
-    url.searchParams.set('page', '1');
-    window.location = url;
-}
 
 function showModal() {
     document.getElementById('action-modal').style.display = 'flex';
@@ -29,21 +23,6 @@ document.getElementById('action-modal-design-number').addEventListener('click', 
     if (e.target === this) closeModalDesignNumber();
 });
 
-function handleErrors(data) {
-    const box = document.getElementById('error-box');
-    const list = document.getElementById('error-list');
-    list.innerHTML = '';
-    data.errors.forEach(e => {
-        const li = document.createElement('li');
-        li.textContent = 'Строка ' + e.row + ': ' + e.message;
-        list.appendChild(li);
-        const tr = document.querySelector('[data-row-num="' + e.row + '"]');
-        if (tr) tr.classList.add('error-row');
-    });
-    box.style.display = 'block';
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
 function downloadSQL() {
     closeModal();
     document.getElementById('error-box').style.display = 'none';
@@ -56,13 +35,7 @@ function downloadSQL() {
             if (data.status === 'error' || !data.sql) {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'actives_update_serial_number.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'actives_update_serial_number.sql');
             }
         }))
         .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
@@ -102,13 +75,7 @@ function downloadSQLDesignNumber() {
             if (data.status === 'error' || !data.sql) {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'actives_update_design_number.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'actives_update_design_number.sql');
             }
         }))
         .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
@@ -160,13 +127,7 @@ function downloadChangeOkzSQL() {
             if (data.status === 'error' || !data.sql) {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'actives_change_okz.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'actives_change_okz.sql');
             }
         }))
         .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err.message); });
@@ -268,13 +229,7 @@ function generateCreateActivesSQL() {
             if (data.status === 'error' || !data.sql) {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'create_actives.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'create_actives.sql');
             }
         }))
         .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
@@ -304,13 +259,7 @@ function generateDeleteActivesSQL() {
             if (data.status === 'error' || !data.sql) {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'delete_actives.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'delete_actives.sql');
             }
         }))
         .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
@@ -362,13 +311,7 @@ function generateCreateNamedActivesSQL() {
             if (data.status === 'error' || !data.sql) {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'create_named_actives.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'create_named_actives.sql');
             }
         }))
         .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
@@ -420,13 +363,7 @@ function downloadRecountMileageSQL() {
             if (data.status === 'error' || !data.sql) {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'actives_recount_mileage.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'actives_recount_mileage.sql');
             }
         }))
         .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
@@ -478,13 +415,7 @@ function generateCreateActiveFromModelSQL() {
             if (data.status === 'error' || !data.sql) {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'create_active_from_model.sql';
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', 'create_active_from_model.sql');
             }
         }))
         .catch(err => { hideCreateActivesProgress(); alert('Ошибка запроса: ' + err); });
@@ -531,13 +462,7 @@ function executeCreateActives() {
                     const bytes = atob(data.xlsx);
                     const arr = new Uint8Array(bytes.length);
                     for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-                    const blob = new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = data.xlsx_filename || 'actives.xlsx';
-                    a.click();
-                    URL.revokeObjectURL(url);
+                    downloadFile([arr], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', data.xlsx_filename || 'actives.xlsx');
                 }
                 alert(data.message);
                 location.reload();

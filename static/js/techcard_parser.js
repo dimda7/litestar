@@ -1,12 +1,5 @@
 const ALL_ROWS = pageData('all-rows');
 
-function changePerPage(val) {
-    const url = new URL(window.location);
-    url.searchParams.set('per_page', val);
-    url.searchParams.set('page', '1');
-    window.location = url;
-}
-
 const OPERATIONS = {
     create: {
         title: 'Создать техкарты',
@@ -41,75 +34,10 @@ document.getElementById('action-modal').addEventListener('click', function(e) {
     if (e.target === this) closeModal();
 });
 
-function handleErrors(data) {
-    const box = document.getElementById('error-box');
-    const list = document.getElementById('error-list');
-    list.innerHTML = '';
-    data.errors.forEach(e => {
-        const li = document.createElement('li');
-        li.textContent = 'Строка ' + e.row + ': ' + e.message;
-        list.appendChild(li);
-        const tr = document.querySelector('[data-row-num="' + e.row + '"]');
-        if (tr) tr.classList.add('error-row');
-    });
-    box.style.display = 'block';
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
 function buildFormData() {
     const formData = new FormData();
     formData.append('rows', JSON.stringify(ALL_ROWS));
     return appendCsrfToken(formData);
-}
-
-let progressPollTimer = null;
-
-function showProgress() {
-    document.getElementById('progress-text').textContent = 'Проверка данных...';
-    document.getElementById('progress-bar-fill').style.width = '0%';
-    document.getElementById('progress-percent').textContent = '0%';
-    document.getElementById('progress-counts').textContent = '';
-    document.getElementById('progress-overlay').style.display = 'flex';
-}
-
-function updateProgress(state) {
-    const total = state.total || 0;
-    const processed = state.processed || 0;
-    const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-    document.getElementById('progress-bar-fill').style.width = pct + '%';
-    document.getElementById('progress-percent').textContent = pct + '%';
-    document.getElementById('progress-counts').textContent = processed + ' из ' + total;
-    document.getElementById('progress-text').textContent =
-        state.phase === 'executing' ? 'Запись в базу данных...' : 'Проверка данных...';
-}
-
-function hideProgress() {
-    if (progressPollTimer) {
-        clearInterval(progressPollTimer);
-        progressPollTimer = null;
-    }
-    document.getElementById('progress-overlay').style.display = 'none';
-}
-
-function pollProgress(taskId, onFinished) {
-    progressPollTimer = setInterval(() => {
-        getJson('/techcard-parser/progress/' + taskId)
-            .then(state => {
-                if (state.status === 'running') {
-                    updateProgress(state);
-                    return;
-                }
-                clearInterval(progressPollTimer);
-                progressPollTimer = null;
-                onFinished(state);
-            })
-            .catch(err => {
-                clearInterval(progressPollTimer);
-                progressPollTimer = null;
-                hideProgress();
-                alert('Ошибка получения прогресса: ' + err);
-            });
-    }, 400);
 }
 
 function downloadSQL() {
@@ -119,18 +47,12 @@ function downloadSQL() {
     showProgress();
 
     postForm(currentOperation.url + '/generate-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/techcard-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
             } else {
-                const blob = new Blob([data.sql], { type: 'text/sql' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = currentOperation.filename;
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadFile([data.sql], 'text/sql', currentOperation.filename);
             }
         }))
         .catch(err => { hideProgress(); alert('Ошибка запроса: ' + err); });
@@ -146,7 +68,7 @@ function executeUpdate() {
     showProgress();
 
     postForm(currentOperation.url + '/execute-sql/start', buildFormData())
-        .then(({ task_id }) => pollProgress(task_id, (data) => {
+        .then(({ task_id }) => pollProgress('/techcard-parser/progress/' + task_id, (data) => {
             hideProgress();
             if (data.status === 'error') {
                 handleErrors(data);
