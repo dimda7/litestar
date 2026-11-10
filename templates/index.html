@@ -76,6 +76,18 @@
         </div>
     </a>
 
+    <a href="/active-hierarchy" style="text-decoration: none; color: inherit;">
+        <div class="card" style="height: 100%; transition: box-shadow 0.2s; cursor: pointer;" onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow=''">
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <div style="width: 40px; height: 40px; border-radius: 10px; background: #e8eaf6; display: flex; align-items: center; justify-content: center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="#3949ab"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                </div>
+                <h3 style="font-size: 16px; font-weight: 500; margin: 0;">Иерархия активов</h3>
+            </div>
+            <p style="font-size: 14px; color: var(--text-secondary); margin: 0; line-height: 1.5;">Синхронизация id_actves_parent (Верхний актив) и id_actives_root (Головной актив) с деревом lcn.</p>
+        </div>
+    </a>
+
     <a href="/ptoir-parser" style="text-decoration: none; color: inherit;">
         <div class="card" style="height: 100%; transition: box-shadow 0.2s; cursor: pointer;" onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow=''">
             <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
@@ -97,6 +109,42 @@
                 <h3 style="font-size: 16px; font-weight: 500; margin: 0;">Парсинг заказ нарядов</h3>
             </div>
             <p style="font-size: 14px; color: var(--text-secondary); margin: 0; line-height: 1.5;">Присвоение родительского заказ-наряда по данным из Excel (order_to_order).</p>
+        </div>
+    </a>
+
+    <a href="/mileage-correction" style="text-decoration: none; color: inherit;">
+        <div class="card" style="height: 100%; transition: box-shadow 0.2s; cursor: pointer;" onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow=''">
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <div style="width: 40px; height: 40px; border-radius: 10px; background: #fce4ec; display: flex; align-items: center; justify-content: center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="#ad1457"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg>
+                </div>
+                <h3 style="font-size: 16px; font-weight: 500; margin: 0;">Корректировка введенного пробега</h3>
+            </div>
+            <p style="font-size: 14px; color: var(--text-secondary); margin: 0; line-height: 1.5;">Удаление ошибочно введённого пробега поезда и откат счётчика к последнему верному значению.</p>
+        </div>
+    </a>
+
+    <a href="/reports" style="text-decoration: none; color: inherit;">
+        <div class="card" style="height: 100%; transition: box-shadow 0.2s; cursor: pointer;" onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow=''">
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <div style="width: 40px; height: 40px; border-radius: 10px; background: #e0f7fa; display: flex; align-items: center; justify-content: center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="#00838f"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                </div>
+                <h3 style="font-size: 16px; font-weight: 500; margin: 0;">Отчёты</h3>
+            </div>
+            <p style="font-size: 14px; color: var(--text-secondary); margin: 0; line-height: 1.5;">Выгрузка данных из базы в Excel.</p>
+        </div>
+    </a>
+
+    <a href="/sql-console" style="text-decoration: none; color: inherit;">
+        <div class="card" style="height: 100%; transition: box-shadow 0.2s; cursor: pointer;" onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow=''">
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <div style="width: 40px; height: 40px; border-radius: 10px; background: #efebe9; display: flex; align-items: center; justify-content: center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="#5d4037"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10z"/><path d="M6 10l3 2-3 2v-4zm4 3h5v1h-5z"/></svg>
+                </div>
+                <h3 style="font-size: 16px; font-weight: 500; margin: 0;">Выполнить SQL скрипт</h3>
+            </div>
+            <p style="font-size: 14px; color: var(--text-secondary); margin: 0; line-height: 1.5;">Ручное выполнение SQL-запросов к текущей подключённой БД.</p>
         </div>
     </a>
 
