@@ -5,11 +5,12 @@ from litestar import Controller, Litestar, get
 from litestar.config.csrf import CSRFConfig
 from litestar.connection.request import Request
 from litestar.contrib.jinja import JinjaTemplateEngine
+from litestar.datastructures import CacheControlHeader
 from litestar.di import Provide
 from litestar.middleware.session.client_side import CookieBackendConfig
 from litestar.openapi.config import OpenAPIConfig
 from litestar.response import Template
-from litestar.static_files import StaticFilesConfig
+from litestar.static_files import create_static_files_router
 from litestar.template.config import TemplateConfig
 
 import db_manager
@@ -80,6 +81,13 @@ jinja_engine.register_template_callable("current_db_label", lambda context: db_m
 
 app = Litestar(
     route_handlers=[
+        # no-cache: the browser revalidates by ETag (a cheap 304) instead of keeping a
+        # page script for days by heuristic, which would pair an old .js with new HTML.
+        create_static_files_router(
+            path="/static",
+            directories=[base_dir / "static"],
+            cache_control=CacheControlHeader(no_cache=True),
+        ),
         HomeController,
         UsersController,
         AuthController,
@@ -101,12 +109,6 @@ app = Litestar(
     template_config=TemplateConfig(
         engine=jinja_engine,
     ),
-    static_files_config=[
-        StaticFilesConfig(
-            path="/static",
-            directories=[base_dir / "static"],
-        ),
-    ],
     dependencies={"db_session": Provide(db_manager.provide_db_session)},
     middleware=[session_config.middleware, AuthMiddleware],
     csrf_config=csrf_config,

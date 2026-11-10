@@ -1,0 +1,170 @@
+const HIERARCHY_LABELS = {
+    parent: { current: 'Текущий id_actves_parent', new: 'Новый id_actves_parent', parentLcn: 'Lcn родителя' },
+    root: { current: 'Текущий id_actives_root', new: 'Новый id_actives_root', parentLcn: 'Lcn Головной' },
+};
+
+const PAGE_SIZE = 50;
+const hierarchyState = {
+    parent: { rows: [], truncated: false, page: 1 },
+    root: { rows: [], truncated: false, page: 1 },
+};
+
+function pageButton(text, page, kind, active) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'page-btn' + (active ? ' active' : '');
+    btn.style.cssText = 'border: none; cursor: pointer; font: inherit;';
+    btn.textContent = text;
+    btn.onclick = () => goToPage(kind, page);
+    return btn;
+}
+
+function renderPagination(kind, totalPages) {
+    const state = hierarchyState[kind];
+    const pag = document.createElement('div');
+    pag.className = 'pagination';
+
+    if (state.page > 1) {
+        pag.appendChild(pageButton('«', 1, kind, false));
+        pag.appendChild(pageButton('‹', state.page - 1, kind, false));
+    }
+
+    const start = Math.max(1, state.page - 2);
+    const end = Math.min(totalPages, state.page + 2);
+    for (let p = start; p <= end; p++) {
+        pag.appendChild(pageButton(String(p), p, kind, p === state.page));
+    }
+
+    if (state.page < totalPages) {
+        pag.appendChild(pageButton('›', state.page + 1, kind, false));
+        pag.appendChild(pageButton('»', totalPages, kind, false));
+    }
+
+    return pag;
+}
+
+function goToPage(kind, page) {
+    hierarchyState[kind].page = page;
+    renderPage(kind);
+}
+
+function renderPage(kind) {
+    const state = hierarchyState[kind];
+    const box = document.getElementById('result-' + kind);
+    box.innerHTML = '';
+
+    if (state.rows.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'alert alert-success';
+        empty.textContent = 'Расхождений не найдено — обновлять нечего';
+        box.appendChild(empty);
+        return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(state.rows.length / PAGE_SIZE));
+    const pageRows = state.rows.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+
+    const count = document.createElement('div');
+    count.style.cssText = 'font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;';
+    count.textContent = 'Всего строк: ' + state.rows.length + (state.truncated ? ' (показаны первые ' + state.rows.length + ', есть ещё)' : '');
+    box.appendChild(count);
+
+    const labels = HIERARCHY_LABELS[kind];
+    const wrap = document.createElement('div');
+    wrap.className = 'table-wrapper';
+    const table = document.createElement('table');
+
+    const thead = document.createElement('thead');
+    const htr = document.createElement('tr');
+    ['id', 'lcn', 'active_number', labels.current, labels.new, labels.parentLcn].forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = c;
+        htr.appendChild(th);
+    });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    pageRows.forEach(r => {
+        const tr = document.createElement('tr');
+        [r.id, r.lcn, r.active_number, r.current_value, r.new_value, r.parent_lcn].forEach(v => {
+            const td = document.createElement('td');
+            td.textContent = (v === null || v === undefined) ? '—' : v;
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    box.appendChild(wrap);
+
+    if (totalPages > 1) {
+        box.appendChild(renderPagination(kind, totalPages));
+    }
+}
+
+function showHierarchy(kind) {
+    const box = document.getElementById('result-' + kind);
+    box.innerHTML = '<div style="font-size: 13px; color: var(--text-hint);">Загрузка...</div>';
+    document.getElementById('update-btn-' + kind).disabled = true;
+
+    const formData = new FormData();
+    appendCsrfToken(formData);
+
+    postForm('/active-hierarchy/preview/' + kind, formData)
+        .then(data => {
+            if (data.status === 'error') {
+                box.innerHTML = '';
+                const err = document.createElement('div');
+                err.className = 'alert alert-error';
+                err.textContent = data.message;
+                box.appendChild(err);
+                return;
+            }
+            hierarchyState[kind] = { rows: data.rows, truncated: data.truncated, page: 1 };
+            renderPage(kind);
+            document.getElementById('update-btn-' + kind).disabled = data.rows.length === 0;
+        })
+        .catch(err => {
+            box.innerHTML = '';
+            const errBox = document.createElement('div');
+            errBox.className = 'alert alert-error';
+            errBox.textContent = 'Ошибка запроса: ' + err;
+            box.appendChild(errBox);
+        });
+}
+
+function updateHierarchy(kind) {
+    const label = kind === 'parent' ? 'Верхний актив' : 'Головной актив';
+    if (!confirm('Обновить ' + label + ' в базе данных?')) return;
+
+    const btn = document.getElementById('update-btn-' + kind);
+    btn.disabled = true;
+
+    const formData = new FormData();
+    appendCsrfToken(formData);
+
+    postForm('/active-hierarchy/execute/' + kind, formData)
+        .then(data => {
+            const box = document.getElementById('result-' + kind);
+            box.innerHTML = '';
+            const alertBox = document.createElement('div');
+            alertBox.className = data.status === 'error' ? 'alert alert-error' : 'alert alert-success';
+            alertBox.textContent = data.message;
+            box.appendChild(alertBox);
+            if (data.status === 'ok') {
+                showHierarchy(kind);
+            } else {
+                btn.disabled = false;
+            }
+        })
+        .catch(err => {
+            const box = document.getElementById('result-' + kind);
+            box.innerHTML = '';
+            const errBox = document.createElement('div');
+            errBox.className = 'alert alert-error';
+            errBox.textContent = 'Ошибка запроса: ' + err;
+            box.appendChild(errBox);
+            btn.disabled = false;
+        });
+}
