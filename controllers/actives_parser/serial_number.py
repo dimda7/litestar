@@ -100,7 +100,7 @@ async def validate_serial_number(
 def _serial_number_summary(
     total: int, valid_rows: list[tuple[str, str, str | None]], errors: list[dict], rowcounts: list[int]
 ) -> tuple[str, list[str]]:
-    [updated] = rowcounts
+    updated = sum(rowcounts)
     return (
         f"Обновлены serial_number и modification: {updated} активов "
         f"(строк файла: {len(valid_rows)}, остальные уже совпадали)",

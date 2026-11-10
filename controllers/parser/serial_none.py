@@ -1,21 +1,14 @@
-import json
 import logging
-from datetime import datetime
-from typing import Any, cast
 
 from litestar import Controller, post
-from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
-from sqlalchemy import bindparam, select, text
-from sqlalchemy.engine import CursorResult
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_manager import get_session_maker
+import sql_tasks
 from models import Train
-from parser_storage import LOG_DIR
-from progress_tasks import start_task
 from sql_builders import models as models_sql
 
 from .common import parse_model_lcn
@@ -94,107 +87,41 @@ async def validate_serial_none_rows(
     return errors, valid_rows
 
 
+def _serial_none_summary(
+    total: int, valid_rows: list[dict], errors: list[dict], rowcounts: list[int]
+) -> tuple[str, list[str]]:
+    updated = sum(rowcounts)
+    return (
+        f"Обновлено активов: {updated} (строк файла: {len(valid_rows)})",
+        [f"Rows processed: {len(valid_rows)}, actives updated: {updated}"],
+    )
+
+
+SERIAL_NONE = sql_tasks.SqlOperation(
+    validate=validate_serial_none_rows,
+    build=models_sql.set_serial_none,
+    log_name="serial_none",
+    log_title="serial-none update",
+    summary=_serial_none_summary,
+    empty_message="Нет валидных строк для обновления",
+    logger=logger,
+    per_statement=True,
+)
+
+
 class SerialNoneController(Controller):
     path = "/parser"
 
     @post("/serial-none/generate-sql/start")
     async def serial_none_generate_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
     ) -> Response:
-        """Start background generation of the 'set serial=none lcn' SQL file; returns a task_id to poll."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_serial_none_generate(progress, rows))
-
-    async def _run_serial_none_generate(self, progress: dict, rows: list[dict]) -> None:
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                errors, valid_rows = await validate_serial_none_rows(session, rows, progress=progress)
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
-            return
-
-        if errors:
-            progress.update(status="error", errors=errors)
-            return
-
-        sql_lines = models_sql.set_serial_none(valid_rows)
-        progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
+        """Start background generation of the serial_number = 'none' SQL file; returns a task_id to poll."""
+        return sql_tasks.start_generate(data, SERIAL_NONE)
 
     @post("/serial-none/execute-sql/start")
     async def serial_none_execute_sql_start(
-        self,
-        request: Request,
-        data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
+        self, data: dict = Body(media_type=RequestEncodingType.MULTI_PART)
     ) -> Response:
-        """Start the background atomic update of serial_number='none'; returns a task_id to poll."""
-        rows: list[dict] = json.loads(data.get("rows", "[]"))
-        return start_task(len(rows), lambda progress: self._run_serial_none_execute(progress, rows))
-
-    async def _run_serial_none_execute(self, progress: dict, rows: list[dict]) -> None:
-        total_updated = 0
-        try:
-            session_maker = get_session_maker()
-            async with session_maker() as session:
-                try:
-                    errors, valid_rows = await validate_serial_none_rows(session, rows, progress=progress)
-                except Exception as e:
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
-                    )
-                    return
-
-                if errors:
-                    progress.update(status="error", errors=errors)
-                    return
-
-                if not valid_rows:
-                    progress.update(
-                        status="error",
-                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
-                    )
-                    return
-
-                # One shared UPDATE over the merged, duplicate-free list of lcns from
-                # every file row — instead of a query per row, which with identical or
-                # overlapping lsns produced several identical UPDATEs in a row.
-                progress.update(processed=0, total=1, phase="executing")
-                try:
-                    lcns = models_sql.merge_serial_none_lcns(valid_rows)
-                    stmt = text("UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN :lcns").bindparams(
-                        bindparam("lcns", expanding=True)
-                    )
-                    result = cast(CursorResult[Any], await session.execute(stmt, {"lcns": lcns}))
-                    total_updated = result.rowcount
-                    progress["processed"] = 1
-                    await session.commit()
-                except Exception as e:
-                    await session.rollback()
-                    progress.update(
-                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
-                    )
-                    return
-        except Exception as e:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
-            return
-
-        now = datetime.now()
-        log_lines = [
-            f"=== Execute serial-none update: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-            f"Rows processed: {len(valid_rows)}, actives updated: {total_updated}",
-            "",
-            *models_sql.set_serial_none(valid_rows),
-            "",
-        ]
-        log_file = LOG_DIR / f"serial_none_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-        logger.info("Serial-none updated for %d rows (%d actives), log: %s", len(valid_rows), total_updated, log_file)
-
-        progress.update(
-            status="done",
-            count=len(valid_rows),
-            message=f"Обновлено активов: {total_updated} (строк файла: {len(valid_rows)})",
-        )
+        """Start the background serial_number = 'none' in the database; returns a task_id to poll."""
+        return sql_tasks.start_execute(data, SERIAL_NONE)

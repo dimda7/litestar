@@ -111,7 +111,7 @@ async def validate_change_okz(
 def _change_okz_summary(
     total: int, valid_rows: list[tuple[str, int]], errors: list[dict], rowcounts: list[int]
 ) -> tuple[str, list[str]]:
-    [updated] = rowcounts
+    updated = sum(rowcounts)
     return (
         f"Изменено окз у активов: {updated} (строк файла: {len(valid_rows)})",
         [f"Rows processed: {len(valid_rows)}, locations updated: {updated}"],
