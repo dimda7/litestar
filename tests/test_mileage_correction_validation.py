@@ -9,7 +9,11 @@ from datetime import date, datetime
 from controllers.mileage_correction import resolve_correction
 from sql_builders import mileage as mileage_sql
 from tests.conftest import (
-    make_active, make_counter_active, make_mileage_train, make_train, make_train_type,
+    make_active,
+    make_counter_active,
+    make_mileage_train,
+    make_train,
+    make_train_type,
 )
 
 

@@ -4,17 +4,39 @@ from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import (
-    Classifier, ClassifierType, GroupType, Priorities, Specification, Techcard, TechcardStatusTypes, WorkType,
-)
 import sql_tasks
+from models import (
+    Classifier,
+    ClassifierType,
+    GroupType,
+    Priorities,
+    Specification,
+    Techcard,
+    TechcardStatusTypes,
+    WorkType,
+)
 from sql_builders import techcards as techcards_sql
 
 from .common import (
-    PATH, ClassifierRepository, ClassifierTypeRepository, GroupTypeRepository, PrioritiesRepository, RowError,
-    SpecificationRepository, TechcardRepository, TechcardStatusTypesRepository, WorkTypeRepository, cell,
-    header_columns, labelled_cell, missing_columns, one_id, parse_int, require, resolve_rows,
+    PATH,
+    ClassifierRepository,
+    ClassifierTypeRepository,
+    GroupTypeRepository,
+    PrioritiesRepository,
+    RowError,
+    SpecificationRepository,
+    TechcardRepository,
+    TechcardStatusTypesRepository,
+    WorkTypeRepository,
+    cell,
+    header_columns,
+    labelled_cell,
+    missing_columns,
+    one_id,
     operation,
+    parse_int,
+    require,
+    resolve_rows,
 )
 
 CLASSIFIER_TYPE_COLUMN = "Классификация техкарты"

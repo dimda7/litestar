@@ -9,8 +9,8 @@ from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy import String, and_, cast, or_, select
 from sqlalchemy.engine import Row
-from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from db_manager import get_session_maker
 from models import DesignNumber, Models
@@ -19,7 +19,6 @@ from progress_tasks import start_task
 from sql_builders import models as models_sql
 
 from .common import column_key, execute_sql_lines, parse_model_id, row_text
-
 
 logger = logging.getLogger("parser")
 

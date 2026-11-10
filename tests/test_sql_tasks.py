@@ -8,8 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
 from litestar.response import Response
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import sql_tasks

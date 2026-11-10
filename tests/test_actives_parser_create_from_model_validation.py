@@ -1,8 +1,8 @@
 from controllers.actives_parser.common import parse_model_lcn
 from controllers.actives_parser.create_active_from_model import validate_create_active_from_model_rows
 from models import IteratorNumberLast
-from tests.conftest import make_design_number
 from sql_builders import actives as actives_sql
+from tests.conftest import make_design_number
 
 
 async def make_counter(db_session, number: int = 100) -> None:

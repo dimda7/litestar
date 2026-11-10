@@ -2,20 +2,19 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
 from models import Models
 from parser_storage import LOG_DIR
 from progress_tasks import start_task
 from sql_builders import models as models_sql
-
 
 logger = logging.getLogger("parser")
 

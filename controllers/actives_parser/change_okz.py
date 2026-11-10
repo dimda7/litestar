@@ -1,21 +1,20 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Actives, CarPlace
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, start_task
 from sql_builders import actives as actives_sql
 
 from .common import PREFIX
-
 
 logger = logging.getLogger("actives_parser")
 

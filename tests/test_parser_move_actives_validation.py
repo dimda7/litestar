@@ -14,9 +14,8 @@ hand against the real grom-tk database.
 from datetime import datetime
 
 from controllers.parser.move_actives import resolve_user_by_fullname, validate_move_rows
-from tests.conftest import make_consignment, make_design_number, make_storage, make_user
 from sql_builders import models as models_sql
-
+from tests.conftest import make_consignment, make_design_number, make_storage, make_user
 
 DEFAULT_REASON = "Убран десятый (лишний) межвагонный переход с 6 вагона"
 DEFAULT_USER_FULLNAME = "Велебская Александра Владимировна"

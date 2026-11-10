@@ -2,10 +2,17 @@
 
 import pytest
 
-from models import (
-    Classifier, ClassifierType, GroupType, Priorities, Specification, Techcard, TechcardStatusTypes, WorkType,
-)
 from controllers.techcard_parser.create import validate_techcard_rows
+from models import (
+    Classifier,
+    ClassifierType,
+    GroupType,
+    Priorities,
+    Specification,
+    Techcard,
+    TechcardStatusTypes,
+    WorkType,
+)
 
 
 async def add(db_session, obj) -> int:

@@ -6,8 +6,8 @@ lsn/lcn (as in 'set serial=none lcn') and the lcn changes on actives.
 """
 
 from controllers.parser.move_no_relocate import check_lcn_collisions, validate_move_no_relocate_rows
-from tests.conftest import make_train
 from sql_builders import models as models_sql
+from tests.conftest import make_train
 
 
 async def validate(db_session, rows):

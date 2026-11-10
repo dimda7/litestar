@@ -3,7 +3,6 @@
 """
 
 from controllers.parser.is_default import validate_is_default_rows
-
 from models import Models
 from sql_builders import models as models_sql
 

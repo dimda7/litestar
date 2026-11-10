@@ -3,13 +3,13 @@ import json
 import logging
 import uuid
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response, Template
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("sql_console")
 

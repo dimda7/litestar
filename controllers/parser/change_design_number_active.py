@@ -19,7 +19,6 @@ from sql_builders import models as models_sql
 
 from .common import column_key, execute_sql_lines, parse_model_id, parse_model_lcn, row_text
 
-
 logger = logging.getLogger("parser")
 
 

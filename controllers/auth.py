@@ -5,8 +5,7 @@ from litestar import Controller, get, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
-from litestar.response import Redirect
-from litestar.response import Template
+from litestar.response import Redirect, Template
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

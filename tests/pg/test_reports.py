@@ -4,7 +4,11 @@ import pytest
 from openpyxl import load_workbook
 
 from controllers.reports import (
-    DESIGN_NUMBERS_HEADERS, DESIGN_NUMBERS_SQL, TECHCARDS_OPERATIONS_HEADERS, TECHCARDS_OPERATIONS_SQL, report_xlsx,
+    DESIGN_NUMBERS_HEADERS,
+    DESIGN_NUMBERS_SQL,
+    TECHCARDS_OPERATIONS_HEADERS,
+    TECHCARDS_OPERATIONS_SQL,
+    report_xlsx,
 )
 
 

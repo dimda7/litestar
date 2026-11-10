@@ -20,7 +20,6 @@ exercised only against the real database in tests/pg/test_models_sql.py.
 """
 
 from controllers.parser.change_okz_active import validate_change_okz_active_rows
-
 from sql_builders import models as models_sql
 from tests.conftest import make_car_place, make_train
 

@@ -1,8 +1,8 @@
 """Tests for the pure LSN/position parsing functions in controllers/train_parser.py."""
 
 from controllers.train_parser import (
-    _lcn_to_model,
     _lcn_to_lcn,
+    _lcn_to_model,
     _lcn_to_prelcn,
 )
 

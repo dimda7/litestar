@@ -10,7 +10,6 @@ covered here, none deferred to the pg suite.
 """
 
 from controllers.parser.change_okz import validate_change_model_okz_rows
-
 from sql_builders import models as models_sql
 from tests.conftest import make_car_place
 

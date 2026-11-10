@@ -3,12 +3,12 @@ block, and the one-statement builders whose Postgres syntax SQLite cannot parse
 (ON CONFLICT, ltree lcns, timestamp literals)."""
 from datetime import datetime
 
+from sqlalchemy import text
+
 from sql_builders import design_number as design_number_sql
 from sql_builders import models as models_sql
 from sql_builders import orders as orders_sql
 from sql_builders import ptoir as ptoir_sql
-from sqlalchemy import text
-
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import TEST_PREFIX, make_active, make_location, make_train, next_id, reference_ids
 

@@ -3,7 +3,6 @@
 import pytest
 
 from controllers.parser.insert_models import validate_insert_rows
-
 from models import Models
 from sql_builders import models as models_sql
 from tests.conftest import make_car_place, make_design_number, make_train_type

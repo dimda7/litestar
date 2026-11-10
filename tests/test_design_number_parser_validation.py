@@ -5,7 +5,14 @@ import pytest
 from controllers import design_number_parser as dn_parser
 from controllers.design_number_parser import DesignNumberParserController
 from models import (
-    CommodityCode, CommodityGroup, CounterGroup, DesignNumberStatus, MaintUse, MeasureType, ProductGroup, UnitType,
+    CommodityCode,
+    CommodityGroup,
+    CounterGroup,
+    DesignNumberStatus,
+    MaintUse,
+    MeasureType,
+    ProductGroup,
+    UnitType,
 )
 from sql_builders.design_number import DesignNumberRow
 from tests.conftest import make_counter_group, make_design_number, make_unit_type

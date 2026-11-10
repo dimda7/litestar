@@ -2,8 +2,8 @@
 
 from controllers.parser.common import parse_model_lcn
 from controllers.parser.serial_none import validate_serial_none_rows
-from tests.conftest import make_train
 from sql_builders import models as models_sql
+from tests.conftest import make_train
 
 
 async def validate(db_session, rows):

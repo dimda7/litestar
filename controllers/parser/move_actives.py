@@ -2,22 +2,21 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import bindparam, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
-from models import DesignNumber, Storage, Consignment, User
+from models import Consignment, DesignNumber, Storage, User
 from parser_storage import LOG_DIR
 from progress_tasks import start_task
 from sql_builders import models as models_sql
 
 from .serial_none import validate_serial_none_rows
-
 
 logger = logging.getLogger("parser")
 

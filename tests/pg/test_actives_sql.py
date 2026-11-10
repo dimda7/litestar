@@ -8,7 +8,13 @@ from sql_builders import actives as actives_sql
 from sql_builders.actives import ACTIVE_NUMBER_COUNTER_DESCRIPTION, ACTIVE_NUMBER_LENGTH, MILEAGE_COUNTER_TYPE_ID
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import (
-    TEST_PREFIX, car_place_name, make_active, make_location, make_train, reference_ids, second_car_place_id,
+    TEST_PREFIX,
+    car_place_name,
+    make_active,
+    make_location,
+    make_train,
+    reference_ids,
+    second_car_place_id,
 )
 
 TYPE_ACTIVE = "PG"

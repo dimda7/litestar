@@ -4,13 +4,24 @@ from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Techcard, TechcardWorkOperation
 import sql_tasks
+from models import Techcard, TechcardWorkOperation
 from sql_builders import techcards as techcards_sql
 
 from .common import (
-    PATH, RowError, TechcardRepository, TechcardWorkOperationRepository, cell, header_columns, labelled_cell,
-    missing_columns, one_id, parse_int, require, resolve_rows, operation,
+    PATH,
+    RowError,
+    TechcardRepository,
+    TechcardWorkOperationRepository,
+    cell,
+    header_columns,
+    labelled_cell,
+    missing_columns,
+    one_id,
+    operation,
+    parse_int,
+    require,
+    resolve_rows,
 )
 
 HEAD_COLUMN = "Техкарта"

@@ -1,25 +1,31 @@
 import base64
 import logging
-from io import BytesIO
 from datetime import datetime
+from io import BytesIO
 
 import openpyxl
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Consignment, DesignNumber, IteratorNumberLast, Storage, StoragePlace
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, start_task
 from sql_builders import actives as actives_sql
 from sql_builders.actives import ACTIVE_NUMBER_COUNTER_DESCRIPTION, ACTIVE_NUMBER_LENGTH
 
-from .common import PREFIX, StorageRepository, StoragePlaceRepository, ConsignmentRepository, DesignNumberRepository, IteratorNumberLastRepository
-
+from .common import (
+    PREFIX,
+    ConsignmentRepository,
+    DesignNumberRepository,
+    IteratorNumberLastRepository,
+    StoragePlaceRepository,
+    StorageRepository,
+)
 
 logger = logging.getLogger("actives_parser")
 

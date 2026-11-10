@@ -6,8 +6,15 @@ from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 from sqlalchemy import ColumnElement
 
 from models import (
-    Classifier, ClassifierType, GroupType, Priorities, Specification, Techcard, TechcardStatusTypes,
-    TechcardWorkOperation, WorkType,
+    Classifier,
+    ClassifierType,
+    GroupType,
+    Priorities,
+    Specification,
+    Techcard,
+    TechcardStatusTypes,
+    TechcardWorkOperation,
+    WorkType,
 )
 from sql_tasks import SqlOperation, Validator
 

@@ -1,7 +1,9 @@
 from datetime import date, datetime
 
 from controllers.actives_parser.create_actives import (
-    build_created_actives_xlsx, reconstruct_created_active_numbers, validate_create_actives_rows,
+    build_created_actives_xlsx,
+    reconstruct_created_active_numbers,
+    validate_create_actives_rows,
 )
 from controllers.actives_parser.create_named_actives import validate_create_named_actives
 from controllers.actives_parser.delete_actives import validate_delete_actives
@@ -9,8 +11,8 @@ from controllers.actives_parser.design_number import validate_design_number
 from controllers.actives_parser.recount_mileage import validate_recount_mileage
 from controllers.actives_parser.serial_number import validate_serial_number
 from models import Actives, Consignment, CounterActive, Location, MileageStart, MileageTrain, Relocate, Storage
-from tests.conftest import make_active, make_design_number
 from sql_builders import actives as actives_sql
+from tests.conftest import make_active, make_design_number
 
 
 async def test_design_number_old_column_name(db_session):
@@ -398,6 +400,7 @@ async def make_order_dependency_tables(db_session) -> None:
     order_to_actives) are skipped.
     """
     from sqlalchemy import text as sql_text
+
     from controllers.actives_parser.delete_actives import ORDERS_DEPENDENCY_CHECKS
     from models import Base
     existing = set(Base.metadata.tables)
@@ -438,6 +441,7 @@ async def test_delete_actives_blocked_by_dependencies(db_session):
 
 async def test_delete_actives_blocked_by_order_with_dependencies(db_session):
     from sqlalchemy import text as sql_text
+
     from models import Orders
     await make_order_dependency_tables(db_session)
     blocked_id = await make_active(db_session, "SPD1077358")
@@ -493,7 +497,9 @@ def test_delete_actives_sql_body():
 
 
 async def make_create_actives_refs(db_session) -> None:
-    from models import IteratorNumberLast, Storage as StorageModel, Consignment as ConsignmentModel
+    from models import Consignment as ConsignmentModel
+    from models import IteratorNumberLast
+    from models import Storage as StorageModel
     db_session.add_all([
         IteratorNumberLast(id=2, number=100, description="Номер следующего актива"),
         StorageModel(name="Основной склад, МСК", last_lcn=10),
@@ -548,6 +554,7 @@ def test_reconstruct_created_active_numbers():
 def test_build_created_actives_xlsx():
     import base64
     from io import BytesIO
+
     import openpyxl
 
     b64 = build_created_actives_xlsx(

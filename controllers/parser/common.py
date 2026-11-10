@@ -3,7 +3,6 @@ import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
 PREFIX = "parser"
 
 

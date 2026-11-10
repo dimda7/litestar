@@ -1,10 +1,10 @@
 import logging
 
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get
 from litestar.connection.request import Request
 from litestar.response import Template
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Actives, Orders, Relocate, Techcard, Train, User
 

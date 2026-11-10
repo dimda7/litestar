@@ -12,11 +12,17 @@ from controllers.parser.change_design_number import validate_change_model_design
 from controllers.parser.change_design_number_active import validate_change_design_number_active_rows
 from controllers.parser.change_okz_active import validate_change_okz_active_rows
 from controllers.parser.common import execute_sql_lines
-
 from sql_builders import models as models_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import (
-    TEST_PREFIX, car_place_name, lcn_of, make_active, make_design_number, make_location, make_train, next_id,
+    TEST_PREFIX,
+    car_place_name,
+    lcn_of,
+    make_active,
+    make_design_number,
+    make_location,
+    make_train,
+    next_id,
     reference_ids,
     second_car_place_id,
 )

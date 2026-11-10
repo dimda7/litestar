@@ -1,23 +1,22 @@
 import logging
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Actives, CounterActive, Location, MileageStart, MileageTrain, Relocate
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, start_task
 from sql_builders import actives as actives_sql
 from sql_builders.actives import MILEAGE_COUNTER_TYPE_ID
 
-from .common import PREFIX, ActivesRepository, MileageStartRepository, CounterActiveRepository
-
+from .common import PREFIX, ActivesRepository, CounterActiveRepository, MileageStartRepository
 
 logger = logging.getLogger("actives_parser")
 
