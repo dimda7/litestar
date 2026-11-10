@@ -18,5 +18,8 @@ build/
 *.tar
 .playwright-mcp/
 
-# Claude Code memory (optional: track or not)
-# .claude/memory/
+# Claude Code memory: local working notes (they once held DB credentials)
+.claude/memory/
+
+# Local working files (Excel uploads, ad-hoc SQL) — keep them here, not in the root
+work/
