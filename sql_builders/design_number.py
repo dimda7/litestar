@@ -64,8 +64,11 @@ def _literal(value: str | int | bool | None) -> str:
 
 
 def _data_columns(row: DesignNumberRow) -> list[tuple[str, str | int | bool | None]]:
-    return [(field.name, getattr(row, field.name))
-            for field in fields(row) if field.name not in ("id", "number", "maint_use_ids")]
+    return [
+        (field.name, getattr(row, field.name))
+        for field in fields(row)
+        if field.name not in ("id", "number", "maint_use_ids")
+    ]
 
 
 def _insert_links(row: DesignNumberRow, on_conflict: str = "") -> list[str]:
@@ -105,15 +108,16 @@ def delete_created(rows: list[DesignNumberRow]) -> list[str]:
     lines: list[str] = []
     for row in rows:
         number = _literal(row.number)
-        lines.append(f"DELETE FROM design_number_to_maint_use "
-                     f"WHERE id_design_number = (SELECT id FROM design_number WHERE number = {number});")
+        lines.append(
+            f"DELETE FROM design_number_to_maint_use "
+            f"WHERE id_design_number = (SELECT id FROM design_number WHERE number = {number});"
+        )
         lines.append(f"DELETE FROM design_number WHERE number = {number};")
     return lines
 
 
 def create_or_update(rows: list[DesignNumberRow]) -> list[str]:
-    return (create([row for row in rows if row.id is None])
-            + update_full([row for row in rows if row.id is not None]))
+    return create([row for row in rows if row.id is None]) + update_full([row for row in rows if row.id is not None])
 
 
 def undo_create_or_update(rows: list[DesignNumberRow], snapshot: list[DesignNumberRow]) -> list[str]:

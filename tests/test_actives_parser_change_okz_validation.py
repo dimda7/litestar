@@ -102,10 +102,13 @@ async def test_repeated_active_with_other_position_reported(db_session):
     await make_car_place(db_session, "+100_(01)")
     await make_car_place(db_session, "+101_(01)")
 
-    errors, valid_rows = await validate_change_okz(db_session, [
-        {"Актив": "ES1050060001", "position": "+100_(01)"},
-        {"Актив": "ES1050060001", "position": "+101_(01)"},
-    ])
+    errors, valid_rows = await validate_change_okz(
+        db_session,
+        [
+            {"Актив": "ES1050060001", "position": "+100_(01)"},
+            {"Актив": "ES1050060001", "position": "+101_(01)"},
+        ],
+    )
 
     assert [e["row"] for e in errors] == [2]
     assert "Конфликт" in errors[0]["message"]

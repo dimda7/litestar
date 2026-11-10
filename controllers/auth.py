@@ -18,8 +18,7 @@ from schemas import DbSelectRequest, LoginRequest
 def _visible_profiles() -> list[dict[str, str | int]]:
     """Connections for the pre-login screen — without passwords."""
     return [
-        {"id": p.id, "name": p.name, "host": p.host, "port": p.port, "dbname": p.dbname}
-        for p in db_profiles.load()
+        {"id": p.id, "name": p.name, "host": p.host, "port": p.port, "dbname": p.dbname} for p in db_profiles.load()
     ]
 
 
@@ -87,9 +86,7 @@ class AuthController(Controller):
                 context={"error": "Введите логин и пароль"},
             )
 
-        result = await db_session.execute(
-            select(User).where(User.username == username)
-        )
+        result = await db_session.execute(select(User).where(User.username == username))
         user = result.scalar_one_or_none()
 
         if not user or not user.active:
@@ -97,9 +94,7 @@ class AuthController(Controller):
                 template_name="login.html",
                 context={"error": "Неверный логин или пароль"},
             )
-        if not user.password or not bcrypt.checkpw(
-            password.encode(), user.password.encode()
-        ):
+        if not user.password or not bcrypt.checkpw(password.encode(), user.password.encode()):
             return Template(
                 template_name="login.html",
                 context={"error": "Неверный логин или пароль"},
@@ -108,9 +103,9 @@ class AuthController(Controller):
         request.session["user_id"] = user.id
         request.session["db_epoch"] = db_manager.get_target_epoch()
         request.session["username"] = user.username or ""
-        request.session["fullname"] = " ".join(
-            filter(None, [user.lastname, user.firstname, user.middlename])
-        ) or user.username or ""
+        request.session["fullname"] = (
+            " ".join(filter(None, [user.lastname, user.firstname, user.middlename])) or user.username or ""
+        )
         request.session["last_activity"] = time.time()
 
         return Redirect("/")

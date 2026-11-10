@@ -23,7 +23,9 @@ logger = logging.getLogger("parser")
 
 
 async def validate_change_model_okz_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'изменить okz в модели' (the public.models table).
 
@@ -86,9 +88,16 @@ async def validate_change_model_okz_rows(
             continue
 
         if model_id in batch_ids and batch_ids[model_id] != new_raw:
-            errors.append({"row": row_num, "field": "id",
-                           "message": (f"Конфликт: id={model_id} уже сопоставлен другому okz "
-                                       f"('{batch_ids[model_id]}', а не '{new_raw}')")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "id",
+                    "message": (
+                        f"Конфликт: id={model_id} уже сопоставлен другому okz "
+                        f"('{batch_ids[model_id]}', а не '{new_raw}')"
+                    ),
+                }
+            )
             continue
 
         result = await db_session.execute(
@@ -101,9 +110,15 @@ async def validate_change_model_okz_rows(
         cp_result = await db_session.execute(select(CarPlace.id).where(CarPlace.name == new_raw))
         matches = cp_result.scalars().all()
         if len(matches) > 1:
-            errors.append({"row": row_num, "field": "new_position",
-                           "message": (f"car_place неоднозначен: найдено {len(matches)} записей "
-                                       f"с именем '{new_raw}' (id: {matches})")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "new_position",
+                    "message": (
+                        f"car_place неоднозначен: найдено {len(matches)} записей с именем '{new_raw}' (id: {matches})"
+                    ),
+                }
+            )
             continue
 
         if model_id not in batch_ids:
@@ -141,8 +156,12 @@ class ChangeModelOkzController(Controller):
 
         sql_lines = models_sql.change_model_okz(valid_rows)
         full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
-        progress.update(status="done", sql=full_sql, count=len(valid_rows),
-                        new_car_places=car_place_sql.new_names(vr["new_car_place"] for vr in valid_rows))
+        progress.update(
+            status="done",
+            sql=full_sql,
+            count=len(valid_rows),
+            new_car_places=car_place_sql.new_names(vr["new_car_place"] for vr in valid_rows),
+        )
 
     @post("/change-okz/execute-sql/start")
     async def change_okz_execute_sql_start(
@@ -163,7 +182,9 @@ class ChangeModelOkzController(Controller):
                 try:
                     errors, valid_rows = await validate_change_model_okz_rows(session, rows, progress=progress)
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -171,7 +192,9 @@ class ChangeModelOkzController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}]
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -184,7 +207,9 @@ class ChangeModelOkzController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -202,8 +227,7 @@ class ChangeModelOkzController(Controller):
         log_file = LOG_DIR / f"change_okz_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(log_lines))
-        logger.info("Changed okz for %d models, created %d car places, log: %s",
-                    total_updated, len(created), log_file)
+        logger.info("Changed okz for %d models, created %d car places, log: %s", total_updated, len(created), log_file)
 
         message = f"Изменено okz у моделей: {total_updated} (строк файла: {len(valid_rows)})"
         if created:

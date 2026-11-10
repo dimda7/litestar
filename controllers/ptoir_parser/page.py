@@ -44,7 +44,7 @@ class PtoirParserController(Controller):
             page = total_pages
 
         offset = (page - 1) * per_page
-        rows = all_rows[offset:offset + per_page]
+        rows = all_rows[offset : offset + per_page]
 
         return Template(
             template_name="ptoir_parser.html",

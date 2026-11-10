@@ -19,7 +19,9 @@ logger = logging.getLogger("parser")
 
 
 async def validate_change_model_lcn_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'изменить lcn в модели' (the public.models table).
 
@@ -80,23 +82,34 @@ async def validate_change_model_lcn_rows(
             continue
 
         if model_id in batch_ids and batch_ids[model_id] != new_raw:
-            errors.append({"row": row_num, "field": "id",
-                           "message": (f"Конфликт: id={model_id} уже сопоставлен другому lcn "
-                                       f"('{batch_ids[model_id]}', а не '{new_raw}')")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "id",
+                    "message": (
+                        f"Конфликт: id={model_id} уже сопоставлен другому lcn "
+                        f"('{batch_ids[model_id]}', а не '{new_raw}')"
+                    ),
+                }
+            )
             continue
 
-        result = await db_session.execute(
-            text("SELECT lcn::text FROM public.models WHERE id = :id"), {"id": model_id}
-        )
+        result = await db_session.execute(text("SELECT lcn::text FROM public.models WHERE id = :id"), {"id": model_id})
         current_lcn = result.scalar_one_or_none()
         if current_lcn is None:
             errors.append({"row": row_num, "field": "id", "message": f"Модель с id={model_id} не найдена"})
             continue
 
         if old_raw and current_lcn != old_raw:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": (f"Текущий lcn модели id={model_id} ('{current_lcn}') "
-                                       f"не совпадает со 'Старый lsn' ('{old_raw}')")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "lcn",
+                    "message": (
+                        f"Текущий lcn модели id={model_id} ('{current_lcn}') не совпадает со 'Старый lsn' ('{old_raw}')"
+                    ),
+                }
+            )
             continue
 
         if model_id not in batch_ids:
@@ -154,7 +167,9 @@ class ChangeModelLcnController(Controller):
                 try:
                     errors, valid_rows = await validate_change_model_lcn_rows(session, rows, progress=progress)
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -162,7 +177,9 @@ class ChangeModelLcnController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}]
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -178,7 +195,9 @@ class ChangeModelLcnController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -197,5 +216,8 @@ class ChangeModelLcnController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Changed lcn for %d models, log: %s", total_updated, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Изменено lcn у моделей: {total_updated} (строк файла: {len(valid_rows)})")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=f"Изменено lcn у моделей: {total_updated} (строк файла: {len(valid_rows)})",
+        )

@@ -32,16 +32,25 @@ async def settled(response: Response) -> dict:
 def validator(errors: list[dict], valid_rows: list[dict]) -> sql_tasks.Validator:
     async def validate(session: AsyncSession, rows: list[dict], progress: dict | None) -> tuple[list[dict], list[dict]]:
         return errors, valid_rows
+
     return validate
 
 
-def operation(validate: sql_tasks.Validator,
-              build: Callable[[list[dict]], list[str]] = lambda valid_rows: [f"-- row {vr['n']}" for vr in valid_rows],
-              **kwargs: object) -> sql_tasks.SqlOperation:
+def operation(
+    validate: sql_tasks.Validator,
+    build: Callable[[list[dict]], list[str]] = lambda valid_rows: [f"-- row {vr['n']}" for vr in valid_rows],
+    **kwargs: object,
+) -> sql_tasks.SqlOperation:
     return sql_tasks.SqlOperation(
-        validate=validate, build=build, log_name="test_op", log_title="test op",
+        validate=validate,
+        build=build,
+        log_name="test_op",
+        log_title="test op",
         summary=lambda total, valid_rows, errors: (f"Готово: {len(valid_rows)}", [f"Rows: {total}"]),
-        empty_message="Нечего делать", logger=logging.getLogger("test"), **kwargs)
+        empty_message="Нечего делать",
+        logger=logging.getLogger("test"),
+        **kwargs,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -80,9 +89,11 @@ async def test_partial_generate_comments_out_row_errors_and_returns_them():
     state = await settled(sql_tasks.start_generate(rows_form([{}, {}, {}]), op))
 
     assert state["status"] == "done"
-    assert state["sql"] == ("-- строка 2 пропущена: ПТОиР не найден: 'X'\n"
-                            "-- строка 3 пропущена: ПТОиР не найден: 'A DROP TABLE x;'\n"
-                            "BEGIN;\n-- row 1\nCOMMIT;")
+    assert state["sql"] == (
+        "-- строка 2 пропущена: ПТОиР не найден: 'X'\n"
+        "-- строка 3 пропущена: ПТОиР не найден: 'A DROP TABLE x;'\n"
+        "BEGIN;\n-- row 1\nCOMMIT;"
+    )
     assert state["errors"] == [ROW_ERROR, broken]
 
 
@@ -123,8 +134,9 @@ async def test_execute_commits_the_builder_sql_and_logs_it(session_maker, tmp_pa
 
 
 async def test_failed_execute_rolls_back_and_writes_no_log(session_maker, tmp_path):
-    async def validate_and_write(session: AsyncSession, rows: list[dict],
-                                 progress: dict | None) -> tuple[list[dict], list[dict]]:
+    async def validate_and_write(
+        session: AsyncSession, rows: list[dict], progress: dict | None
+    ) -> tuple[list[dict], list[dict]]:
         await session.execute(text("INSERT INTO public.ptoir (number_ptoir) VALUES ('written by validation')"))
         return [], [{"n": 1}]
 

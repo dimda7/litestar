@@ -42,10 +42,7 @@ class DBProfile:
 def build_url(host: str, port: str | int, user: str, password: str, dbname: str) -> str:
     """Connection URL. User and password are percent-encoded: a password typed
     as `p@ss:w/ord` would otherwise be parsed as part of the host."""
-    return (
-        f"postgresql+asyncpg://{quote(user, safe='')}:{quote(password, safe='')}"
-        f"@{host}:{port}/{dbname}"
-    )
+    return f"postgresql+asyncpg://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}/{dbname}"
 
 
 def _path() -> Path:
@@ -73,25 +70,24 @@ def _seed_from_env() -> list[DBProfile]:
     """Profiles from .env. A set with a missing or broken variable is skipped."""
     profiles: list[DBProfile] = []
     for name, suffix in SEED_ENV_SETS:
-        values = {
-            key: environ.get(f"DB_{key.upper()}{suffix}")
-            for key in ("host", "port", "user", "password", "name")
-        }
+        values = {key: environ.get(f"DB_{key.upper()}{suffix}") for key in ("host", "port", "user", "password", "name")}
         if any(value is None for value in values.values()):
             continue
         try:
             port = _validate(name, values["host"], values["port"], values["user"], values["name"])
         except ValueError:
             continue
-        profiles.append(DBProfile(
-            id=str(uuid.uuid4()),
-            name=name,
-            host=values["host"].strip(),
-            port=port,
-            user=values["user"].strip(),
-            password=values["password"],
-            dbname=values["name"].strip(),
-        ))
+        profiles.append(
+            DBProfile(
+                id=str(uuid.uuid4()),
+                name=name,
+                host=values["host"].strip(),
+                port=port,
+                user=values["user"].strip(),
+                password=values["password"],
+                dbname=values["name"].strip(),
+            )
+        )
     return profiles
 
 
@@ -171,7 +167,13 @@ def add(name: str, host: str, port: str | int, user: str, password: str, dbname:
 
 
 def update(
-    profile_id: str, name: str, host: str, port: str | int, user: str, password: str, dbname: str,
+    profile_id: str,
+    name: str,
+    host: str,
+    port: str | int,
+    user: str,
+    password: str,
+    dbname: str,
 ) -> DBProfile:
     port_number = _validate(name, host, port, user, dbname)
     profiles = load()

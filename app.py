@@ -79,7 +79,25 @@ jinja_engine = JinjaTemplateEngine(directory=base_dir / "templates")
 jinja_engine.register_template_callable("current_db_label", lambda context: db_manager.get_active_label())
 
 app = Litestar(
-    route_handlers=[HomeController, UsersController, AuthController, *parser_package.CONTROLLERS, *techcard_parser_package.CONTROLLERS, TrainParserController, DesignNumberParserController, *actives_parser_package.CONTROLLERS, ActiveHierarchyController, *ptoir_parser_package.CONTROLLERS, OrderParserController, MileageCorrectionController, JiraController, ReportsController, SqlConsoleController, SettingsController, AboutController],
+    route_handlers=[
+        HomeController,
+        UsersController,
+        AuthController,
+        *parser_package.CONTROLLERS,
+        *techcard_parser_package.CONTROLLERS,
+        TrainParserController,
+        DesignNumberParserController,
+        *actives_parser_package.CONTROLLERS,
+        ActiveHierarchyController,
+        *ptoir_parser_package.CONTROLLERS,
+        OrderParserController,
+        MileageCorrectionController,
+        JiraController,
+        ReportsController,
+        SqlConsoleController,
+        SettingsController,
+        AboutController,
+    ],
     template_config=TemplateConfig(
         engine=jinja_engine,
     ),
@@ -102,23 +120,22 @@ app = Litestar(
         version="1.0.0",
         description="API для управления данными моделей поездов (grom). Включает парсинг Excel, валидацию и атомарные операции с БД.",
     ),
-
 )
 
 if __name__ == "__main__":
-    #import subprocess
-    #import sys
+    # import subprocess
+    # import sys
 
-    #subprocess.run(
+    # subprocess.run(
     #    [sys.executable, "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", str(settings.server_port)],
     #    check=True,
-    #)
+    # )
 
     import uvicorn
+
     uvicorn.run(
         "app:app",  # format is "module_name:app_variable_name"
         host="0.0.0.0",
         port=settings.server_port,
         # reload=False  # <--- IMPORTANT: keep this off when debugging in PyCharm!
     )
-

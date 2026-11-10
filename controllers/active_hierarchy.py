@@ -92,11 +92,13 @@ class ActiveHierarchyController(Controller):
 
         truncated = len(rows) > PREVIEW_LIMIT
         return Response(
-            content=json.dumps({
-                "status": "ok",
-                "rows": [dict(r) for r in rows[:PREVIEW_LIMIT]],
-                "truncated": truncated,
-            }),
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "rows": [dict(r) for r in rows[:PREVIEW_LIMIT]],
+                    "truncated": truncated,
+                }
+            ),
             status_code=200,
             media_type="application/json",
         )
@@ -126,16 +128,20 @@ class ActiveHierarchyController(Controller):
         now = datetime.now()
         log_file = LOG_DIR / f"update_active_hierarchy_{kind}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
-            f.write(f"=== Update {cfg['label']} ({cfg['column']}): {now.strftime('%Y-%m-%d %H:%M:%S')} ===\n"
-                    f"Rows updated: {count}\n\n{_update_sql(cfg)}\n")
+            f.write(
+                f"=== Update {cfg['label']} ({cfg['column']}): {now.strftime('%Y-%m-%d %H:%M:%S')} ===\n"
+                f"Rows updated: {count}\n\n{_update_sql(cfg)}\n"
+            )
         logger.info("Updated %s (%s) for %d rows, log: %s", cfg["label"], cfg["column"], count, log_file)
 
         return Response(
-            content=json.dumps({
-                "status": "ok",
-                "count": count,
-                "message": f"{cfg['label']}: обновлено записей — {count}",
-            }),
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "count": count,
+                    "message": f"{cfg['label']}: обновлено записей — {count}",
+                }
+            ),
             status_code=200,
             media_type="application/json",
         )

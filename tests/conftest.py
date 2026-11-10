@@ -120,8 +120,12 @@ async def make_main_ptoir(db_session: AsyncSession, number_ptoir: str = "VR_SPEC
     return obj.id
 
 
-async def make_ptoir(db_session: AsyncSession, number_ptoir: str = "ТО0001", id_active: int | None = None,
-                     id_main_ptoir: int | None = None) -> int:
+async def make_ptoir(
+    db_session: AsyncSession,
+    number_ptoir: str = "ТО0001",
+    id_active: int | None = None,
+    id_main_ptoir: int | None = None,
+) -> int:
     obj = Ptoir(number_ptoir=number_ptoir, id_active=id_active, id_main_ptoir=id_main_ptoir)
     db_session.add(obj)
     await db_session.flush()
@@ -164,7 +168,10 @@ async def make_consignment(db_session: AsyncSession, name: str = "ЧСП ЛОМ"
 
 
 async def make_user(
-    db_session: AsyncSession, lastname: str = "Велебская", firstname: str = "Александра", middlename: str | None = "Владимировна",
+    db_session: AsyncSession,
+    lastname: str = "Велебская",
+    firstname: str = "Александра",
+    middlename: str | None = "Владимировна",
 ) -> int:
     obj = User(lastname=lastname, firstname=firstname, middlename=middlename)
     db_session.add(obj)
@@ -173,22 +180,36 @@ async def make_user(
 
 
 async def make_mileage_train(
-    db_session: AsyncSession, id_train: int, date_average: date, milage: int | None,
-    date: datetime | None = None, mileage_average: int = 0,
+    db_session: AsyncSession,
+    id_train: int,
+    date_average: date,
+    milage: int | None,
+    date: datetime | None = None,
+    mileage_average: int = 0,
 ) -> int:
-    obj = MileageTrain(id_train=id_train, milage=milage, mileage_average=mileage_average,
-                       date=date, date_average=date_average)
+    obj = MileageTrain(
+        id_train=id_train, milage=milage, mileage_average=mileage_average, date=date, date_average=date_average
+    )
     db_session.add(obj)
     await db_session.flush()
     return obj.id
 
 
 async def make_counter_active(
-    db_session: AsyncSession, id_active: int, value: int = 0, id_counter_type: int = 3,
-    is_train: bool = True, date: datetime | None = None,
+    db_session: AsyncSession,
+    id_active: int,
+    value: int = 0,
+    id_counter_type: int = 3,
+    is_train: bool = True,
+    date: datetime | None = None,
 ) -> int:
-    obj = CounterActive(id_active=id_active, value=value, id_counter_type=id_counter_type,
-                        is_train=is_train, date=date or datetime(2023, 1, 1))
+    obj = CounterActive(
+        id_active=id_active,
+        value=value,
+        id_counter_type=id_counter_type,
+        is_train=is_train,
+        date=date or datetime(2023, 1, 1),
+    )
     db_session.add(obj)
     await db_session.flush()
     return obj.id

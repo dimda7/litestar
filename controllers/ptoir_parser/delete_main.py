@@ -13,7 +13,9 @@ from .common import PATH, cell_numbers, chunks, find_column, load_ptoirs, logger
 
 
 async def validate_delete_main_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'удалить БПТОиР'.
 
@@ -32,15 +34,17 @@ async def validate_delete_main_rows(
     found: dict[str, int] = {}
     for chunk in chunks(list(dict.fromkeys(n for n in numbers if n))):
         result = await db_session.execute(
-            select(MainPtoir.number_ptoir, MainPtoir.id).where(MainPtoir.number_ptoir.in_(chunk)))
+            select(MainPtoir.number_ptoir, MainPtoir.id).where(MainPtoir.number_ptoir.in_(chunk))
+        )
         found.update(result.tuples().all())
     errors, matched = match_rows(numbers, found, "БПТОиР")
     ptoirs = await load_ptoirs(db_session, Ptoir.id_main_ptoir, [found[number] for number in matched])
 
     if progress is not None:
         progress["processed"] = len(rows)
-    return errors, [{"id": found[number], "number_ptoir": number, "ptoirs": ptoirs.get(found[number], [])}
-                    for number in matched]
+    return errors, [
+        {"id": found[number], "number_ptoir": number, "ptoirs": ptoirs.get(found[number], [])} for number in matched
+    ]
 
 
 def _delete_main_summary(total: int, valid_rows: list[dict], errors: list[dict]) -> tuple[str, list[str]]:
@@ -60,9 +64,14 @@ def _delete_main_summary(total: int, valid_rows: list[dict], errors: list[dict])
 
 
 DELETE_MAIN_PTOIR = sql_tasks.SqlOperation(
-    validate=validate_delete_main_rows, build=ptoir_sql.delete_main,
-    log_name="delete_main_ptoir", log_title="main PTOIR delete", summary=_delete_main_summary,
-    empty_message="Нет БПТОиР для удаления", logger=logger, partial=True,
+    validate=validate_delete_main_rows,
+    build=ptoir_sql.delete_main,
+    log_name="delete_main_ptoir",
+    log_title="main PTOIR delete",
+    summary=_delete_main_summary,
+    empty_message="Нет БПТОиР для удаления",
+    logger=logger,
+    partial=True,
 )
 
 

@@ -22,7 +22,9 @@ logger = logging.getLogger("parser")
 
 
 async def validate_move_no_relocate_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'Переместить активы без relocate'.
 
@@ -49,7 +51,9 @@ async def validate_move_no_relocate_rows(
         errors.append({"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'lsn' (или 'lcn')"})
         return errors, pair_list
     if rows and old_column is None:
-        errors.append({"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'Старый lsn' (или 'Старый lcn')"})
+        errors.append(
+            {"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'Старый lsn' (или 'Старый lcn')"}
+        )
         return errors, pair_list
 
     if progress is not None:
@@ -73,21 +77,34 @@ async def validate_move_no_relocate_rows(
 
         new_parsed = parse_model_lcn(new_raw)
         if new_parsed is None:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": f"Не удалось распознать id_train_type в lcn '{new_raw}'"})
+            errors.append(
+                {"row": row_num, "field": "lcn", "message": f"Не удалось распознать id_train_type в lcn '{new_raw}'"}
+            )
             continue
         old_parsed = parse_model_lcn(old_raw)
         if old_parsed is None:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": f"Не удалось распознать id_train_type в Старый lcn '{old_raw}'"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "lcn",
+                    "message": f"Не удалось распознать id_train_type в Старый lcn '{old_raw}'",
+                }
+            )
             continue
 
         id_train_type_new, new_path = new_parsed
         id_train_type_old, old_path = old_parsed
         if id_train_type_new != id_train_type_old:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": (f"id_train_type не совпадает у 'Старый lsn' и 'lsn': "
-                                       f"'{old_raw}' ({id_train_type_old}) vs '{new_raw}' ({id_train_type_new})")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "lcn",
+                    "message": (
+                        f"id_train_type не совпадает у 'Старый lsn' и 'lsn': "
+                        f"'{old_raw}' ({id_train_type_old}) vs '{new_raw}' ({id_train_type_new})"
+                    ),
+                }
+            )
             continue
 
         if id_train_type_new not in train_ids_by_type:
@@ -96,8 +113,9 @@ async def validate_move_no_relocate_rows(
         train_ids = train_ids_by_type[id_train_type_new]
 
         if not train_ids:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": f"Поезда с id_train_type={id_train_type_new} не найдены"})
+            errors.append(
+                {"row": row_num, "field": "lcn", "message": f"Поезда с id_train_type={id_train_type_new} не найдены"}
+            )
             continue
 
         row_pairs: list[tuple[str, str]] = []
@@ -106,9 +124,15 @@ async def validate_move_no_relocate_rows(
             old_lcn = f"{tid}.{old_path}" if old_path else str(tid)
             new_lcn = f"{tid}.{new_path}" if new_path else str(tid)
             if old_lcn in pairs and pairs[old_lcn] != new_lcn:
-                errors.append({"row": row_num, "field": "lcn",
-                               "message": (f"Конфликт: '{old_lcn}' уже сопоставлен другому lcn "
-                                           f"('{pairs[old_lcn]}', а не '{new_lcn}')")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "lcn",
+                        "message": (
+                            f"Конфликт: '{old_lcn}' уже сопоставлен другому lcn ('{pairs[old_lcn]}', а не '{new_lcn}')"
+                        ),
+                    }
+                )
                 conflict = True
                 break
             row_pairs.append((old_lcn, new_lcn))
@@ -138,18 +162,23 @@ async def check_lcn_collisions(db_session: AsyncSession, pair_list: list[dict]) 
         return []
     old_lcns = {vr["old_lcn"] for vr in pair_list}
     new_lcns = [vr["new_lcn"] for vr in pair_list]
-    stmt = text(
-        "SELECT active_number, lcn::text FROM public.actives WHERE lcn::text IN :lcns"
-    ).bindparams(bindparam("lcns", expanding=True))
+    stmt = text("SELECT active_number, lcn::text FROM public.actives WHERE lcn::text IN :lcns").bindparams(
+        bindparam("lcns", expanding=True)
+    )
     result = await db_session.execute(stmt, {"lcns": new_lcns})
     errors: list[dict] = []
     for active_number, current_lcn in result.all():
         if current_lcn not in old_lcns:
-            errors.append({
-                "row": 0, "field": "lcn",
-                "message": (f"Конфликт: целевой lcn '{current_lcn}' уже занят активом "
-                            f"'{active_number}', которого нет в файле"),
-            })
+            errors.append(
+                {
+                    "row": 0,
+                    "field": "lcn",
+                    "message": (
+                        f"Конфликт: целевой lcn '{current_lcn}' уже занят активом "
+                        f"'{active_number}', которого нет в файле"
+                    ),
+                }
+            )
     return errors
 
 
@@ -207,7 +236,9 @@ class MoveNoRelocateController(Controller):
                     if not errors:
                         errors.extend(await check_lcn_collisions(session, valid_rows))
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -215,7 +246,10 @@ class MoveNoRelocateController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}],
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -230,7 +264,9 @@ class MoveNoRelocateController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -249,5 +285,8 @@ class MoveNoRelocateController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Moved (no relocate) %d pairs (%d actives), log: %s", len(valid_rows), total_updated, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Перемещено активов: {total_updated} (пар: {len(valid_rows)})")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=f"Перемещено активов: {total_updated} (пар: {len(valid_rows)})",
+        )

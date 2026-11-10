@@ -57,7 +57,11 @@ class TrainParserController(Controller):
     path = "/train-parser"
 
     async def _validate_train_rows(
-        self, db_session: AsyncSession, rows: list[dict], id_type_train: int, id_train: int,
+        self,
+        db_session: AsyncSession,
+        rows: list[dict],
+        id_type_train: int,
+        id_train: int,
         progress: dict | None = None,
     ) -> tuple[list[dict], list[dict]]:
         errors: list[dict] = []
@@ -98,8 +102,7 @@ class TrainParserController(Controller):
             car_number = None if len(lsn_split) == 1 else car_place_sql.parse_car_number(position)
 
             result = await db_session.execute(
-                select(DesignNumber.id, DesignNumber.id_unit_type)
-                .where(DesignNumber.number == itemnum)
+                select(DesignNumber.id, DesignNumber.id_unit_type).where(DesignNumber.number == itemnum)
             )
             dn_row = result.first()
             if dn_row is None:
@@ -127,27 +130,26 @@ class TrainParserController(Controller):
                     id_actives_parent = key_actives[pre_lcn]
                 else:
                     parent_result = await db_session.execute(
-                        text(
-                            "SELECT active_number FROM public.actives "
-                            "WHERE lcn::text = :lcn LIMIT 1"
-                        ),
+                        text("SELECT active_number FROM public.actives WHERE lcn::text = :lcn LIMIT 1"),
                         {"lcn": _lcn_to_lcn(pre_lcn, id_train)},
                     )
                     parent_row = parent_result.first()
                     id_actives_parent = parent_row[0] if parent_row else None
 
-            valid_rows.append({
-                "active_number": active_number,
-                "serial_number": serial_number,
-                "id_unit_type": id_unit_type,
-                "id_design_number": id_design_number,
-                "car_number": car_number,
-                "car_place_id": car_place_id,
-                "lcn_new": lcn_new,
-                "id_actives_parent": id_actives_parent,
-                "is_root": idx == 0,
-                "root_number": None if idx == 0 else root_active_number,
-            })
+            valid_rows.append(
+                {
+                    "active_number": active_number,
+                    "serial_number": serial_number,
+                    "id_unit_type": id_unit_type,
+                    "id_design_number": id_design_number,
+                    "car_number": car_number,
+                    "car_place_id": car_place_id,
+                    "lcn_new": lcn_new,
+                    "id_actives_parent": id_actives_parent,
+                    "is_root": idx == 0,
+                    "root_number": None if idx == 0 else root_active_number,
+                }
+            )
 
         return errors, valid_rows
 
@@ -170,11 +172,17 @@ class TrainParserController(Controller):
             page = total_pages
 
         offset = (page - 1) * per_page
-        rows = all_rows[offset:offset + per_page]
+        rows = all_rows[offset : offset + per_page]
 
-        train_types = list((await db_session.execute(
-            select(TrainType.name).where(TrainType.name.is_not(None)).order_by(TrainType.name)
-        )).scalars().all())
+        train_types = list(
+            (
+                await db_session.execute(
+                    select(TrainType.name).where(TrainType.name.is_not(None)).order_by(TrainType.name)
+                )
+            )
+            .scalars()
+            .all()
+        )
         file_train_type = str(all_rows[0].get("itemnum", "") or "").strip() if all_rows else ""
 
         return Template(
@@ -205,7 +213,8 @@ class TrainParserController(Controller):
 
     @staticmethod
     async def _resolve_type_and_series(
-        db_session: AsyncSession, train_type_name: str,
+        db_session: AsyncSession,
+        train_type_name: str,
     ) -> tuple[int | None, int | None, str | None]:
         """Resolve id_type_train and its series (train_type.id_train_series). Returns (id_type_train, id_train_series, error)."""
         result = await db_session.execute(
@@ -239,7 +248,9 @@ class TrainParserController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                id_type_train, id_train_series, series_error = await self._resolve_type_and_series(session, train_type_name)
+                id_type_train, id_train_series, series_error = await self._resolve_type_and_series(
+                    session, train_type_name
+                )
                 if series_error:
                     progress.update(status="error", errors=[{"row": 0, "field": "train_type", "message": series_error}])
                     return
@@ -249,7 +260,9 @@ class TrainParserController(Controller):
                 # been taken by another train created in the meantime.
                 id_train = (await session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
 
-                errors, valid_rows = await self._validate_train_rows(session, rows, id_type_train, id_train, progress=progress)
+                errors, valid_rows = await self._validate_train_rows(
+                    session, rows, id_type_train, id_train, progress=progress
+                )
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
             return
@@ -265,7 +278,9 @@ class TrainParserController(Controller):
         # atomic operation: all of it or none.
         count_car = _parse_count_car(str(rows[-1].get("lsn", "") or "").strip()) if rows else None
         sql_lines = ["BEGIN;"]
-        sql_lines.extend(train_sql.insert_train(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
+        sql_lines.extend(
+            train_sql.insert_train(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car)
+        )
         sql_lines.append("COMMIT;")
 
         progress.update(status="done", sql="\n".join(sql_lines), count=len(valid_rows))
@@ -291,7 +306,9 @@ class TrainParserController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                id_type_train, id_train_series, series_error = await self._resolve_type_and_series(session, train_type_name)
+                id_type_train, id_train_series, series_error = await self._resolve_type_and_series(
+                    session, train_type_name
+                )
                 if series_error:
                     progress.update(status="error", errors=[{"row": 0, "field": "train_type", "message": series_error}])
                     return
@@ -301,14 +318,18 @@ class TrainParserController(Controller):
                 # concurrently between computing the id and using it below.
                 id_train = (await session.execute(text("SELECT nextval('public.train_id_seq')"))).scalar_one()
 
-                errors, valid_rows = await self._validate_train_rows(session, rows, id_type_train, id_train, progress=progress)
+                errors, valid_rows = await self._validate_train_rows(
+                    session, rows, id_type_train, id_train, progress=progress
+                )
 
                 if errors:
                     progress.update(status="error", errors=errors)
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для вставки"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для вставки"}]
+                    )
                     return
 
                 # DO $$ ... $$ runs as one whole query — progress inside it cannot be
@@ -322,7 +343,9 @@ class TrainParserController(Controller):
                 # through an ordinary parameterised execute(), because asyncpg will not
                 # prepare several commands in one prepared statement.
                 count_car = _parse_count_car(str(rows[-1].get("lsn", "") or "").strip()) if rows else None
-                sql_body = "\n".join(train_sql.insert_train(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car))
+                sql_body = "\n".join(
+                    train_sql.insert_train(id_train, id_type_train, train_name, valid_rows, id_train_series, count_car)
+                )
 
                 try:
                     # IMPORTANT: session.rollback() below also rolls this raw call back
@@ -338,7 +361,9 @@ class TrainParserController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
 
                 progress["processed"] = 1
@@ -358,8 +383,9 @@ class TrainParserController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Train parsed: %s, log saved to %s", train_name, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Поезд '{train_name}' успешно добавлен (id={id_train})")
+        progress.update(
+            status="done", count=len(valid_rows), message=f"Поезд '{train_name}' успешно добавлен (id={id_train})"
+        )
 
     @get("/progress/{task_id:str}")
     async def get_progress(self, task_id: str) -> Response:

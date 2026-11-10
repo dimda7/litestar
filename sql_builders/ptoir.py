@@ -43,7 +43,7 @@ def delete(valid_rows: list[dict]) -> list[str]:
     # ptoir points at ptoir_status (which keeps the whole history by number, without a FK).
     sql_lines: list[str] = []
     for start in range(0, len(valid_rows), DELETE_CHUNK):
-        chunk = valid_rows[start:start + DELETE_CHUNK]
+        chunk = valid_rows[start : start + DELETE_CHUNK]
         ids = ", ".join(str(vr["id"]) for vr in chunk)
         numbers = ", ".join(f"'{sql_escape(vr['number_ptoir'])}'" for vr in chunk)
         sql_lines += [
@@ -70,7 +70,7 @@ def delete_main(valid_rows: list[dict]) -> list[str]:
     # main_ptoir points at main_ptoir_status (the history by number, without a FK back).
     sql_lines = delete([ptoir for vr in valid_rows for ptoir in vr["ptoirs"]])
     for start in range(0, len(valid_rows), DELETE_CHUNK):
-        chunk = valid_rows[start:start + DELETE_CHUNK]
+        chunk = valid_rows[start : start + DELETE_CHUNK]
         ids = ", ".join(str(vr["id"]) for vr in chunk)
         numbers = ", ".join(f"'{sql_escape(vr['number_ptoir'])}'" for vr in chunk)
         sql_lines += [f"DELETE FROM public.{table} WHERE id_main_ptoir IN ({ids});" for table in MAIN_PTOIR_LINKS]

@@ -51,7 +51,8 @@ async def test_duplicate_rows_deduplicate_to_single_pair(db_session):
     train_id = await make_train(db_session, id_train_type=9)
 
     errors, valid_rows = await validate(
-        db_session, [make_row("M9.1.6.4", "M9.1.6"), make_row("M9.1.6.4", "M9.1.6")],
+        db_session,
+        [make_row("M9.1.6.4", "M9.1.6"), make_row("M9.1.6.4", "M9.1.6")],
     )
 
     assert errors == []
@@ -62,7 +63,8 @@ async def test_conflicting_new_value_for_same_old_lcn_reported(db_session):
     await make_train(db_session, id_train_type=9)
 
     errors, valid_rows = await validate(
-        db_session, [make_row("M9.1.6.4", "M9.1.6"), make_row("M9.1.6.5", "M9.1.6")],
+        db_session,
+        [make_row("M9.1.6.4", "M9.1.6"), make_row("M9.1.6.5", "M9.1.6")],
     )
 
     assert error_fields(errors) == ["lcn"]
@@ -125,7 +127,9 @@ async def test_missing_new_column_reported(db_session):
 async def test_missing_old_column_reported(db_session):
     errors, valid_rows = await validate(db_session, [{"lsn": "M9.1.6.4"}])
 
-    assert errors == [{"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'Старый lsn' (или 'Старый lcn')"}]
+    assert errors == [
+        {"row": 0, "field": "lcn", "message": "В файле не найдена колонка 'Старый lsn' (или 'Старый lcn')"}
+    ]
 
 
 def test_build_sql_lines_single_pair():

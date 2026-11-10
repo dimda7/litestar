@@ -62,9 +62,7 @@ async def test_missing_id_column_reported(db_session):
 async def test_missing_new_position_column_reported(db_session):
     errors, valid_rows = await validate(db_session, [{"id": "1"}])
 
-    assert errors == [
-        {"row": 0, "field": "new_position", "message": "В файле не найдена колонка 'new_position'"}
-    ]
+    assert errors == [{"row": 0, "field": "new_position", "message": "В файле не найдена колонка 'new_position'"}]
 
 
 async def test_model_not_found_reported(db_session):
@@ -90,10 +88,13 @@ async def test_car_place_to_create_named_by_several_models_is_created_once(db_se
     first_id = await make_model(db_session)
     second_id = await make_model(db_session)
 
-    errors, valid_rows = await validate(db_session, [
-        {"id": str(first_id), "new_position": "+106.20-01_(01)"},
-        {"id": str(second_id), "new_position": "+106.20-01_(01)"},
-    ])
+    errors, valid_rows = await validate(
+        db_session,
+        [
+            {"id": str(first_id), "new_position": "+106.20-01_(01)"},
+            {"id": str(second_id), "new_position": "+106.20-01_(01)"},
+        ],
+    )
 
     assert errors == []
     assert valid_rows == [
@@ -143,10 +144,13 @@ async def test_conflicting_new_position_in_same_file_reported(db_session):
     await make_car_place(db_session, "+342_(06)")
     await make_car_place(db_session, "+354_(06)")
 
-    errors, valid_rows = await validate(db_session, [
-        {"id": str(model_id), "new_position": "+342_(06)"},
-        {"id": str(model_id), "new_position": "+354_(06)"},
-    ])
+    errors, valid_rows = await validate(
+        db_session,
+        [
+            {"id": str(model_id), "new_position": "+342_(06)"},
+            {"id": str(model_id), "new_position": "+354_(06)"},
+        ],
+    )
 
     assert error_fields(errors) == ["id"]
     assert "Конфликт" in errors[0]["message"]

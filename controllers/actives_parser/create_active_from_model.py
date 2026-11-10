@@ -21,7 +21,9 @@ logger = logging.getLogger("actives_parser")
 
 
 async def validate_create_active_from_model_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict], int]:
     """Validate the rows for 'Создать актив из модели lcn'.
 
@@ -55,13 +57,17 @@ async def validate_create_active_from_model_rows(
     candidates: list[dict] = []
 
     tmc_column: str | None = next(
-        (k for k in (rows[0] if rows else {})
-         if str(k).strip().lower() in ("артикул", "номер тмц (du,kp,a2v)")),
+        (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("артикул", "номер тмц (du,kp,a2v)")),
         None,
     )
     if rows and tmc_column is None:
-        errors.append({"row": 0, "field": "АРТИКУЛ",
-                        "message": "В файле не найдена колонка 'АРТИКУЛ' (или 'Номер ТМЦ (DU,KP,A2V)')"})
+        errors.append(
+            {
+                "row": 0,
+                "field": "АРТИКУЛ",
+                "message": "В файле не найдена колонка 'АРТИКУЛ' (или 'Номер ТМЦ (DU,KP,A2V)')",
+            }
+        )
         return errors, [], 0
 
     lsn_column: str | None = next(
@@ -77,10 +83,13 @@ async def validate_create_active_from_model_rows(
         IteratorNumberLast.description == ACTIVE_NUMBER_COUNTER_DESCRIPTION
     )
     if counter_row is None or counter_row.number is None:
-        errors.append({
-            "row": 0, "field": "*",
-            "message": f"Не найден счётчик '{ACTIVE_NUMBER_COUNTER_DESCRIPTION}' в iterator_number_last",
-        })
+        errors.append(
+            {
+                "row": 0,
+                "field": "*",
+                "message": f"Не найден счётчик '{ACTIVE_NUMBER_COUNTER_DESCRIPTION}' в iterator_number_last",
+            }
+        )
         return errors, [], 0
 
     design_number_cache: dict[str, int | None] = {}
@@ -104,11 +113,16 @@ async def validate_create_active_from_model_rows(
             errors.append({"row": row_num, "field": "Тип актива", "message": "Поле 'Тип актива' пустое"})
             continue
         if len(type_active) >= ACTIVE_NUMBER_LENGTH:
-            errors.append({
-                "row": row_num, "field": "Тип актива",
-                "message": (f"'{type_active}' слишком длинный для {ACTIVE_NUMBER_LENGTH}-значного "
-                            f"номера актива (префикс + цифры)"),
-            })
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "Тип актива",
+                    "message": (
+                        f"'{type_active}' слишком длинный для {ACTIVE_NUMBER_LENGTH}-значного "
+                        f"номера актива (префикс + цифры)"
+                    ),
+                }
+            )
             continue
 
         lsn_raw = str(row.get(lsn_column) or "").strip()
@@ -118,8 +132,9 @@ async def validate_create_active_from_model_rows(
 
         parsed = parse_model_lcn(lsn_raw)
         if parsed is None:
-            errors.append({"row": row_num, "field": "lcn",
-                            "message": f"Не удалось распознать id_train_type в lcn '{lsn_raw}'"})
+            errors.append(
+                {"row": row_num, "field": "lcn", "message": f"Не удалось распознать id_train_type в lcn '{lsn_raw}'"}
+            )
             continue
         id_train_type, rest = parsed
 
@@ -136,8 +151,7 @@ async def validate_create_active_from_model_rows(
         if model_key not in model_cache:
             model_result = await db_session.execute(
                 text(
-                    "SELECT id_car_place, is_default FROM public.models "
-                    "WHERE id_train_type = :tt AND lcn::text = :lcn"
+                    "SELECT id_car_place, is_default FROM public.models WHERE id_train_type = :tt AND lcn::text = :lcn"
                 ),
                 {"tt": id_train_type, "lcn": lsn_raw},
             )
@@ -159,9 +173,16 @@ async def validate_create_active_from_model_rows(
             if len(default_places) == 1:
                 id_car_place = next(iter(default_places))
             else:
-                errors.append({"row": row_num, "field": "lcn",
-                                "message": (f"Модель с lcn '{lsn_raw}' неоднозначна: несколько разных "
-                                            f"id_car_place {sorted(p for p in distinct_places if p is not None)}")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "lcn",
+                        "message": (
+                            f"Модель с lcn '{lsn_raw}' неоднозначна: несколько разных "
+                            f"id_car_place {sorted(p for p in distinct_places if p is not None)}"
+                        ),
+                    }
+                )
                 continue
 
         car_number: int | None = None
@@ -170,8 +191,9 @@ async def validate_create_active_from_model_rows(
             try:
                 car_number = int(first_segment)
             except ValueError:
-                errors.append({"row": row_num, "field": "lcn",
-                                "message": f"Не удалось распознать номер вагона в lcn '{lsn_raw}'"})
+                errors.append(
+                    {"row": row_num, "field": "lcn", "message": f"Не удалось распознать номер вагона в lcn '{lsn_raw}'"}
+                )
                 continue
 
         if id_train_type not in train_ids_by_type:
@@ -179,8 +201,9 @@ async def validate_create_active_from_model_rows(
             train_ids_by_type[id_train_type] = [r[0] for r in result.all()]
         train_ids = train_ids_by_type[id_train_type]
         if not train_ids:
-            errors.append({"row": row_num, "field": "lcn",
-                            "message": f"Поезда с id_train_type={id_train_type} не найдены"})
+            errors.append(
+                {"row": row_num, "field": "lcn", "message": f"Поезда с id_train_type={id_train_type} не найдены"}
+            )
             continue
 
         # The serial number from the file is applied only when exactly one asset is
@@ -191,16 +214,18 @@ async def validate_create_active_from_model_rows(
 
         for train_id in train_ids:
             new_lcn = f"{train_id}.{rest}" if rest else str(train_id)
-            candidates.append({
-                "row_num": row_num,
-                "id_design_number": id_design_number,
-                "type_active": type_active,
-                "id_train": train_id,
-                "car_number": car_number,
-                "id_car_place": id_car_place,
-                "lcn": new_lcn,
-                "serial_number": serial_number or None,
-            })
+            candidates.append(
+                {
+                    "row_num": row_num,
+                    "id_design_number": id_design_number,
+                    "type_active": type_active,
+                    "id_train": train_id,
+                    "car_number": car_number,
+                    "id_car_place": id_car_place,
+                    "lcn": new_lcn,
+                    "serial_number": serial_number or None,
+                }
+            )
 
     if not candidates:
         return errors, [], 0
@@ -208,9 +233,9 @@ async def validate_create_active_from_model_rows(
     # A batched check of target lcn occupancy (one query for the whole file rather than
     # per row) plus deduplication within the batch — both are skipped silently, not errors.
     all_lcns = [c["lcn"] for c in candidates]
-    stmt = text(
-        "SELECT lcn::text FROM public.actives WHERE lcn::text IN :lcns"
-    ).bindparams(bindparam("lcns", expanding=True))
+    stmt = text("SELECT lcn::text FROM public.actives WHERE lcn::text IN :lcns").bindparams(
+        bindparam("lcns", expanding=True)
+    )
     existing_lcns = set((await db_session.execute(stmt, {"lcns": all_lcns})).scalars().all())
 
     valid_rows: list[dict] = []
@@ -242,8 +267,9 @@ class CreateActiveFromModelController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                errors, valid_rows, skipped_count = \
-                    await validate_create_active_from_model_rows(session, rows, progress=progress)
+                errors, valid_rows, skipped_count = await validate_create_active_from_model_rows(
+                    session, rows, progress=progress
+                )
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
             return
@@ -252,7 +278,9 @@ class CreateActiveFromModelController(Controller):
             progress.update(status="error", errors=errors)
             return
         if not valid_rows:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}]
+            )
             return
 
         sql_lines = actives_sql.create_active_from_model(valid_rows)
@@ -276,14 +304,18 @@ class CreateActiveFromModelController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                errors, valid_rows, skipped_count = \
-                    await validate_create_active_from_model_rows(session, rows, progress=progress)
+                errors, valid_rows, skipped_count = await validate_create_active_from_model_rows(
+                    session, rows, progress=progress
+                )
 
                 if errors:
                     progress.update(status="error", errors=errors)
                     return
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}],
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -303,7 +335,9 @@ class CreateActiveFromModelController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
 
                 progress["processed"] = 1
@@ -323,8 +357,7 @@ class CreateActiveFromModelController(Controller):
         log_file = LOG_DIR / f"create_active_from_model_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(log_lines))
-        logger.info("Created %d actives from model lcn (%d skipped), log: %s",
-                     len(valid_rows), skipped_count, log_file)
+        logger.info("Created %d actives from model lcn (%d skipped), log: %s", len(valid_rows), skipped_count, log_file)
 
         message = f"Успешно создано активов: {len(valid_rows)}"
         if skipped_count:

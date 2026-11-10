@@ -28,8 +28,7 @@ def parse_delete_ids(rows: list[dict], progress: dict | None = None) -> tuple[li
             progress["processed"] = row_num
         row_id = row.get("id")
         if not row_id:
-            errors.append({"row": row_num, "field": "id",
-                           "message": "Поле 'id' отсутствует или пустое"})
+            errors.append({"row": row_num, "field": "id", "message": "Поле 'id' отсутствует или пустое"})
             continue
         valid_ids.append(int(row_id))
     return errors, valid_ids
@@ -74,7 +73,9 @@ class DeleteModelsController(Controller):
             return
 
         if not valid_ids:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для удаления"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для удаления"}]
+            )
             return
 
         progress.update(processed=0, total=len(valid_ids), phase="executing")
@@ -88,7 +89,9 @@ class DeleteModelsController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])

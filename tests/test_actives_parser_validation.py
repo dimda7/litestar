@@ -81,9 +81,14 @@ async def make_recount_active(
     if with_mileage_start:
         db_session.add(MileageStart(id_active=active.id, milage=0, milage_const=100))
     if with_counter:
-        db_session.add(CounterActive(
-            id_active=active.id, id_counter_type=3, date=datetime(2023, 1, 1, 12, 0), value=0,
-        ))
+        db_session.add(
+            CounterActive(
+                id_active=active.id,
+                id_counter_type=3,
+                date=datetime(2023, 1, 1, 12, 0),
+                value=0,
+            )
+        )
     await db_session.flush()
     return active.id
 
@@ -141,20 +146,30 @@ async def test_recount_mileage_total_from_relocate_history(db_session):
     db_session.add_all([loc_storage, loc_train])
     await db_session.flush()
 
-    db_session.add_all([
-        # storage -> train before the cutoff: the train's mileage is added
-        Relocate(id_active=active_id, id_location_old=loc_storage.id,
-                 id_location_new=loc_train.id, date=datetime(2022, 1, 10, 8, 0)),
-        # a move after the cutoff is ignored
-        Relocate(id_active=active_id, id_location_old=loc_train.id,
-                 id_location_new=loc_storage.id, date=datetime(2023, 1, 1, 8, 0)),
-        MileageTrain(id_train=5, mileage_average=10, date_average=date(2022, 2, 1)),
-        MileageTrain(id_train=5, mileage_average=15, date_average=date(2022, 3, 1)),
-        # after the cutoff — not summed
-        MileageTrain(id_train=5, mileage_average=99, date_average=date(2022, 6, 1)),
-        # a different train — not summed
-        MileageTrain(id_train=7, mileage_average=50, date_average=date(2022, 2, 1)),
-    ])
+    db_session.add_all(
+        [
+            # storage -> train before the cutoff: the train's mileage is added
+            Relocate(
+                id_active=active_id,
+                id_location_old=loc_storage.id,
+                id_location_new=loc_train.id,
+                date=datetime(2022, 1, 10, 8, 0),
+            ),
+            # a move after the cutoff is ignored
+            Relocate(
+                id_active=active_id,
+                id_location_old=loc_train.id,
+                id_location_new=loc_storage.id,
+                date=datetime(2023, 1, 1, 8, 0),
+            ),
+            MileageTrain(id_train=5, mileage_average=10, date_average=date(2022, 2, 1)),
+            MileageTrain(id_train=5, mileage_average=15, date_average=date(2022, 3, 1)),
+            # after the cutoff — not summed
+            MileageTrain(id_train=5, mileage_average=99, date_average=date(2022, 6, 1)),
+            # a different train — not summed
+            MileageTrain(id_train=7, mileage_average=50, date_average=date(2022, 2, 1)),
+        ]
+    )
     await db_session.flush()
 
     errors, valid_rows = await validate_recount_mileage(db_session, [{"Актив": "UL0000001"}])
@@ -167,10 +182,24 @@ async def test_recount_mileage_total_from_relocate_history(db_session):
 
 def test_recount_mileage_sql_body_order_and_trains():
     valid_rows = [
-        {"row_num": 1, "active_number": "UL0000001", "id_active": 10, "total": 25, "is_train": False,
-         "milage_const": None, "insert_mileage_start": False},
-        {"row_num": 2, "active_number": "ES0000001", "id_active": 20, "total": -5, "is_train": True,
-         "milage_const": None, "insert_mileage_start": False},
+        {
+            "row_num": 1,
+            "active_number": "UL0000001",
+            "id_active": 10,
+            "total": 25,
+            "is_train": False,
+            "milage_const": None,
+            "insert_mileage_start": False,
+        },
+        {
+            "row_num": 2,
+            "active_number": "ES0000001",
+            "id_active": 20,
+            "total": -5,
+            "is_train": True,
+            "milage_const": None,
+            "insert_mileage_start": False,
+        },
     ]
     lines = actives_sql.recount_mileage(valid_rows)
 
@@ -250,10 +279,24 @@ async def test_recount_mileage_const_missing_mileage_start_without_const(db_sess
 
 def test_recount_mileage_sql_body_const_first():
     valid_rows = [
-        {"row_num": 1, "active_number": "UL0000001", "id_active": 10, "total": 25, "is_train": False,
-         "milage_const": 500, "insert_mileage_start": False},
-        {"row_num": 2, "active_number": "UL0000002", "id_active": 20, "total": 0, "is_train": False,
-         "milage_const": 700, "insert_mileage_start": True},
+        {
+            "row_num": 1,
+            "active_number": "UL0000001",
+            "id_active": 10,
+            "total": 25,
+            "is_train": False,
+            "milage_const": 500,
+            "insert_mileage_start": False,
+        },
+        {
+            "row_num": 2,
+            "active_number": "UL0000002",
+            "id_active": 20,
+            "total": 0,
+            "is_train": False,
+            "milage_const": 700,
+            "insert_mileage_start": True,
+        },
     ]
     lines = actives_sql.recount_mileage(valid_rows)
 
@@ -270,21 +313,21 @@ def test_recount_mileage_sql_body_const_first():
 
 
 async def make_named_actives_refs(db_session) -> None:
-    db_session.add_all([
-        Storage(name="Основной склад, МСК"),
-        Consignment(name="ЧСП Исправные"),
-    ])
+    db_session.add_all(
+        [
+            Storage(name="Основной склад, МСК"),
+            Consignment(name="ЧСП Исправные"),
+        ]
+    )
     await db_session.flush()
     await make_design_number(db_session, "DU0012929")
 
 
-NAMED_ROW = {"Актив": "SPD452390", "ТМЦ": "DU0012929",
-             "Положение": "Основной склад, МСК", "Партия": "ЧСП Исправные"}
+NAMED_ROW = {"Актив": "SPD452390", "ТМЦ": "DU0012929", "Положение": "Основной склад, МСК", "Партия": "ЧСП Исправные"}
 
 
 async def test_create_named_actives_columns_missing(db_session):
-    errors, valid_rows = await validate_create_named_actives(
-        db_session, [{"Актив": "SPD452390", "Другое": "x"}])
+    errors, valid_rows = await validate_create_named_actives(db_session, [{"Актив": "SPD452390", "Другое": "x"}])
 
     assert valid_rows == []
     assert len(errors) == 1
@@ -317,8 +360,7 @@ async def test_create_named_actives_already_exists(db_session):
 async def test_create_named_actives_duplicate_in_file(db_session):
     await make_named_actives_refs(db_session)
 
-    errors, valid_rows = await validate_create_named_actives(
-        db_session, [dict(NAMED_ROW), dict(NAMED_ROW)])
+    errors, valid_rows = await validate_create_named_actives(db_session, [dict(NAMED_ROW), dict(NAMED_ROW)])
 
     assert len(valid_rows) == 1
     assert "Дубликат внутри файла" in errors[0]["message"]
@@ -343,10 +385,8 @@ async def test_create_named_actives_refs_not_found(db_session):
 
 def test_create_named_actives_sql_body():
     valid_rows = [
-        {"row_num": 1, "active_number": "SPD452390", "id_design_number": 7,
-         "id_storage": 3, "id_consignment": 4},
-        {"row_num": 2, "active_number": "SPD452391", "id_design_number": 8,
-         "id_storage": 3, "id_consignment": 4},
+        {"row_num": 1, "active_number": "SPD452390", "id_design_number": 7, "id_storage": 3, "id_consignment": 4},
+        {"row_num": 2, "active_number": "SPD452391", "id_design_number": 8, "id_storage": 3, "id_consignment": 4},
     ]
     lines = actives_sql.create_named_actives(valid_rows)
     sql = "\n".join(lines)
@@ -403,28 +443,32 @@ async def make_order_dependency_tables(db_session) -> None:
 
     from controllers.actives_parser.delete_actives import ORDERS_DEPENDENCY_CHECKS
     from models import Base
+
     existing = set(Base.metadata.tables)
     columns: dict[str, set[str]] = {}
     for tbl, col in ORDERS_DEPENDENCY_CHECKS:
         if f"public.{tbl}" not in existing:
             columns.setdefault(tbl, set()).add(col)
     for tbl, cols in columns.items():
-        await db_session.execute(sql_text(
-            f"CREATE TABLE IF NOT EXISTS public.{tbl} ({', '.join(f'{c} integer' for c in sorted(cols))})"
-        ))
+        await db_session.execute(
+            sql_text(f"CREATE TABLE IF NOT EXISTS public.{tbl} ({', '.join(f'{c} integer' for c in sorted(cols))})")
+        )
 
 
 async def test_delete_actives_blocked_by_dependencies(db_session):
     from models import Orders, Ptoir
+
     await make_order_dependency_tables(db_session)
     ok_id = await make_active(db_session, "SPD1077356")
     blocked_relocate = await make_active(db_session, "SPD1077357")
-    db_session.add_all([
-        Relocate(id_active=blocked_relocate, date=datetime(2023, 1, 1)),
-        # the counter (created by a trigger on every asset), the maintenance record and
-        # an empty order against it do NOT block the deletion
-        CounterActive(id_active=ok_id, id_counter_type=3, date=datetime(2023, 1, 1), value=0),
-    ])
+    db_session.add_all(
+        [
+            Relocate(id_active=blocked_relocate, date=datetime(2023, 1, 1)),
+            # the counter (created by a trigger on every asset), the maintenance record and
+            # an empty order against it do NOT block the deletion
+            CounterActive(id_active=ok_id, id_counter_type=3, date=datetime(2023, 1, 1), value=0),
+        ]
+    )
     ptoir_ok = Ptoir(number_ptoir="ТО1", id_active=ok_id)
     db_session.add(ptoir_ok)
     await db_session.flush()
@@ -443,17 +487,16 @@ async def test_delete_actives_blocked_by_order_with_dependencies(db_session):
     from sqlalchemy import text as sql_text
 
     from models import Orders
+
     await make_order_dependency_tables(db_session)
     blocked_id = await make_active(db_session, "SPD1077358")
     order = Orders(order_number="З-2", id_active=blocked_id)
     db_session.add(order)
     await db_session.flush()
     # the order has labour costs — the asset is blocked
-    await db_session.execute(sql_text(
-        f"INSERT INTO public.labor_costs (id_order) VALUES ({order.id})"))
+    await db_session.execute(sql_text(f"INSERT INTO public.labor_costs (id_order) VALUES ({order.id})"))
 
-    errors, valid_rows = await validate_delete_actives(
-        db_session, [{"Актив": "SPD1077358"}])
+    errors, valid_rows = await validate_delete_actives(db_session, [{"Актив": "SPD1077358"}])
 
     assert valid_rows == []
     assert "заказов актива 'SPD1077358'" in errors[0]["message"]
@@ -463,8 +506,7 @@ async def test_delete_actives_blocked_by_order_with_dependencies(db_session):
 async def test_delete_actives_active_number_column(db_session):
     await make_active(db_session, "SPD1077356")
 
-    errors, valid_rows = await validate_delete_actives(
-        db_session, [{"active_number": "SPD1077356"}])
+    errors, valid_rows = await validate_delete_actives(db_session, [{"active_number": "SPD1077356"}])
 
     assert errors == []
     assert valid_rows[0]["active_number"] == "SPD1077356"
@@ -500,17 +542,24 @@ async def make_create_actives_refs(db_session) -> None:
     from models import Consignment as ConsignmentModel
     from models import IteratorNumberLast
     from models import Storage as StorageModel
-    db_session.add_all([
-        IteratorNumberLast(id=2, number=100, description="Номер следующего актива"),
-        StorageModel(name="Основной склад, МСК", last_lcn=10),
-        ConsignmentModel(name="ЧСП Исправные"),
-    ])
+
+    db_session.add_all(
+        [
+            IteratorNumberLast(id=2, number=100, description="Номер следующего актива"),
+            StorageModel(name="Основной склад, МСК", last_lcn=10),
+            ConsignmentModel(name="ЧСП Исправные"),
+        ]
+    )
     await db_session.flush()
     await make_design_number(db_session, "DU0012929")
 
 
-CREATE_ACTIVES_ROW_TAIL = {"Количество": 1, "Склад": "Основной склад, МСК",
-                           "Тип актива": "SPD", "Партия": "ЧСП Исправные"}
+CREATE_ACTIVES_ROW_TAIL = {
+    "Количество": 1,
+    "Склад": "Основной склад, МСК",
+    "Тип актива": "SPD",
+    "Партия": "ЧСП Исправные",
+}
 
 
 async def test_create_actives_old_tmc_column_name(db_session):
@@ -557,8 +606,7 @@ def test_build_created_actives_xlsx():
 
     import openpyxl
 
-    b64 = build_created_actives_xlsx(
-        [("SPV0000101", "251200001"), ("SPV0000102", None)])
+    b64 = build_created_actives_xlsx([("SPV0000101", "251200001"), ("SPV0000102", None)])
     wb = openpyxl.load_workbook(BytesIO(base64.b64decode(b64)))
     rows = list(wb.active.iter_rows(values_only=True))
 
@@ -630,6 +678,7 @@ async def test_serial_number_unknown_and_duplicate_actives_reported(db_session):
     errors, valid_rows = await validate_serial_number(db_session, rows)
 
     assert [(e["row"], e["message"]) for e in errors] == [
-        (2, "Актив не найден: 'NOPE'"), (3, "Дубликат внутри файла: 'VR1901004'"),
+        (2, "Актив не найден: 'NOPE'"),
+        (3, "Дубликат внутри файла: 'VR1901004'"),
     ]
     assert valid_rows == [("VR1901004", "1", None)]

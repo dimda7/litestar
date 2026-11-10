@@ -56,9 +56,7 @@ async def test_missing_lcn_column_reported(db_session):
 async def test_missing_new_position_column_reported(db_session):
     errors, valid_rows = await validate(db_session, [{"lsn": "M9.6.5"}])
 
-    assert errors == [
-        {"row": 0, "field": "new_position", "message": "В файле не найдена колонка 'new_position'"}
-    ]
+    assert errors == [{"row": 0, "field": "new_position", "message": "В файле не найдена колонка 'new_position'"}]
 
 
 async def test_no_op_row_skipped(db_session):

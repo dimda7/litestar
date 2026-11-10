@@ -20,7 +20,9 @@ logger = logging.getLogger("parser")
 
 
 async def validate_is_default_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'Изменить серийность в модели' (models.is_default).
 
@@ -52,8 +54,9 @@ async def validate_is_default_rows(
         progress.update(processed=0, total=len(rows), phase="validating")
 
     models_result = await db_session.execute(
-        select(Models.id, Models.id_train_type, Models.lcn, Models.id_car_place,
-               Models.id_design_number, Models.is_default)
+        select(
+            Models.id, Models.id_train_type, Models.lcn, Models.id_car_place, Models.id_design_number, Models.is_default
+        )
     )
     models_by_id = {m[0]: m for m in models_result.all()}
 
@@ -81,16 +84,28 @@ async def validate_is_default_rows(
             continue
 
         if isdefault_raw not in ("true", "false", "1", "0", "да", "нет"):
-            errors.append({"row": row_num, "field": "isdefault",
-                           "message": f"Неверное значение isdefault: '{isdefault_raw}' (ожидается true/false)"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "isdefault",
+                    "message": f"Неверное значение isdefault: '{isdefault_raw}' (ожидается true/false)",
+                }
+            )
             continue
         is_default = isdefault_raw in ("true", "1", "да")
 
         if model_id in parsed:
             if parsed[model_id]["is_default"] != is_default:
-                errors.append({"row": row_num, "field": "id",
-                               "message": (f"Конфликт: id={model_id} уже сопоставлен другому значению isdefault "
-                                           f"({parsed[model_id]['is_default']}, а не {is_default})")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "id",
+                        "message": (
+                            f"Конфликт: id={model_id} уже сопоставлен другому значению isdefault "
+                            f"({parsed[model_id]['is_default']}, а не {is_default})"
+                        ),
+                    }
+                )
             continue
 
         if model_id not in models_by_id:
@@ -130,16 +145,30 @@ async def validate_is_default_rows(
             car_type_design = (id_car_place, id_train_type, id_design_number)
             owner = existing_default_lcn_car.get(lcn_car, batch_lcn_car.get(lcn_car))
             if owner is not None and owner != model_id:
-                errors.append({"row": row_num, "field": "isdefault",
-                               "message": (f"Конфликт unique (lcn, car_place) WHERE is_default=true: "
-                                           f"lcn='{lcn}', car_place={id_car_place} уже заняты")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "isdefault",
+                        "message": (
+                            f"Конфликт unique (lcn, car_place) WHERE is_default=true: "
+                            f"lcn='{lcn}', car_place={id_car_place} уже заняты"
+                        ),
+                    }
+                )
                 continue
             owner2 = existing_default_car_type_design.get(car_type_design, batch_car_type_design.get(car_type_design))
             if owner2 is not None and owner2 != model_id:
-                errors.append({"row": row_num, "field": "isdefault",
-                               "message": (f"Конфликт unique (car_place, train_type, design_number) WHERE is_default=true: "
-                                           f"car_place={id_car_place}, train_type={id_train_type}, "
-                                           f"design_number={id_design_number} уже заняты")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "isdefault",
+                        "message": (
+                            f"Конфликт unique (car_place, train_type, design_number) WHERE is_default=true: "
+                            f"car_place={id_car_place}, train_type={id_train_type}, "
+                            f"design_number={id_design_number} уже заняты"
+                        ),
+                    }
+                )
                 continue
             batch_lcn_car[lcn_car] = model_id
             batch_car_type_design[car_type_design] = model_id
@@ -199,7 +228,9 @@ class IsDefaultController(Controller):
                 try:
                     errors, valid_rows = await validate_is_default_rows(session, rows, progress=progress)
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -207,7 +238,9 @@ class IsDefaultController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}]
+                    )
                     return
 
                 # FALSE rows before TRUE ones (see models_sql.set_is_default) — one
@@ -223,7 +256,9 @@ class IsDefaultController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -242,5 +277,8 @@ class IsDefaultController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Changed is_default for %d models, log: %s", total_updated, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Изменена серийность (is_default) у моделей: {total_updated} (строк файла: {len(valid_rows)})")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=f"Изменена серийность (is_default) у моделей: {total_updated} (строк файла: {len(valid_rows)})",
+        )

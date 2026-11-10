@@ -25,6 +25,7 @@ class SqlOperation:
     lines the log carries between its header and the executed SQL. With partial,
     row errors do not block the file: they are returned alongside the result.
     """
+
     validate: Validator
     build: Callable[[list], list[str]]
     log_name: str
@@ -40,7 +41,10 @@ def _error(message: str) -> list[dict]:
 
 
 async def _validated(
-    session: AsyncSession, rows: list[dict], op: SqlOperation, progress: dict,
+    session: AsyncSession,
+    rows: list[dict],
+    op: SqlOperation,
+    progress: dict,
 ) -> tuple[list[dict], list] | None:
     """(errors, valid_rows), or None once the failure is reported to progress."""
     try:
@@ -103,7 +107,7 @@ def start_execute(data: dict, op: SqlOperation) -> Response:
                     # into parts (still one transaction) to move the progress bar.
                     step = -(-len(sql_lines) // EXECUTE_PROGRESS_STEPS)
                     for start in range(0, len(sql_lines), step):
-                        await raw_conn.driver_connection.execute("\n".join(sql_lines[start:start + step]))
+                        await raw_conn.driver_connection.execute("\n".join(sql_lines[start : start + step]))
                         progress["processed"] = min(start + step, len(sql_lines))
                     await session.commit()
                 except Exception as e:
@@ -118,13 +122,17 @@ def start_execute(data: dict, op: SqlOperation) -> Response:
         now = datetime.now()
         log_file = LOG_DIR / f"{op.log_name}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join([
-                f"=== Execute {op.log_title}: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-                *log_lines,
-                "",
-                *sql_lines,
-                "",
-            ]))
+            f.write(
+                "\n".join(
+                    [
+                        f"=== Execute {op.log_title}: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+                        *log_lines,
+                        "",
+                        *sql_lines,
+                        "",
+                    ]
+                )
+            )
         op.logger.info("%s: %d rows, log: %s", op.log_name, len(valid_rows), log_file)
 
         progress.update(status="done", count=len(valid_rows), errors=errors, message=message)

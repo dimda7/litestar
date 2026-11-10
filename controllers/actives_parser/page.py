@@ -44,7 +44,7 @@ class ActivesParserController(Controller):
             page = total_pages
 
         offset = (page - 1) * per_page
-        rows = all_rows[offset:offset + per_page]
+        rows = all_rows[offset : offset + per_page]
 
         return Template(
             template_name="actives_parser.html",
@@ -78,7 +78,9 @@ class ActivesParserController(Controller):
         data: SelectSheetRequest = Body(media_type=RequestEncodingType.URL_ENCODED),
     ) -> Redirect:
         """Sheet choice for a multi-sheet Excel file — see excel_upload.handle_sheet_choice."""
-        return excel_upload.handle_sheet_choice(request, PREFIX, "/actives-parser", data.sheet_name, skip_blank_rows=True)
+        return excel_upload.handle_sheet_choice(
+            request, PREFIX, "/actives-parser", data.sheet_name, skip_blank_rows=True
+        )
 
     @get("/progress/{task_id:str}")
     async def task_progress(self, task_id: str) -> Response:

@@ -29,9 +29,7 @@ class UsersController(Controller):
             page = total_pages
 
         offset = (page - 1) * per_page
-        result = await db_session.execute(
-            select(User).order_by(User.id).offset(offset).limit(per_page)
-        )
+        result = await db_session.execute(select(User).order_by(User.id).offset(offset).limit(per_page))
         users = result.scalars().all()
 
         return Template(

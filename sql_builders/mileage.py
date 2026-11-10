@@ -48,14 +48,12 @@ def correct_mileage(correction: Correction, wrap_transaction: bool = False) -> l
         f"ALTER TABLE public.counter_active DISABLE TRIGGER {MILEAGE_TRIGGER_NAME};",
         "",
         "DELETE FROM public.mileage_train",
-        f"WHERE id_train = {correction.id_train} "
-        f"AND date_average > '{correction.source_date_average:%Y-%m-%d}';",
+        f"WHERE id_train = {correction.id_train} AND date_average > '{correction.source_date_average:%Y-%m-%d}';",
         "",
         f"-- value from mileage_train.id={correction.source_row_id}, "
         f"date_average={correction.source_date_average:%Y-%m-%d}",
         "UPDATE public.counter_active c",
-        f"SET value = {correction.counter_value}, "
-        f"date = '{correction.counter_date:%Y-%m-%d %H:%M:%S}'",
+        f"SET value = {correction.counter_value}, date = '{correction.counter_date:%Y-%m-%d %H:%M:%S}'",
         f"WHERE c.id_active = {correction.id_active} "
         f"AND c.id_counter_type = {MILEAGE_COUNTER_TYPE_ID} AND c.is_train = true;",
         "",

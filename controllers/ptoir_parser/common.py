@@ -22,7 +22,7 @@ LOOKUP_CHUNK = 5000
 
 
 def chunks(values: list) -> list[list]:
-    return [values[start:start + LOOKUP_CHUNK] for start in range(0, len(values), LOOKUP_CHUNK)]
+    return [values[start : start + LOOKUP_CHUNK] for start in range(0, len(values), LOOKUP_CHUNK)]
 
 
 def cell_numbers(rows: list[dict], column: str) -> list[str]:
@@ -50,21 +50,25 @@ def match_rows(numbers: list[str], found: Collection[str], label: str) -> tuple[
 
 
 async def load_ptoirs(
-    db_session: AsyncSession, key: InstrumentedAttribute, values: list,
+    db_session: AsyncSession,
+    key: InstrumentedAttribute,
+    values: list,
 ) -> dict[object, list[dict]]:
     """ПТОиР whose `key` column is in values, grouped by it, as ptoir_sql.delete takes them:
     id, number_ptoir and the order_number of each order that will be detached."""
     ptoirs: dict[object, list[dict]] = {}
     for chunk in chunks(values):
         result = await db_session.execute(
-            select(key, Ptoir.id, Ptoir.number_ptoir).where(key.in_(chunk)).order_by(Ptoir.id))
+            select(key, Ptoir.id, Ptoir.number_ptoir).where(key.in_(chunk)).order_by(Ptoir.id)
+        )
         for value, id_ptoir, number_ptoir in result.tuples():
             ptoirs.setdefault(value, []).append({"id": id_ptoir, "number_ptoir": number_ptoir, "order_numbers": []})
 
     by_id = {ptoir["id"]: ptoir for group in ptoirs.values() for ptoir in group}
     for chunk in chunks(list(by_id)):
         result = await db_session.execute(
-            select(Orders.id_ptoir, Orders.order_number).where(Orders.id_ptoir.in_(chunk)).order_by(Orders.id))
+            select(Orders.id_ptoir, Orders.order_number).where(Orders.id_ptoir.in_(chunk)).order_by(Orders.id)
+        )
         for id_ptoir, order_number in result.tuples():
             by_id[id_ptoir]["order_numbers"].append(order_number)
     return ptoirs

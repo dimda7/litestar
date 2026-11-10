@@ -80,30 +80,50 @@ async def validate_rename_rows(
             errors.append({"row": row_num, "field": RENAME_NEW_FIELD, "message": f"Поле '{RENAME_NEW_FIELD}' пустое"})
             continue
         if old in old_rows:
-            errors.append({"row": row_num, "field": RENAME_OLD_FIELD,
-                           "message": f"Старый номер {old!r} уже указан в строке {old_rows[old]}"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": RENAME_OLD_FIELD,
+                    "message": f"Старый номер {old!r} уже указан в строке {old_rows[old]}",
+                }
+            )
             continue
         old_rows[old] = row_num
         if new in new_rows:
-            errors.append({"row": row_num, "field": RENAME_NEW_FIELD,
-                           "message": f"Новый номер {new!r} уже указан в строке {new_rows[new]}"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": RENAME_NEW_FIELD,
+                    "message": f"Новый номер {new!r} уже указан в строке {new_rows[new]}",
+                }
+            )
             continue
         new_rows[new] = row_num
         if new != new.strip() or "\xa0" in new:
-            errors.append({"row": row_num, "field": RENAME_NEW_FIELD,
-                           "message": f"Новый номер содержит пробельные символы: {new!r}"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": RENAME_NEW_FIELD,
+                    "message": f"Новый номер содержит пробельные символы: {new!r}",
+                }
+            )
             continue
-        dn_id = (await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == old))).scalar_one_or_none()
+        dn_id = (
+            await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == old))
+        ).scalar_one_or_none()
         if dn_id is None:
             errors.append({"row": row_num, "field": RENAME_OLD_FIELD, "message": f"design_number не найден: {old!r}"})
             continue
         if new == old:
             errors.append({"row": row_num, "field": RENAME_NEW_FIELD, "message": f"Номер не меняется: {new!r}"})
             continue
-        taken_id = (await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == new))).scalar_one_or_none()
+        taken_id = (
+            await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == new))
+        ).scalar_one_or_none()
         if taken_id is not None:
-            errors.append({"row": row_num, "field": RENAME_NEW_FIELD,
-                           "message": f"ТМЦ {new!r} уже существует (id={taken_id})"})
+            errors.append(
+                {"row": row_num, "field": RENAME_NEW_FIELD, "message": f"ТМЦ {new!r} уже существует (id={taken_id})"}
+            )
             continue
         valid_rows.append((dn_id, old, new))
 
@@ -125,9 +145,22 @@ TRAIN_UNIT_TYPE_ID = 1
 # design_number.number is varchar(32).
 DESIGN_NUMBER_MAX_LENGTH = 32
 UPDATE_HEADERS = (
-    "number", "description", "unit_type", "is_serial", "is_created_1c", "commodity_group", "commodity_code",
-    "design_number_status", "measure_type", "is_repairable", "product_group", "description_1c", "main_number",
-    "counter_group", "maint_use", "is_serial_1c",
+    "number",
+    "description",
+    "unit_type",
+    "is_serial",
+    "is_created_1c",
+    "commodity_group",
+    "commodity_code",
+    "design_number_status",
+    "measure_type",
+    "is_repairable",
+    "product_group",
+    "description_1c",
+    "main_number",
+    "counter_group",
+    "maint_use",
+    "is_serial_1c",
 )
 TRUE_VALUES = ("true", "1", "да")
 FALSE_VALUES = ("false", "0", "нет")
@@ -177,9 +210,9 @@ async def _measure_types(db_session: AsyncSession) -> dict[str, list[int]]:
     # measure_type really holds duplicate names ('пог. м', 'рул'): of those, the
     # one with a code_1c wins, and the highest id breaks any remaining tie.
     best: dict[str, tuple[bool, int]] = {}
-    for id_, name, code_1c in (await db_session.execute(
-        select(MeasureType.id, MeasureType.name, MeasureType.code_1c)
-    )).all():
+    for id_, name, code_1c in (
+        await db_session.execute(select(MeasureType.id, MeasureType.name, MeasureType.code_1c))
+    ).all():
         if name:
             key = name.strip().lower()
             best[key] = max(best.get(key, (False, 0)), (code_1c is not None, id_))
@@ -192,7 +225,9 @@ def _missing_headers(rows: list[dict]) -> list[dict]:
 
 
 async def _field_catalogues(db_session: AsyncSession) -> dict[str, dict[str, list[int]]]:
-    catalogues = {column: await _catalogue(db_session, name_column) for column, name_column in UPDATE_REFERENCES.items()}
+    catalogues = {
+        column: await _catalogue(db_session, name_column) for column, name_column in UPDATE_REFERENCES.items()
+    }
     catalogues["measure_type"] = await _measure_types(db_session)
     catalogues["maint_use"] = await _catalogue(db_session, MaintUse.name)
     return catalogues
@@ -216,13 +251,23 @@ def _parse_fields(
         elif value.lower() in TRUE_VALUES + FALSE_VALUES:
             flags[column] = value.lower() in TRUE_VALUES
         else:
-            row_errors.append({"row": row_num, "field": column,
-                               "message": f"Неверное значение {column}: {value!r} (ожидается true/false)"})
+            row_errors.append(
+                {
+                    "row": row_num,
+                    "field": column,
+                    "message": f"Неверное значение {column}: {value!r} (ожидается true/false)",
+                }
+            )
     if refs["unit_type"] == TRAIN_UNIT_TYPE_ID:
         for column in ("is_repairable", "measure_type"):
             if _cell(row, column) is not None:
-                row_errors.append({"row": row_num, "field": column,
-                                   "message": f"Для unit_type 'Поезд' поле '{column}' должно быть NULL"})
+                row_errors.append(
+                    {
+                        "row": row_num,
+                        "field": column,
+                        "message": f"Для unit_type 'Поезд' поле '{column}' должно быть NULL",
+                    }
+                )
     maint_use_ids: list[int] = []
     for item in (_cell(row, "maint_use") or "").split(","):
         if item.strip():
@@ -233,13 +278,21 @@ def _parse_fields(
         errors.extend(row_errors)
         return None
     return dict(
-        description=_cell(row, "description"), id_unit_type=refs["unit_type"], is_serial=flags["is_serial"],
-        is_created_1c=flags["is_created_1c"], id_commodity_group=refs["commodity_group"],
-        id_commodity_code=refs["commodity_code"], id_design_number_status=refs["design_number_status"],
-        id_measure_type=refs["measure_type"], is_repairable=flags["is_repairable"],
-        id_product_group=refs["product_group"], description_1c=_cell(row, "description_1c"),
-        main_number=_cell(row, "main_number"), id_counter_group=refs["counter_group"],
-        is_serial_1c=flags["is_serial_1c"], maint_use_ids=tuple(maint_use_ids),
+        description=_cell(row, "description"),
+        id_unit_type=refs["unit_type"],
+        is_serial=flags["is_serial"],
+        is_created_1c=flags["is_created_1c"],
+        id_commodity_group=refs["commodity_group"],
+        id_commodity_code=refs["commodity_code"],
+        id_design_number_status=refs["design_number_status"],
+        id_measure_type=refs["measure_type"],
+        is_repairable=flags["is_repairable"],
+        id_product_group=refs["product_group"],
+        description_1c=_cell(row, "description_1c"),
+        main_number=_cell(row, "main_number"),
+        id_counter_group=refs["counter_group"],
+        is_serial_1c=flags["is_serial_1c"],
+        maint_use_ids=tuple(maint_use_ids),
     )
 
 
@@ -253,9 +306,13 @@ async def validate_update_rows(
 
     catalogues = await _field_catalogues(db_session)
     numbers = [_cell_text(row.get("number")) for row in rows]
-    dn_ids = dict((await db_session.execute(
-        select(DesignNumber.number, DesignNumber.id).where(DesignNumber.number.in_(numbers))
-    )).all())
+    dn_ids = dict(
+        (
+            await db_session.execute(
+                select(DesignNumber.number, DesignNumber.id).where(DesignNumber.number.in_(numbers))
+            )
+        ).all()
+    )
 
     number_rows: dict[str, int] = {}
 
@@ -266,8 +323,13 @@ async def validate_update_rows(
             errors.append({"row": row_num, "field": "number", "message": "Поле 'number' пустое"})
             continue
         if number in number_rows:
-            errors.append({"row": row_num, "field": "number",
-                           "message": f"Номер {number!r} уже указан в строке {number_rows[number]}"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "number",
+                    "message": f"Номер {number!r} уже указан в строке {number_rows[number]}",
+                }
+            )
             continue
         number_rows[number] = row_num
         if number not in dn_ids:
@@ -305,28 +367,49 @@ async def validate_create_rows(
             errors.append({"row": row_num, "field": "number", "message": "Поле 'number' пустое"})
             continue
         if number != number.strip() or "\xa0" in number:
-            errors.append({"row": row_num, "field": "number",
-                           "message": f"Номер содержит пробельные символы: {number!r}"})
+            errors.append(
+                {"row": row_num, "field": "number", "message": f"Номер содержит пробельные символы: {number!r}"}
+            )
             continue
         if len(number) > DESIGN_NUMBER_MAX_LENGTH:
-            errors.append({"row": row_num, "field": "number",
-                           "message": f"Номер длиннее {DESIGN_NUMBER_MAX_LENGTH} символов ({len(number)}): {number!r}"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "number",
+                    "message": f"Номер длиннее {DESIGN_NUMBER_MAX_LENGTH} символов ({len(number)}): {number!r}",
+                }
+            )
             continue
         key = _similarity_key(number)
         if number in number_rows:
-            errors.append({"row": row_num, "field": "number",
-                           "message": f"Номер {number!r} уже указан в строке {number_rows[number]}"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "number",
+                    "message": f"Номер {number!r} уже указан в строке {number_rows[number]}",
+                }
+            )
             continue
         if key in similar_rows:
-            errors.append({"row": row_num, "field": "number",
-                           "message": f"Номер {number!r} похож на номер из строки {similar_rows[key]}"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "number",
+                    "message": f"Номер {number!r} похож на номер из строки {similar_rows[key]}",
+                }
+            )
             continue
         number_rows[number] = row_num
         similar_rows[key] = row_num
         if key in similar and number not in existing:
             similar_number, similar_id = similar[key]
-            errors.append({"row": row_num, "field": "number",
-                           "message": f"В БД есть похожий номер {similar_number!r} (id={similar_id})"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "number",
+                    "message": f"В БД есть похожий номер {similar_number!r} (id={similar_id})",
+                }
+            )
             continue
         fields = _parse_fields(row, row_num, catalogues, errors)
         if fields is not None:
@@ -335,27 +418,40 @@ async def validate_create_rows(
     return errors, valid_rows
 
 
-async def snapshot_design_numbers(
-    db_session: AsyncSession, ids: list[int]
-) -> list[design_number_sql.DesignNumberRow]:
+async def snapshot_design_numbers(db_session: AsyncSession, ids: list[int]) -> list[design_number_sql.DesignNumberRow]:
     links: dict[int, list[int]] = {}
-    for id_design_number, id_maint_use in (await db_session.execute(
-        select(DesignNumberToMaintUse.id_design_number, DesignNumberToMaintUse.id_maint_use)
-        .where(DesignNumberToMaintUse.id_design_number.in_(ids))
-        .order_by(DesignNumberToMaintUse.id_maint_use)
-    )).all():
+    for id_design_number, id_maint_use in (
+        await db_session.execute(
+            select(DesignNumberToMaintUse.id_design_number, DesignNumberToMaintUse.id_maint_use)
+            .where(DesignNumberToMaintUse.id_design_number.in_(ids))
+            .order_by(DesignNumberToMaintUse.id_maint_use)
+        )
+    ).all():
         links.setdefault(id_design_number, []).append(id_maint_use)
-    design_numbers = (await db_session.execute(
-        select(DesignNumber).where(DesignNumber.id.in_(ids)).order_by(DesignNumber.id)
-    )).scalars().all()
+    design_numbers = (
+        (await db_session.execute(select(DesignNumber).where(DesignNumber.id.in_(ids)).order_by(DesignNumber.id)))
+        .scalars()
+        .all()
+    )
     return [
         design_number_sql.DesignNumberRow(
-            id=dn.id, number=dn.number, description=dn.description, id_unit_type=dn.id_unit_type,
-            is_serial=dn.is_serial, is_created_1c=dn.is_created_1c, id_commodity_group=dn.id_commodity_group,
-            id_commodity_code=dn.id_commodity_code, id_design_number_status=dn.id_design_number_status,
-            id_measure_type=dn.id_measure_type, is_repairable=dn.is_repairable, id_product_group=dn.id_product_group,
-            description_1c=dn.description_1c, main_number=dn.main_number, id_counter_group=dn.id_counter_group,
-            is_serial_1c=dn.is_serial_1c, maint_use_ids=tuple(links.get(dn.id, [])),
+            id=dn.id,
+            number=dn.number,
+            description=dn.description,
+            id_unit_type=dn.id_unit_type,
+            is_serial=dn.is_serial,
+            is_created_1c=dn.is_created_1c,
+            id_commodity_group=dn.id_commodity_group,
+            id_commodity_code=dn.id_commodity_code,
+            id_design_number_status=dn.id_design_number_status,
+            id_measure_type=dn.id_measure_type,
+            is_repairable=dn.is_repairable,
+            id_product_group=dn.id_product_group,
+            description_1c=dn.description_1c,
+            main_number=dn.main_number,
+            id_counter_group=dn.id_counter_group,
+            is_serial_1c=dn.is_serial_1c,
+            maint_use_ids=tuple(links.get(dn.id, [])),
         )
         for dn in design_numbers
     ]
@@ -394,7 +490,7 @@ class DesignNumberParserController(Controller):
             page = total_pages
 
         offset = (page - 1) * per_page
-        rows = all_rows[offset:offset + per_page]
+        rows = all_rows[offset : offset + per_page]
 
         return Template(
             template_name="design_number_parser.html",
@@ -454,9 +550,7 @@ class DesignNumberParserController(Controller):
                 errors.append({"row": row_num, "field": "number", "message": "Поле 'number' пустое"})
                 continue
 
-            dn_result = await db_session.execute(
-                select(DesignNumber.id).where(DesignNumber.number == number)
-            )
+            dn_result = await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == number))
             dn_id = dn_result.scalar_one_or_none()
             if dn_id is None:
                 errors.append({"row": row_num, "field": "number", "message": f"design_number не найден: '{number}'"})
@@ -468,7 +562,9 @@ class DesignNumberParserController(Controller):
 
             cg_id = cg_map.get(cg_name.lower())
             if cg_id is None:
-                errors.append({"row": row_num, "field": "counter_group", "message": f"counter_group не найден: '{cg_name}'"})
+                errors.append(
+                    {"row": row_num, "field": "counter_group", "message": f"counter_group не найден: '{cg_name}'"}
+                )
                 continue
 
             valid_rows.append((dn_id, number, cg_id))
@@ -499,9 +595,7 @@ class DesignNumberParserController(Controller):
                 errors.append({"row": row_num, "field": "number", "message": "Поле 'number' пустое"})
                 continue
 
-            dn_result = await db_session.execute(
-                select(DesignNumber.id).where(DesignNumber.number == number)
-            )
+            dn_result = await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == number))
             dn_id = dn_result.scalar_one_or_none()
             if dn_id is None:
                 errors.append({"row": row_num, "field": "number", "message": f"design_number не найден: '{number}'"})
@@ -538,17 +632,20 @@ class DesignNumberParserController(Controller):
                 errors.append({"row": row_num, "field": "number", "message": "Поле 'number' пустое"})
                 continue
 
-            dn_result = await db_session.execute(
-                select(DesignNumber.id).where(DesignNumber.number == number)
-            )
+            dn_result = await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == number))
             dn_id = dn_result.scalar_one_or_none()
             if dn_id is None:
                 errors.append({"row": row_num, "field": "number", "message": f"design_number не найден: '{number}'"})
                 continue
 
             if is_serial_1c_raw not in ("true", "false", "1", "0", "да", "нет"):
-                errors.append({"row": row_num, "field": "is_serial_1c",
-                               "message": f"Неверное значение is_serial_1c: '{is_serial_1c_raw}' (ожидается true/false)"})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "is_serial_1c",
+                        "message": f"Неверное значение is_serial_1c: '{is_serial_1c_raw}' (ожидается true/false)",
+                    }
+                )
                 continue
 
             is_serial_1c = is_serial_1c_raw in ("true", "1", "да")
@@ -575,7 +672,12 @@ class DesignNumberParserController(Controller):
 
         if not valid_rows:
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -590,7 +692,9 @@ class DesignNumberParserController(Controller):
         except Exception as e:
             await db_session.rollback()
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                content=json.dumps(
+                    {"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -610,7 +714,13 @@ class DesignNumberParserController(Controller):
         logger.info("Updated counter_group for %d rows, log: %s", len(valid_rows), log_file)
 
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено id_counter_group для {len(valid_rows)} записей"}),
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "count": len(valid_rows),
+                    "message": f"Успешно обновлено id_counter_group для {len(valid_rows)} записей",
+                }
+            ),
             status_code=200,
             media_type="application/json",
         )
@@ -634,7 +744,12 @@ class DesignNumberParserController(Controller):
 
         if not valid_rows:
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -649,7 +764,9 @@ class DesignNumberParserController(Controller):
         except Exception as e:
             await db_session.rollback()
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                content=json.dumps(
+                    {"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -669,7 +786,13 @@ class DesignNumberParserController(Controller):
         logger.info("Updated unit_type for %d rows, log: %s", len(valid_rows), log_file)
 
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено id_unit_type для {len(valid_rows)} записей"}),
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "count": len(valid_rows),
+                    "message": f"Успешно обновлено id_unit_type для {len(valid_rows)} записей",
+                }
+            ),
             status_code=200,
             media_type="application/json",
         )
@@ -718,7 +841,12 @@ class DesignNumberParserController(Controller):
 
         if not valid_rows:
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для синхронизации"}]}),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для синхронизации"}],
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -753,10 +881,7 @@ class DesignNumberParserController(Controller):
 
                 for aid in active_ids:
                     existing_result = await db_session.execute(
-                        text(
-                            "SELECT id, id_counter_type FROM public.counter_active "
-                            "WHERE id_active = :aid"
-                        ),
+                        text("SELECT id, id_counter_type FROM public.counter_active WHERE id_active = :aid"),
                         {"aid": aid},
                     )
                     existing_rows = existing_result.all()
@@ -799,7 +924,9 @@ class DesignNumberParserController(Controller):
         except Exception as e:
             await db_session.rollback()
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                content=json.dumps(
+                    {"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -823,16 +950,24 @@ class DesignNumberParserController(Controller):
         log_file = LOG_DIR / f"sync_counter_active_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(log_lines))
-        logger.info("Synced counter_active for %d rows, deleted %d, inserted %d, log: %s", len(valid_rows), deleted_total, inserted_total, log_file)
+        logger.info(
+            "Synced counter_active for %d rows, deleted %d, inserted %d, log: %s",
+            len(valid_rows),
+            deleted_total,
+            inserted_total,
+            log_file,
+        )
 
         return Response(
-            content=json.dumps({
-                "status": "ok",
-                "count": len(valid_rows),
-                "deleted_counter_active": deleted_total,
-                "inserted_counter_active": inserted_total,
-                "message": f"Синхронизация counter_active: {len(valid_rows)} design_number, удалено {deleted_total}, добавлено {inserted_total}",
-            }),
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "count": len(valid_rows),
+                    "deleted_counter_active": deleted_total,
+                    "inserted_counter_active": inserted_total,
+                    "message": f"Синхронизация counter_active: {len(valid_rows)} design_number, удалено {deleted_total}, добавлено {inserted_total}",
+                }
+            ),
             status_code=200,
             media_type="application/json",
         )
@@ -878,10 +1013,7 @@ class DesignNumberParserController(Controller):
 
             for aid in active_ids:
                 existing_result = await db_session.execute(
-                    text(
-                        "SELECT id, id_counter_type FROM public.counter_active "
-                        "WHERE id_active = :aid"
-                    ),
+                    text("SELECT id, id_counter_type FROM public.counter_active WHERE id_active = :aid"),
                     {"aid": aid},
                 )
                 existing_rows = existing_result.all()
@@ -954,7 +1086,12 @@ class DesignNumberParserController(Controller):
 
         if not valid_rows:
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -969,7 +1106,9 @@ class DesignNumberParserController(Controller):
         except Exception as e:
             await db_session.rollback()
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                content=json.dumps(
+                    {"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -989,7 +1128,13 @@ class DesignNumberParserController(Controller):
         logger.info("Updated is_serial_1c for %d rows, log: %s", len(valid_rows), log_file)
 
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено is_serial_1c для {len(valid_rows)} записей"}),
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "count": len(valid_rows),
+                    "message": f"Успешно обновлено is_serial_1c для {len(valid_rows)} записей",
+                }
+            ),
             status_code=200,
             media_type="application/json",
         )
@@ -1038,7 +1183,12 @@ class DesignNumberParserController(Controller):
 
         if not valid_rows:
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -1052,7 +1202,9 @@ class DesignNumberParserController(Controller):
         except Exception as e:
             await db_session.rollback()
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                content=json.dumps(
+                    {"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -1074,7 +1226,9 @@ class DesignNumberParserController(Controller):
         logger.info("Renamed %d design numbers, log: %s", len(valid_rows), log_file)
 
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно переименовано {len(valid_rows)} ТМЦ"}),
+            content=json.dumps(
+                {"status": "ok", "count": len(valid_rows), "message": f"Успешно переименовано {len(valid_rows)} ТМЦ"}
+            ),
             status_code=200,
             media_type="application/json",
         )
@@ -1123,7 +1277,12 @@ class DesignNumberParserController(Controller):
 
         if not valid_rows:
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]}),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -1157,14 +1316,18 @@ class DesignNumberParserController(Controller):
         except Exception as e:
             await db_session.rollback()
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                content=json.dumps(
+                    {"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}
+                ),
                 status_code=200,
                 media_type="application/json",
             )
         logger.info("Updated %d design numbers, log: %s", len(valid_rows), log_file)
 
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено {len(valid_rows)} ТМЦ"}),
+            content=json.dumps(
+                {"status": "ok", "count": len(valid_rows), "message": f"Успешно обновлено {len(valid_rows)} ТМЦ"}
+            ),
             status_code=200,
             media_type="application/json",
         )
@@ -1213,7 +1376,12 @@ class DesignNumberParserController(Controller):
 
         if not valid_rows:
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для создания"}]}),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "errors": [{"row": 0, "field": "*", "message": "Нет валидных строк для создания"}],
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )
@@ -1247,15 +1415,22 @@ class DesignNumberParserController(Controller):
         except Exception as e:
             await db_session.rollback()
             return Response(
-                content=json.dumps({"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}),
+                content=json.dumps(
+                    {"status": "error", "errors": [{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]}
+                ),
                 status_code=200,
                 media_type="application/json",
             )
         logger.info("Created %d and updated %d design numbers, log: %s", created, updated, log_file)
 
         return Response(
-            content=json.dumps({"status": "ok", "count": len(valid_rows),
-                                "message": f"Успешно создано {created} ТМЦ, обновлено {updated} ТМЦ"}),
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "count": len(valid_rows),
+                    "message": f"Успешно создано {created} ТМЦ, обновлено {updated} ТМЦ",
+                }
+            ),
             status_code=200,
             media_type="application/json",
         )

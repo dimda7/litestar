@@ -107,8 +107,7 @@ def test_duplicate_lsn_rows_merge_into_single_update():
     assert len(sql_lines) == 1
     assert sql_lines[0].count("UPDATE public.actives") == 1
     assert sql_lines[0] == (
-        "UPDATE public.actives SET serial_number = 'none' "
-        "WHERE lcn::text IN ('281.6.5', '275.6.5', '278.6.5');"
+        "UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN ('281.6.5', '275.6.5', '278.6.5');"
     )
 
 

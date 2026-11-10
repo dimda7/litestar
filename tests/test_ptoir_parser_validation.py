@@ -6,8 +6,9 @@ from controllers.ptoir_parser.launch import validate_launch_rows
 from tests.conftest import make_active, make_counter_type, make_ptoir, make_ptoir_level_warning
 
 
-def make_row(number_ptoir="ТО0001", active="", counter_type="Пробег", interval=2,
-             date_activation=None, service_value=1000) -> dict:
+def make_row(
+    number_ptoir="ТО0001", active="", counter_type="Пробег", interval=2, date_activation=None, service_value=1000
+) -> dict:
     return {
         "ПТОиР": number_ptoir,
         "Актив": active,

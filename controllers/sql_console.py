@@ -88,10 +88,7 @@ class SqlConsoleController(Controller):
                 result = await db_session.execute(text(stmt))
                 if result.returns_rows:
                     columns = list(result.keys())
-                    rows = [
-                        [None if v is None else str(v) for v in row]
-                        for row in result.fetchall()
-                    ]
+                    rows = [[None if v is None else str(v) for v in row] for row in result.fetchall()]
                     results.append({"statement": stmt, "columns": columns, "rows": rows})
                 else:
                     results.append({"statement": stmt, "columns": None, "rows": None, "rowcount": result.rowcount})
@@ -104,24 +101,28 @@ class SqlConsoleController(Controller):
         except asyncio.CancelledError:
             await db_session.rollback()
             return Response(
-                content=json.dumps({
-                    "status": "error",
-                    "message": "Запрос прерван пользователем",
-                    "results": results,
-                    "failed_index": len(results),
-                }),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "message": "Запрос прерван пользователем",
+                        "results": results,
+                        "failed_index": len(results),
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )
         except Exception as e:
             await db_session.rollback()
             return Response(
-                content=json.dumps({
-                    "status": "error",
-                    "message": str(e),
-                    "results": results,
-                    "failed_index": len(results),
-                }),
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "message": str(e),
+                        "results": results,
+                        "failed_index": len(results),
+                    }
+                ),
                 status_code=200,
                 media_type="application/json",
             )

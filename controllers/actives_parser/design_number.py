@@ -20,7 +20,9 @@ logger = logging.getLogger("actives_parser")
 
 
 async def validate_design_number(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[tuple[str, int, str]]]:
     """Validate rows for actives.id_design_number update.
     Returns (errors, valid_rows) where valid_rows is [(active_number, design_number_id, design_number), ...]
@@ -30,11 +32,13 @@ async def validate_design_number(
     batch_numbers: set[str] = set()
 
     if rows and not ({"Новая Позиция ТМЦ", "Новый ТМЦ номер", "Позиция ТМЦ"} & rows[0].keys()):
-        errors.append({
-            "row": 0,
-            "field": "Новая Позиция ТМЦ",
-            "message": "В файле не найдена колонка 'Новая Позиция ТМЦ' (или 'Новый ТМЦ номер', 'Позиция ТМЦ')",
-        })
+        errors.append(
+            {
+                "row": 0,
+                "field": "Новая Позиция ТМЦ",
+                "message": "В файле не найдена колонка 'Новая Позиция ТМЦ' (или 'Новый ТМЦ номер', 'Позиция ТМЦ')",
+            }
+        )
         return errors, valid_rows
 
     if progress is not None:
@@ -54,30 +58,31 @@ async def validate_design_number(
             continue
 
         if active_number in batch_numbers:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Дубликат внутри файла: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Дубликат внутри файла: '{active_number}'"})
             continue
 
-        result = await db_session.execute(
-            select(Actives.id).where(Actives.active_number == active_number)
-        )
+        result = await db_session.execute(select(Actives.id).where(Actives.active_number == active_number))
         active_id = result.scalar_one_or_none()
         if active_id is None:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Актив не найден: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Актив не найден: '{active_number}'"})
             continue
 
         if not design_number:
-            errors.append({"row": row_num, "field": "Новая Позиция ТМЦ", "message": "Поле 'Новая Позиция ТМЦ' ('Новый ТМЦ номер') пустое"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "Новая Позиция ТМЦ",
+                    "message": "Поле 'Новая Позиция ТМЦ' ('Новый ТМЦ номер') пустое",
+                }
+            )
             continue
 
-        result = await db_session.execute(
-            select(DesignNumber.id).where(DesignNumber.number == design_number)
-        )
+        result = await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == design_number))
         design_number_id = result.scalar_one_or_none()
         if design_number_id is None:
-            errors.append({"row": row_num, "field": "Новая Позиция ТМЦ",
-                            "message": f"Позиция ТМЦ не найдена: '{design_number}'"})
+            errors.append(
+                {"row": row_num, "field": "Новая Позиция ТМЦ", "message": f"Позиция ТМЦ не найдена: '{design_number}'"}
+            )
             continue
 
         batch_numbers.add(active_number)
@@ -111,7 +116,9 @@ class DesignNumberController(Controller):
             progress.update(status="error", errors=errors)
             return
         if not valid_rows:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]
+            )
             return
 
         sql_lines = actives_sql.update_design_number(valid_rows)
@@ -137,7 +144,10 @@ class DesignNumberController(Controller):
                     progress.update(status="error", errors=errors)
                     return
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    )
                     return
 
                 progress.update(processed=0, total=len(valid_rows), phase="executing")
@@ -153,7 +163,9 @@ class DesignNumberController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -173,5 +185,8 @@ class DesignNumberController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Updated id_design_number for %d rows, log: %s", len(valid_rows), log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Успешно обновлено id_design_number для {len(valid_rows)} записей")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=f"Успешно обновлено id_design_number для {len(valid_rows)} записей",
+        )
