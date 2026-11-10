@@ -191,6 +191,8 @@ class MoveActivesController(Controller):
             )
             return
 
+        # validate_move_rows reports an error for every id it could not resolve.
+        assert id_storage is not None and id_consignment is not None and id_user is not None
         move_date = datetime.now() - MOVE_TZ_SHIFT
         sql_lines = models_sql.move_actives(
             valid_rows,
@@ -272,6 +274,8 @@ class MoveActivesController(Controller):
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
+                # validate_move_rows reports an error for every id it could not resolve.
+                assert id_storage is not None and id_consignment is not None and id_user is not None
                 move_date = datetime.now() - MOVE_TZ_SHIFT
                 sql_body = "\n".join(
                     models_sql.move_actives(
@@ -293,6 +297,7 @@ class MoveActivesController(Controller):
                     # (the validation queries).
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
+                    assert raw_conn.driver_connection is not None
                     await raw_conn.driver_connection.execute(sql_body)
                     progress["processed"] = 1
                     await session.commit()

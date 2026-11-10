@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from typing import cast
 
 from litestar import Controller, get, post
 from litestar.connection.request import Request
@@ -306,12 +307,10 @@ async def validate_update_rows(
 
     catalogues = await _field_catalogues(db_session)
     numbers = [_cell_text(row.get("number")) for row in rows]
-    dn_ids = dict(
-        (
-            await db_session.execute(
-                select(DesignNumber.number, DesignNumber.id).where(DesignNumber.number.in_(numbers))
-            )
-        ).all()
+    dn_ids: dict[str | None, int] = dict(
+        (await db_session.execute(select(DesignNumber.number, DesignNumber.id).where(DesignNumber.number.in_(numbers))))
+        .tuples()
+        .all()
     )
 
     number_rows: dict[str, int] = {}
@@ -436,7 +435,8 @@ async def snapshot_design_numbers(db_session: AsyncSession, ids: list[int]) -> l
     return [
         design_number_sql.DesignNumberRow(
             id=dn.id,
-            number=dn.number,
+            # The ids were matched by number, so it is never NULL here.
+            number=cast(str, dn.number),
             description=dn.description,
             id_unit_type=dn.id_unit_type,
             is_serial=dn.is_serial,
@@ -1287,7 +1287,7 @@ class DesignNumberParserController(Controller):
                 media_type="application/json",
             )
 
-        snapshot = await snapshot_design_numbers(db_session, [row.id for row in valid_rows])
+        snapshot = await snapshot_design_numbers(db_session, [row.id for row in valid_rows if row.id is not None])
         sql_lines = design_number_sql.update_full(valid_rows)
 
         # Written before execution: the overwrite is irreversible, so the
@@ -1311,6 +1311,7 @@ class DesignNumberParserController(Controller):
         try:
             conn = await db_session.connection()
             raw_conn = await conn.get_raw_connection()
+            assert raw_conn.driver_connection is not None
             await raw_conn.driver_connection.execute("\n".join(sql_lines))
             await db_session.commit()
         except Exception as e:
@@ -1410,6 +1411,7 @@ class DesignNumberParserController(Controller):
         try:
             conn = await db_session.connection()
             raw_conn = await conn.get_raw_connection()
+            assert raw_conn.driver_connection is not None
             await raw_conn.driver_connection.execute("\n".join(sql_lines))
             await db_session.commit()
         except Exception as e:

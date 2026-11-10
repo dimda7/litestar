@@ -101,14 +101,16 @@ async def resolve_correction(
     # than a day between two manual readings gets filled by the trigger with
     # intermediate rows carrying a null date, which the page's list — and a
     # boundary of the selected row's own date — would both miss.
-    delete_count = await db_session.scalar(
-        select(func.count())
-        .select_from(MileageTrain)
-        .where(
-            MileageTrain.id_train == train_id,
-            MileageTrain.date_average > previous.date_average,
+    delete_count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(MileageTrain)
+            .where(
+                MileageTrain.id_train == train_id,
+                MileageTrain.date_average > previous.date_average,
+            )
         )
-    )
+    ).scalar_one()
 
     return "", Correction(
         id_train=train_id,
@@ -124,12 +126,12 @@ async def resolve_correction(
 async def _resolve_from_form(
     db_session: AsyncSession,
     data: dict,
-) -> tuple[Response | None, Correction | None]:
+) -> Response | Correction:
     """The prologue the three action routes share: resolve, or answer the error."""
     error, correction = await resolve_correction(db_session, int(data["train_id"]), int(data["mileage_row_id"]))
     if correction is None:
-        return _json({"status": "error", "message": error}), None
-    return None, correction
+        return _json({"status": "error", "message": error})
+    return correction
 
 
 class MileageCorrectionController(Controller):
@@ -197,9 +199,9 @@ class MileageCorrectionController(Controller):
         db_session: AsyncSession,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        failed, correction = await _resolve_from_form(db_session, data)
-        if failed is not None:
-            return failed
+        correction = await _resolve_from_form(db_session, data)
+        if isinstance(correction, Response):
+            return correction
 
         return _json(
             {
@@ -217,9 +219,9 @@ class MileageCorrectionController(Controller):
         db_session: AsyncSession,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        failed, correction = await _resolve_from_form(db_session, data)
-        if failed is not None:
-            return failed
+        correction = await _resolve_from_form(db_session, data)
+        if isinstance(correction, Response):
+            return correction
 
         sql = "\n".join(mileage_sql.correct_mileage(correction, wrap_transaction=True))
         return _json({"status": "ok", "sql": sql})
@@ -230,9 +232,9 @@ class MileageCorrectionController(Controller):
         db_session: AsyncSession,
         data: dict = Body(media_type=RequestEncodingType.MULTI_PART),
     ) -> Response:
-        failed, correction = await _resolve_from_form(db_session, data)
-        if failed is not None:
-            return failed
+        correction = await _resolve_from_form(db_session, data)
+        if isinstance(correction, Response):
+            return correction
 
         sql_body = "\n".join(mileage_sql.correct_mileage(correction))
         try:
@@ -243,6 +245,7 @@ class MileageCorrectionController(Controller):
             # below also puts the trigger back.
             conn = await db_session.connection()
             raw_conn = await conn.get_raw_connection()
+            assert raw_conn.driver_connection is not None
             await raw_conn.driver_connection.execute(sql_body)
             await db_session.commit()
         except Exception as e:

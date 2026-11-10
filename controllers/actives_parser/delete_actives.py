@@ -1,11 +1,13 @@
 import logging
 from datetime import datetime
+from typing import Any
 
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
 from sqlalchemy import bindparam, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 import excel_upload
 from db_manager import get_session_maker
@@ -38,7 +40,7 @@ logger = logging.getLogger("actives_parser")
 # with its ptoir_level_warning), as do the asset's "empty" orders — but an order
 # with related records in any of ORDERS_DEPENDENCY_CHECKS blocks the deletion
 # (checked separately).
-DELETE_ACTIVES_BLOCKERS: list[tuple[str, object]] = [
+DELETE_ACTIVES_BLOCKERS: list[tuple[str, InstrumentedAttribute[Any]]] = [
     ("relocate", Relocate.id_active),
     ("relocate (root)", Relocate.id_root_active),
     ("order_to_actives", OrderToActives.id_active),
@@ -174,10 +176,10 @@ async def validate_delete_actives(
 
         if order_owners:
             order_ids = list(order_owners)
-            for table_name, column in ORDERS_DEPENDENCY_CHECKS:
-                stmt = text(f"SELECT DISTINCT {column} FROM public.{table_name} WHERE {column} IN :ids").bindparams(
-                    bindparam("ids", expanding=True)
-                )
+            for table_name, column_name in ORDERS_DEPENDENCY_CHECKS:
+                stmt = text(
+                    f"SELECT DISTINCT {column_name} FROM public.{table_name} WHERE {column_name} IN :ids"
+                ).bindparams(bindparam("ids", expanding=True))
                 blocked_orders = (await db_session.execute(stmt, {"ids": order_ids})).scalars().all()
                 for order_id in blocked_orders:
                     for owner in order_owners.get(order_id, ()):
@@ -270,6 +272,7 @@ class DeleteActivesController(Controller):
                     # the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
+                    assert raw_conn.driver_connection is not None
                     await raw_conn.driver_connection.execute(sql_body)
 
                     await session.commit()

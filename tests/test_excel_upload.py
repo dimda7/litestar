@@ -43,7 +43,9 @@ def make_workbook(path: Path, sheets: dict[str, list[list]]) -> None:
 
 def stored_data(request: FakeRequest, prefix: str) -> dict:
     session_id = request.session[f"{prefix}_session_id"]
-    return parser_storage.load_data(session_id)
+    data = parser_storage.load_data(session_id)
+    assert data is not None
+    return data
 
 
 def test_read_sheet_uses_first_row_as_headers(tmp_path):

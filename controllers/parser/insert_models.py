@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from typing import Any
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -26,7 +27,7 @@ async def validate_insert_rows(
     db_session: AsyncSession,
     rows: list[dict],
     progress: dict | None = None,
-) -> tuple[list[dict[str, str]], list[tuple[int, int | str, int, str, bool]]]:
+) -> tuple[list[dict[str, Any]], list[tuple[int, int | str, int, str, bool]]]:
     if progress is not None:
         progress.update(processed=0, total=len(rows), phase="validating")
 
@@ -39,12 +40,12 @@ async def validate_insert_rows(
 
     existing_default_lcn_car: set[tuple] = set()
     existing_default_car_type_design: set[tuple] = set()
-    for er in existing_set:
-        if er[4]:
-            existing_default_lcn_car.add((er[1], er[2]))
-            existing_default_car_type_design.add((er[2], er[0], er[3]))
+    for key in existing_set:
+        if key[4]:
+            existing_default_lcn_car.add((key[1], key[2]))
+            existing_default_car_type_design.add((key[2], key[0], key[3]))
 
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, Any]] = []
     valid_rows: list[tuple[int, int | str, int, str, bool]] = []
 
     batch_full: set[tuple] = set()

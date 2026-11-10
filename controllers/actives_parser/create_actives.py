@@ -2,6 +2,7 @@ import base64
 import logging
 from datetime import datetime
 from io import BytesIO
+from typing import Any
 
 import openpyxl
 from litestar import Controller, post
@@ -102,7 +103,7 @@ async def validate_create_actives_rows(
         if not design_number_raw or design_number_raw == "None":
             continue
 
-        count_raw = row.get("Количество")
+        count_raw: Any = row.get("Количество")
         try:
             count = int(count_raw)
         except (TypeError, ValueError):
@@ -299,6 +300,7 @@ class CreateActivesController(Controller):
                     # remove the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
+                    assert raw_conn.driver_connection is not None
                     await raw_conn.driver_connection.execute(sql_body)
 
                     counter_after = (
@@ -306,7 +308,7 @@ class CreateActivesController(Controller):
                             text("SELECT number FROM public.iterator_number_last WHERE description = :d"),
                             {"d": ACTIVE_NUMBER_COUNTER_DESCRIPTION},
                         )
-                    ).scalar()
+                    ).scalar_one()
                     created_numbers = reconstruct_created_active_numbers(valid_rows, counter_after)
 
                     await session.commit()

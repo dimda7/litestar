@@ -1,5 +1,7 @@
 import logging
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -94,7 +96,7 @@ async def validate_create_active_from_model_rows(
 
     design_number_cache: dict[str, int | None] = {}
     train_ids_by_type: dict[int, list[int]] = {}
-    model_cache: dict[tuple[int, str], list[int | None]] = {}
+    model_cache: dict[tuple[int, str], Sequence[tuple[Any, ...]]] = {}
 
     if progress is not None:
         progress.update(processed=0, total=len(rows), phase="validating")
@@ -155,7 +157,7 @@ async def validate_create_active_from_model_rows(
                 ),
                 {"tt": id_train_type, "lcn": lsn_raw},
             )
-            model_cache[model_key] = model_result.all()
+            model_cache[model_key] = model_result.tuples().all()
         model_rows = model_cache[model_key]
         if not model_rows:
             errors.append({"row": row_num, "field": "lcn", "message": f"Модель с lcn '{lsn_raw}' не найдена"})
@@ -330,6 +332,7 @@ class CreateActiveFromModelController(Controller):
                     # Do not remove the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
+                    assert raw_conn.driver_connection is not None
                     await raw_conn.driver_connection.execute(sql_body)
 
                     await session.commit()

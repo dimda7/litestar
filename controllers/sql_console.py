@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
+from typing import Any, cast
 
 from litestar import Controller, get, post
 from litestar.connection.request import Request
@@ -9,6 +10,7 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response, Template
 from sqlalchemy import text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("sql_console")
@@ -85,7 +87,7 @@ class SqlConsoleController(Controller):
 
         async def _run_statements() -> None:
             for stmt in statements:
-                result = await db_session.execute(text(stmt))
+                result = cast(CursorResult[Any], await db_session.execute(text(stmt)))
                 if result.returns_rows:
                     columns = list(result.keys())
                     rows = [[None if v is None else str(v) for v in row] for row in result.fetchall()]

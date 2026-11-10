@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from typing import Any, cast
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -8,6 +9,7 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy import bindparam, select, text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
@@ -258,7 +260,7 @@ class MoveNoRelocateController(Controller):
                     # id_actves_parent/id_actives_root; id_location and relocate are untouched.
                     sql_lines = models_sql.move_no_relocate(valid_rows)
                     await session.execute(text(sql_lines[0]))
-                    result = await session.execute(text(sql_lines[1]))
+                    result = cast(CursorResult[Any], await session.execute(text(sql_lines[1])))
                     total_updated = result.rowcount
                     progress["processed"] = 1
                     await session.commit()

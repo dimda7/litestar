@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from typing import Any, cast
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -8,6 +9,7 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy import bindparam, select, text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
@@ -164,7 +166,7 @@ class SerialNoneController(Controller):
                     stmt = text("UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN :lcns").bindparams(
                         bindparam("lcns", expanding=True)
                     )
-                    result = await session.execute(stmt, {"lcns": lcns})
+                    result = cast(CursorResult[Any], await session.execute(stmt, {"lcns": lcns}))
                     total_updated = result.rowcount
                     progress["processed"] = 1
                     await session.commit()

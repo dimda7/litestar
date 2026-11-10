@@ -30,7 +30,7 @@ def _shown(number: str | None) -> str:
 def _index_keys(model: Row, id_design_number: int) -> list[tuple]:
     # The two unique indexes of public.models that contain id_design_number.
     # A NULL never collides in a Postgres unique index, so a key with one is no key.
-    keys = []
+    keys: list[tuple] = []
     default_key = ("default", model.id_car_place, model.id_train_type, id_design_number)
     if model.is_default and None not in default_key:
         keys.append(default_key)

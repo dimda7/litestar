@@ -62,7 +62,7 @@ async def validate_serial_number(
 
     # One SELECT per chunk instead of one per row: the files run to ~50k rows.
     numbers = list({str(row.get("Актив", "") or "").strip() for row in rows} - {""})
-    existing: set[str] = set()
+    existing: set[str | None] = set()
     for start in range(0, len(numbers), LOOKUP_CHUNK):
         result = await db_session.execute(
             select(Actives.active_number).where(Actives.active_number.in_(numbers[start : start + LOOKUP_CHUNK]))

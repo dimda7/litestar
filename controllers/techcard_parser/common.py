@@ -24,39 +24,39 @@ PREFIX = "techcard_parser"
 PATH = "/techcard-parser"
 
 
-class WorkTypeRepository(SQLAlchemyAsyncRepository[WorkType]):
+class WorkTypeRepository(SQLAlchemyAsyncRepository[WorkType]):  # type: ignore[type-var]
     model_type = WorkType
 
 
-class GroupTypeRepository(SQLAlchemyAsyncRepository[GroupType]):
+class GroupTypeRepository(SQLAlchemyAsyncRepository[GroupType]):  # type: ignore[type-var]
     model_type = GroupType
 
 
-class PrioritiesRepository(SQLAlchemyAsyncRepository[Priorities]):
+class PrioritiesRepository(SQLAlchemyAsyncRepository[Priorities]):  # type: ignore[type-var]
     model_type = Priorities
 
 
-class ClassifierTypeRepository(SQLAlchemyAsyncRepository[ClassifierType]):
+class ClassifierTypeRepository(SQLAlchemyAsyncRepository[ClassifierType]):  # type: ignore[type-var]
     model_type = ClassifierType
 
 
-class ClassifierRepository(SQLAlchemyAsyncRepository[Classifier]):
+class ClassifierRepository(SQLAlchemyAsyncRepository[Classifier]):  # type: ignore[type-var]
     model_type = Classifier
 
 
-class SpecificationRepository(SQLAlchemyAsyncRepository[Specification]):
+class SpecificationRepository(SQLAlchemyAsyncRepository[Specification]):  # type: ignore[type-var]
     model_type = Specification
 
 
-class TechcardStatusTypesRepository(SQLAlchemyAsyncRepository[TechcardStatusTypes]):
+class TechcardStatusTypesRepository(SQLAlchemyAsyncRepository[TechcardStatusTypes]):  # type: ignore[type-var]
     model_type = TechcardStatusTypes
 
 
-class TechcardRepository(SQLAlchemyAsyncRepository[Techcard]):
+class TechcardRepository(SQLAlchemyAsyncRepository[Techcard]):  # type: ignore[type-var]
     model_type = Techcard
 
 
-class TechcardWorkOperationRepository(SQLAlchemyAsyncRepository[TechcardWorkOperation]):
+class TechcardWorkOperationRepository(SQLAlchemyAsyncRepository[TechcardWorkOperation]):  # type: ignore[type-var]
     model_type = TechcardWorkOperation
 
 

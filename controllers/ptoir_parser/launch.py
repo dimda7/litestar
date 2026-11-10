@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from dateutil import parser as date_parser
 from litestar import Controller, post
@@ -45,7 +46,7 @@ async def validate_launch_rows(
         number_ptoir = str(row.get("ПТОиР", "") or "").strip()
         active_number = str(row.get("Актив", "") or "").strip()
         type_counter = str(row.get("Тип счетчика", "") or "").strip()
-        interval_raw = row.get("Интервал")
+        interval_raw: Any = row.get("Интервал")
         date_raw = row.get("Дата активации")
         service_raw = row.get("Данные последнего обслуживания")
 
