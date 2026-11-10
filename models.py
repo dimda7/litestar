@@ -24,6 +24,7 @@ class User(Base):
     mail: Mapped[str | None] = mapped_column(String, nullable=True)
     is_user: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     id_role: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    id_employee_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     job_title: Mapped[str | None] = mapped_column(String, nullable=True)
     remaining_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     unlock_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

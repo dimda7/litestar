@@ -16,6 +16,23 @@ from config import settings
 from models import User
 from schemas import DbSelectRequest, LoginRequest
 
+# Only these fdw_users may log in to the site (user decision); anyone else is
+# refused as an unknown login, without touching a lockout counter.
+ALLOWED_ROLE_ID = 6
+ALLOWED_EMPLOYEE_POSITION_ID = 1
+
+
+async def find_login_user(session: AsyncSession, username: str) -> User | None:
+    result = await session.execute(
+        select(User).where(
+            User.username == username,
+            User.id_role == ALLOWED_ROLE_ID,
+            User.is_user.is_(True),
+            User.id_employee_position == ALLOWED_EMPLOYEE_POSITION_ID,
+        )
+    )
+    return result.scalar_one_or_none()
+
 
 def _visible_profiles() -> list[dict[str, str | int]]:
     """Connections for the pre-login screen — without passwords."""
@@ -88,8 +105,7 @@ class AuthController(Controller):
                 context={"error": "Введите логин и пароль"},
             )
 
-        result = await db_session.execute(select(User).where(User.username == username))
-        user = result.scalar_one_or_none()
+        user = await find_login_user(db_session, username)
 
         if not user or not user.active:
             return Template(
