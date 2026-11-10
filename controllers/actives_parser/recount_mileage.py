@@ -1,23 +1,22 @@
 import logging
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Actives, CounterActive, Location, MileageStart, MileageTrain, Relocate
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, start_task
 from sql_builders import actives as actives_sql
 from sql_builders.actives import MILEAGE_COUNTER_TYPE_ID
 
-from .common import PREFIX, ActivesRepository, MileageStartRepository, CounterActiveRepository
-
+from .common import PREFIX, ActivesRepository, CounterActiveRepository, MileageStartRepository
 
 logger = logging.getLogger("actives_parser")
 
@@ -33,7 +32,9 @@ MILEAGE_TZ_SHIFT = timedelta(hours=3)
 
 
 async def validate_recount_mileage(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the rows of a "пересчитать пробег" file (replaces update_milage_start + recount_counter).
 
@@ -63,17 +64,16 @@ async def validate_recount_mileage(
     batch_numbers: set[str] = set()
 
     active_column: str | None = next(
-        (k for k in (rows[0] if rows else {})
-         if str(k).strip().lower() in ("актив", "active_number")),
+        (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("актив", "active_number")),
         None,
     )
     if rows and active_column is None:
-        errors.append({"row": 0, "field": "Актив",
-                        "message": "В файле не найдена колонка 'Актив' (или 'active_number')"})
+        errors.append(
+            {"row": 0, "field": "Актив", "message": "В файле не найдена колонка 'Актив' (или 'active_number')"}
+        )
         return errors, valid_rows
     const_column: str | None = next(
-        (k for k in (rows[0] if rows else {})
-         if str(k).strip().lower() in ("milage_const", "mileage_const")),
+        (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("milage_const", "mileage_const")),
         None,
     )
 
@@ -94,14 +94,12 @@ async def validate_recount_mileage(
             continue
 
         if active_number in batch_numbers:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Дубликат внутри файла: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Дубликат внутри файла: '{active_number}'"})
             continue
 
         active = await actives_repo.get_one_or_none(Actives.active_number == active_number)
         if active is None:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Актив не найден: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Актив не найден: '{active_number}'"})
             continue
         is_train = active.id_unit_type == 1
 
@@ -112,22 +110,37 @@ async def validate_recount_mileage(
                 try:
                     milage_const = int(float(const_raw))
                 except (TypeError, ValueError):
-                    errors.append({"row": row_num, "field": "milage_const",
-                                    "message": f"Некорректное значение milage_const: '{const_raw}'"})
+                    errors.append(
+                        {
+                            "row": row_num,
+                            "field": "milage_const",
+                            "message": f"Некорректное значение milage_const: '{const_raw}'",
+                        }
+                    )
                     continue
                 if milage_const == 0:
                     milage_const = None
 
         mileage_start_rows = await mileage_start_repo.get_many(MileageStart.id_active == active.id)
         if len(mileage_start_rows) > 1:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Несколько записей mileage_start для актива '{active_number}' — неоднозначно"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "Актив",
+                    "message": f"Несколько записей mileage_start для актива '{active_number}' — неоднозначно",
+                }
+            )
             continue
         # Without milage_const the mileage_start row must exist; with it the row is
         # created by the SQL (INSERT), so a missing one is not an error.
         if not mileage_start_rows and milage_const is None:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Запись mileage_start не найдена для актива '{active_number}'"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "Актив",
+                    "message": f"Запись mileage_start не найдена для актива '{active_number}'",
+                }
+            )
             continue
 
         if not is_train:
@@ -136,25 +149,37 @@ async def validate_recount_mileage(
                 CounterActive.id_counter_type == MILEAGE_COUNTER_TYPE_ID,
             )
             if not counters:
-                errors.append({"row": row_num, "field": "Актив",
-                                "message": f"Счётчик пробега (counter_type={MILEAGE_COUNTER_TYPE_ID}) не найден для актива '{active_number}'"})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "Актив",
+                        "message": f"Счётчик пробега (counter_type={MILEAGE_COUNTER_TYPE_ID}) не найден для актива '{active_number}'",
+                    }
+                )
                 continue
             if len(counters) > 1:
-                errors.append({"row": row_num, "field": "Актив",
-                                "message": f"Несколько счётчиков пробега для актива '{active_number}' — неоднозначно"})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "Актив",
+                        "message": f"Несколько счётчиков пробега для актива '{active_number}' — неоднозначно",
+                    }
+                )
                 continue
 
-        relocates = (await db_session.execute(
-            select(
-                Relocate.date,
-                loc_old.id_train.label("id_train_old"),
-                loc_new.id_train.label("id_train_new"),
+        relocates = (
+            await db_session.execute(
+                select(
+                    Relocate.date,
+                    loc_old.id_train.label("id_train_old"),
+                    loc_new.id_train.label("id_train_new"),
+                )
+                .join(loc_old, Relocate.id_location_old == loc_old.id, isouter=True)
+                .join(loc_new, Relocate.id_location_new == loc_new.id, isouter=True)
+                .where(Relocate.id_active == active.id)
+                .order_by(Relocate.date)
             )
-            .join(loc_old, Relocate.id_location_old == loc_old.id, isouter=True)
-            .join(loc_new, Relocate.id_location_new == loc_new.id, isouter=True)
-            .where(Relocate.id_active == active.id)
-            .order_by(Relocate.date)
-        )).all()
+        ).all()
 
         total = 0
         for relocate_date, id_train_old, id_train_new in relocates:
@@ -171,25 +196,29 @@ async def validate_recount_mileage(
             else:
                 continue
 
-            train_mileage = (await db_session.execute(
-                select(func.sum(MileageTrain.mileage_average)).where(
-                    MileageTrain.id_train == train_id,
-                    MileageTrain.date_average > relocate_date,
-                    MileageTrain.date_average <= MILEAGE_RECOUNT_CUTOFF,
+            train_mileage = (
+                await db_session.execute(
+                    select(func.sum(MileageTrain.mileage_average)).where(
+                        MileageTrain.id_train == train_id,
+                        MileageTrain.date_average > relocate_date,
+                        MileageTrain.date_average <= MILEAGE_RECOUNT_CUTOFF,
+                    )
                 )
-            )).scalar()
+            ).scalar()
             total += sign * (train_mileage or 0)
 
         batch_numbers.add(active_number)
-        valid_rows.append({
-            "row_num": row_num,
-            "active_number": active_number,
-            "id_active": active.id,
-            "total": total,
-            "is_train": is_train,
-            "milage_const": milage_const,
-            "insert_mileage_start": not mileage_start_rows,
-        })
+        valid_rows.append(
+            {
+                "row_num": row_num,
+                "active_number": active_number,
+                "id_active": active.id,
+                "total": total,
+                "is_train": is_train,
+                "milage_const": milage_const,
+                "insert_mileage_start": not mileage_start_rows,
+            }
+        )
 
     return errors, valid_rows
 
@@ -219,7 +248,9 @@ class RecountMileageController(Controller):
             progress.update(status="error", errors=errors)
             return
         if not valid_rows:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для пересчёта"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для пересчёта"}]
+            )
             return
 
         sql_lines = actives_sql.recount_mileage(valid_rows)
@@ -247,7 +278,9 @@ class RecountMileageController(Controller):
                     progress.update(status="error", errors=errors)
                     return
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для пересчёта"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для пересчёта"}]
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -267,7 +300,9 @@ class RecountMileageController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
 
                 progress["processed"] = 1
@@ -288,5 +323,6 @@ class RecountMileageController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Recounted mileage for %d actives, log: %s", len(valid_rows), log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Пробег пересчитан для {len(valid_rows)} активов")
+        progress.update(
+            status="done", count=len(valid_rows), message=f"Пробег пересчитан для {len(valid_rows)} активов"
+        )

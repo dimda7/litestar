@@ -2,13 +2,13 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import bindparam, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
 from models import Train
@@ -18,12 +18,13 @@ from sql_builders import models as models_sql
 
 from .common import parse_model_lcn
 
-
 logger = logging.getLogger("parser")
 
 
 async def validate_serial_none_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'set serial=none lcn'.
 
@@ -60,8 +61,9 @@ async def validate_serial_none_rows(
 
         parsed = parse_model_lcn(lcn_raw)
         if parsed is None:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": f"Не удалось распознать id_train_type в lcn '{lcn_raw}'"})
+            errors.append(
+                {"row": row_num, "field": "lcn", "message": f"Не удалось распознать id_train_type в lcn '{lcn_raw}'"}
+            )
             continue
         id_train_type, rest = parsed
 
@@ -71,18 +73,21 @@ async def validate_serial_none_rows(
         train_ids = train_ids_by_type[id_train_type]
 
         if not train_ids:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": f"Поезда с id_train_type={id_train_type} не найдены"})
+            errors.append(
+                {"row": row_num, "field": "lcn", "message": f"Поезда с id_train_type={id_train_type} не найдены"}
+            )
             continue
 
         lcn_trains = [f"{tid}.{rest}" if rest else str(tid) for tid in train_ids]
 
-        valid_rows.append({
-            "row": row_num,
-            "lcn": lcn_raw,
-            "id_train_type": id_train_type,
-            "lcn_trains": lcn_trains,
-        })
+        valid_rows.append(
+            {
+                "row": row_num,
+                "lcn": lcn_raw,
+                "id_train_type": id_train_type,
+                "lcn_trains": lcn_trains,
+            }
+        )
 
     return errors, valid_rows
 
@@ -134,7 +139,9 @@ class SerialNoneController(Controller):
                 try:
                     errors, valid_rows = await validate_serial_none_rows(session, rows, progress=progress)
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -142,7 +149,10 @@ class SerialNoneController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    )
                     return
 
                 # One shared UPDATE over the merged, duplicate-free list of lcns from
@@ -151,16 +161,18 @@ class SerialNoneController(Controller):
                 progress.update(processed=0, total=1, phase="executing")
                 try:
                     lcns = models_sql.merge_serial_none_lcns(valid_rows)
-                    stmt = text(
-                        "UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN :lcns"
-                    ).bindparams(bindparam("lcns", expanding=True))
+                    stmt = text("UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN :lcns").bindparams(
+                        bindparam("lcns", expanding=True)
+                    )
                     result = await session.execute(stmt, {"lcns": lcns})
                     total_updated = result.rowcount
                     progress["processed"] = 1
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -179,5 +191,8 @@ class SerialNoneController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Serial-none updated for %d rows (%d actives), log: %s", len(valid_rows), total_updated, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Обновлено активов: {total_updated} (строк файла: {len(valid_rows)})")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=f"Обновлено активов: {total_updated} (строк файла: {len(valid_rows)})",
+        )

@@ -1,10 +1,9 @@
 import time
 
-from litestar.types import ASGIApp, Scope, Receive, Send
+from litestar.types import ASGIApp, Receive, Scope, Send
 from starlette.responses import JSONResponse, RedirectResponse
 
 import db_manager
-
 
 EXCLUDE_PATHS = {"/auth/login", "/auth/logout"}
 EXCLUDE_PREFIXES = ("/static/",)

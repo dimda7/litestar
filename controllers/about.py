@@ -1,10 +1,10 @@
 import logging
 
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get
 from litestar.connection.request import Request
 from litestar.response import Template
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Actives, Orders, Relocate, Techcard, Train, User
 
@@ -47,9 +47,7 @@ class AboutController(Controller):
         try:
             counts: dict[str, int] = {
                 "trains": await TrainRepository(session=db_session).count(),
-                "users": await UserRepository(session=db_session).count(
-                    User.active.is_(True), User.is_user.is_(True)
-                ),
+                "users": await UserRepository(session=db_session).count(User.active.is_(True), User.is_user.is_(True)),
                 "techcards": await TechcardRepository(session=db_session).count(),
                 "actives": await ActivesRepository(session=db_session).count(),
                 "orders": await OrdersRepository(session=db_session).count(),

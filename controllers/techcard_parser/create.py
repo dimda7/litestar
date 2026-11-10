@@ -4,17 +4,39 @@ from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import (
-    Classifier, ClassifierType, GroupType, Priorities, Specification, Techcard, TechcardStatusTypes, WorkType,
-)
 import sql_tasks
+from models import (
+    Classifier,
+    ClassifierType,
+    GroupType,
+    Priorities,
+    Specification,
+    Techcard,
+    TechcardStatusTypes,
+    WorkType,
+)
 from sql_builders import techcards as techcards_sql
 
 from .common import (
-    PATH, ClassifierRepository, ClassifierTypeRepository, GroupTypeRepository, PrioritiesRepository, RowError,
-    SpecificationRepository, TechcardRepository, TechcardStatusTypesRepository, WorkTypeRepository, cell,
-    header_columns, labelled_cell, missing_columns, one_id, parse_int, require, resolve_rows,
+    PATH,
+    ClassifierRepository,
+    ClassifierTypeRepository,
+    GroupTypeRepository,
+    PrioritiesRepository,
+    RowError,
+    SpecificationRepository,
+    TechcardRepository,
+    TechcardStatusTypesRepository,
+    WorkTypeRepository,
+    cell,
+    header_columns,
+    labelled_cell,
+    missing_columns,
+    one_id,
     operation,
+    parse_int,
+    require,
+    resolve_rows,
 )
 
 CLASSIFIER_TYPE_COLUMN = "Классификация техкарты"
@@ -23,11 +45,21 @@ MAIN_PTOIR_VALUES = {"да": True, "нет": False, "": False}
 REQUIRED_COLUMNS = ("Номер техкарты", "Название техкарты", "Тип работы")
 # Every non-classifier column must be present, required or not: a
 # missing 'Бригада' or БПТОиР flag would otherwise silently become NULL / false.
-EXPECTED_COLUMNS = (*REQUIRED_COLUMNS, CLASSIFIER_TYPE_COLUMN, "Статус", "Полное описание", "Приоритет", "Бригада", MAIN_PTOIR_COLUMN)
+EXPECTED_COLUMNS = (
+    *REQUIRED_COLUMNS,
+    CLASSIFIER_TYPE_COLUMN,
+    "Статус",
+    "Полное описание",
+    "Приоритет",
+    "Бригада",
+    MAIN_PTOIR_COLUMN,
+)
 
 
 async def validate_techcard_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     columns = header_columns(rows)
     missing = missing_columns(rows, columns, EXPECTED_COLUMNS)
@@ -69,8 +101,9 @@ async def validate_techcard_rows(
         if value:
             id_classifier_type = await one_id(classifier_types, field, value, ClassifierType.name == value)
         else:
-            filled = sorted(str(c).strip() for c in classifier_columns
-                            if row.get(c) is not None and str(row[c]).strip())
+            filled = sorted(
+                str(c).strip() for c in classifier_columns if row.get(c) is not None and str(row[c]).strip()
+            )
             if filled:
                 raise RowError(field, f"Поле '{field}' пустое, а классификаторы заполнены: {', '.join(filled)}")
 
@@ -81,17 +114,25 @@ async def validate_techcard_rows(
                 continue
             field = str(column).strip()
             found = await classifiers.get_many(
-                Classifier.name == field, Classifier.id_classifier_type == id_classifier_type)
+                Classifier.name == field, Classifier.id_classifier_type == id_classifier_type
+            )
             classifier_type = cell(row, columns, CLASSIFIER_TYPE_COLUMN)
             if not found:
                 raise RowError(field, f"'{field}' не является классификатором типа '{classifier_type}'")
             if len(found) > 1:
-                raise RowError(field, f"Классификатор '{field}' типа '{classifier_type}' "
-                                       f"найден в базе {len(found)} раз")
-            specification_ids.append(await one_id(
-                specifications, field, value,
-                Specification.id_classifier == found[0].id, Specification.description == value,
-                Specification.is_delete.is_not(True)))
+                raise RowError(
+                    field, f"Классификатор '{field}' типа '{classifier_type}' найден в базе {len(found)} раз"
+                )
+            specification_ids.append(
+                await one_id(
+                    specifications,
+                    field,
+                    value,
+                    Specification.id_classifier == found[0].id,
+                    Specification.description == value,
+                    Specification.is_delete.is_not(True),
+                )
+            )
 
         field, value = labelled_cell(row, columns, "Тип работы")
         id_work_type = await one_id(work_types, field, value, WorkType.name == value)
@@ -103,8 +144,7 @@ async def validate_techcard_rows(
         id_priorities = None
         field, value = labelled_cell(row, columns, "Приоритет")
         if value:
-            id_priorities = await one_id(priorities, field, value,
-                                          Priorities.priority == parse_int(field, value))
+            id_priorities = await one_id(priorities, field, value, Priorities.priority == parse_int(field, value))
 
         id_group_type = None
         field, value = labelled_cell(row, columns, "Бригада")
@@ -132,8 +172,9 @@ async def validate_techcard_rows(
     return await resolve_rows(rows, resolve, progress)
 
 
-CREATE_TECHCARDS = operation(validate_techcard_rows, techcards_sql.create,
-                             "create_techcards", "Создано техкарт: {count}")
+CREATE_TECHCARDS = operation(
+    validate_techcard_rows, techcards_sql.create, "create_techcards", "Создано техкарт: {count}"
+)
 
 
 class CreateTechcardsController(Controller):

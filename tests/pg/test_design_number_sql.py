@@ -1,9 +1,13 @@
 """sql_builders/design_number.rename executed against a real PostgreSQL."""
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from controllers.design_number_parser import (
-    snapshot_design_numbers, validate_create_rows, validate_rename_rows, validate_update_rows,
+    snapshot_design_numbers,
+    validate_create_rows,
+    validate_rename_rows,
+    validate_update_rows,
 )
 from sql_builders import design_number as design_number_sql
 from tests.pg.conftest import run_generated_sql
@@ -43,28 +47,55 @@ UPDATE_COLUMNS = (
 
 
 async def state_of(session: AsyncSession, id_design_number: int) -> tuple:
-    row = (await session.execute(
-        text(f"SELECT {UPDATE_COLUMNS} FROM public.design_number WHERE id = :id"), {"id": id_design_number}
-    )).one()
-    links = (await session.execute(
-        text("SELECT m.name FROM public.design_number_to_maint_use l JOIN public.maint_use m ON m.id = l.id_maint_use "
-             "WHERE l.id_design_number = :id ORDER BY m.name"), {"id": id_design_number}
-    )).scalars().all()
+    row = (
+        await session.execute(
+            text(f"SELECT {UPDATE_COLUMNS} FROM public.design_number WHERE id = :id"), {"id": id_design_number}
+        )
+    ).one()
+    links = (
+        (
+            await session.execute(
+                text(
+                    "SELECT m.name FROM public.design_number_to_maint_use l JOIN public.maint_use m ON m.id = l.id_maint_use "
+                    "WHERE l.id_design_number = :id ORDER BY m.name"
+                ),
+                {"id": id_design_number},
+            )
+        )
+        .scalars()
+        .all()
+    )
     return tuple(row), links
 
 
 async def link_maint_use(session: AsyncSession, id_design_number: int, name: str) -> None:
-    await session.execute(text(
-        "INSERT INTO public.design_number_to_maint_use (id_design_number, id_maint_use) "
-        "SELECT :id, id FROM public.maint_use WHERE name = :name"), {"id": id_design_number, "name": name})
+    await session.execute(
+        text(
+            "INSERT INTO public.design_number_to_maint_use (id_design_number, id_maint_use) "
+            "SELECT :id, id FROM public.maint_use WHERE name = :name"
+        ),
+        {"id": id_design_number, "name": name},
+    )
 
 
 def full_row(number: str, **overrides) -> dict:
     row = {
-        "number": number, "description": "NULL", "unit_type": "NULL", "is_serial": "False", "is_created_1c": "NULL",
-        "commodity_group": "NULL", "commodity_code": "NULL", "design_number_status": "NULL", "measure_type": "NULL",
-        "is_repairable": "NULL", "product_group": "NULL", "description_1c": "NULL", "main_number": "NULL",
-        "counter_group": "NULL", "maint_use": "NULL", "is_serial_1c": "False",
+        "number": number,
+        "description": "NULL",
+        "unit_type": "NULL",
+        "is_serial": "False",
+        "is_created_1c": "NULL",
+        "commodity_group": "NULL",
+        "commodity_code": "NULL",
+        "design_number_status": "NULL",
+        "measure_type": "NULL",
+        "is_repairable": "NULL",
+        "product_group": "NULL",
+        "description_1c": "NULL",
+        "main_number": "NULL",
+        "counter_group": "NULL",
+        "maint_use": "NULL",
+        "is_serial_1c": "False",
     }
     row.update(overrides)
     return row
@@ -77,9 +108,19 @@ async def test_update_full_overwrites_columns_and_syncs_maint_use(pg_session):
     await link_maint_use(pg_session, filled, "REV")
     await link_maint_use(pg_session, cleared, "CM")
     rows = [
-        full_row(f"{TEST_PREFIX}-UPD-1", description="Ось 'A' \"Б\"", is_serial="True", is_created_1c="True",
-                 measure_type="шт", is_repairable="False", description_1c="ОСЬ", main_number="A2V0001",
-                 counter_group="KM", maint_use="CM,TOOLS", is_serial_1c="True"),
+        full_row(
+            f"{TEST_PREFIX}-UPD-1",
+            description="Ось 'A' \"Б\"",
+            is_serial="True",
+            is_created_1c="True",
+            measure_type="шт",
+            is_repairable="False",
+            description_1c="ОСЬ",
+            main_number="A2V0001",
+            counter_group="KM",
+            maint_use="CM,TOOLS",
+            is_serial_1c="True",
+        ),
         full_row(f"{TEST_PREFIX}-UPD-2"),
     ]
 
@@ -87,10 +128,16 @@ async def test_update_full_overwrites_columns_and_syncs_maint_use(pg_session):
     await run_generated_sql(pg_session, "\n".join(design_number_sql.update_full(valid_rows)))
 
     assert errors == []
-    (description, _, is_serial, is_created_1c, *_, main_number, id_counter_group, is_serial_1c), links = \
-        await state_of(pg_session, filled)
+    (description, _, is_serial, is_created_1c, *_, main_number, id_counter_group, is_serial_1c), links = await state_of(
+        pg_session, filled
+    )
     assert (description, is_serial, is_created_1c, main_number, is_serial_1c) == (
-        "Ось 'A' \"Б\"", True, True, "A2V0001", True)
+        "Ось 'A' \"Б\"",
+        True,
+        True,
+        "A2V0001",
+        True,
+    )
     assert id_counter_group is not None
     assert links == ["CM", "TOOLS"]
     assert await state_of(pg_session, cleared) == ((None,) * 2 + (False, None) + (None,) * 9 + (False,), [])
@@ -98,9 +145,13 @@ async def test_update_full_overwrites_columns_and_syncs_maint_use(pg_session):
 
 async def test_update_full_of_the_snapshot_rolls_the_update_back(pg_session):
     id_dn = await make_design_number(pg_session, f"{TEST_PREFIX}-UPD-3")
-    await pg_session.execute(text(
-        "UPDATE public.design_number SET description = 'old ''desc''', is_created_1c = true, main_number = 'M-1' "
-        "WHERE id = :id"), {"id": id_dn})
+    await pg_session.execute(
+        text(
+            "UPDATE public.design_number SET description = 'old ''desc''', is_created_1c = true, main_number = 'M-1' "
+            "WHERE id = :id"
+        ),
+        {"id": id_dn},
+    )
     await link_maint_use(pg_session, id_dn, "REV")
     before = await state_of(pg_session, id_dn)
 
@@ -123,8 +174,16 @@ async def id_of(session: AsyncSession, number: str) -> int | None:
 async def test_create_inserts_numbers_with_links_and_the_rollback_removes_them(pg_session):
     max_id = await pg_session.scalar(text("SELECT max(id) FROM public.design_number"))
     rows = [
-        full_row(f"{TEST_PREFIX}-NEW-1", description="Ось 'A' \"Б\"", is_serial="True", measure_type="шт",
-                 is_repairable="False", counter_group="KM", maint_use="CM,TOOLS", is_serial_1c="True"),
+        full_row(
+            f"{TEST_PREFIX}-NEW-1",
+            description="Ось 'A' \"Б\"",
+            is_serial="True",
+            measure_type="шт",
+            is_repairable="False",
+            counter_group="KM",
+            maint_use="CM,TOOLS",
+            is_serial_1c="True",
+        ),
         full_row(f"{TEST_PREFIX}-NEW-2"),
     ]
 
@@ -134,12 +193,33 @@ async def test_create_inserts_numbers_with_links_and_the_rollback_removes_them(p
     assert errors == []
     first, second = await id_of(pg_session, f"{TEST_PREFIX}-NEW-1"), await id_of(pg_session, f"{TEST_PREFIX}-NEW-2")
     assert first > max_id and second > max_id
-    (description, _, is_serial, _, _, _, _, id_measure_type, is_repairable, _, _, _, id_counter_group,
-     is_serial_1c), links = await state_of(pg_session, first)
+    (
+        (
+            description,
+            _,
+            is_serial,
+            _,
+            _,
+            _,
+            _,
+            id_measure_type,
+            is_repairable,
+            _,
+            _,
+            _,
+            id_counter_group,
+            is_serial_1c,
+        ),
+        links,
+    ) = await state_of(pg_session, first)
     assert (description, is_serial, is_repairable, is_serial_1c, links) == (
-        "Ось 'A' \"Б\"", True, False, True, ["CM", "TOOLS"])
-    assert id_measure_type == await pg_session.scalar(
-        text("SELECT max(id) FROM public.measure_type WHERE name = 'шт'"))
+        "Ось 'A' \"Б\"",
+        True,
+        False,
+        True,
+        ["CM", "TOOLS"],
+    )
+    assert id_measure_type == await pg_session.scalar(text("SELECT max(id) FROM public.measure_type WHERE name = 'шт'"))
     assert id_counter_group == await pg_session.scalar(text("SELECT id FROM public.counter_group WHERE name = 'KM'"))
     assert await state_of(pg_session, second) == ((None,) * 2 + (False, None) + (None,) * 9 + (False,), [])
 
@@ -147,18 +227,26 @@ async def test_create_inserts_numbers_with_links_and_the_rollback_removes_them(p
 
     assert await id_of(pg_session, f"{TEST_PREFIX}-NEW-1") is None
     assert await id_of(pg_session, f"{TEST_PREFIX}-NEW-2") is None
-    assert await pg_session.scalar(text(
-        "SELECT count(*) FROM public.design_number_to_maint_use WHERE id_design_number = :id"), {"id": first}) == 0
+    assert (
+        await pg_session.scalar(
+            text("SELECT count(*) FROM public.design_number_to_maint_use WHERE id_design_number = :id"), {"id": first}
+        )
+        == 0
+    )
 
 
 async def test_create_updates_existing_numbers_and_the_rollback_restores_them(pg_session):
     id_existing = await make_design_number(pg_session, f"{TEST_PREFIX}-OLD-1")
-    await pg_session.execute(text(
-        "UPDATE public.design_number SET description = 'old', main_number = 'M-1' WHERE id = :id"), {"id": id_existing})
+    await pg_session.execute(
+        text("UPDATE public.design_number SET description = 'old', main_number = 'M-1' WHERE id = :id"),
+        {"id": id_existing},
+    )
     await link_maint_use(pg_session, id_existing, "REV")
     before = await state_of(pg_session, id_existing)
-    rows = [full_row(f"{TEST_PREFIX}-OLD-1", description="new", maint_use="CM", is_serial="True"),
-            full_row(f"{TEST_PREFIX}-NEW-3", description="created")]
+    rows = [
+        full_row(f"{TEST_PREFIX}-OLD-1", description="new", maint_use="CM", is_serial="True"),
+        full_row(f"{TEST_PREFIX}-NEW-3", description="created"),
+    ]
 
     errors, valid_rows = await validate_create_rows(pg_session, rows)
     snapshot = await snapshot_design_numbers(pg_session, [r.id for r in valid_rows if r.id is not None])

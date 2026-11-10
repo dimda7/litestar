@@ -1,5 +1,3 @@
-from typing import Optional
-
 import msgspec
 
 
@@ -46,13 +44,13 @@ class GenerateSQLResponse(msgspec.Struct):
     status: str
     """Operation status: 'ok' or 'error'."""
 
-    sql: Optional[str] = None
+    sql: str | None = None
     """The generated SQL."""
 
-    count: Optional[int] = None
+    count: int | None = None
     """Number of SQL statements."""
 
-    errors: Optional[list[SQLError]] = None
+    errors: list[SQLError] | None = None
     """List of validation errors."""
 
 
@@ -62,13 +60,13 @@ class ExecuteSQLResponse(msgspec.Struct):
     status: str
     """Operation status: 'ok' or 'error'."""
 
-    count: Optional[int] = None
+    count: int | None = None
     """Number of rows inserted or deleted."""
 
-    message: Optional[str] = None
+    message: str | None = None
     """Result message."""
 
-    errors: Optional[list[SQLError]] = None
+    errors: list[SQLError] | None = None
     """List of errors."""
 
 

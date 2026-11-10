@@ -6,8 +6,9 @@ from controllers.ptoir_parser.launch import validate_launch_rows
 from tests.conftest import make_active, make_counter_type, make_ptoir, make_ptoir_level_warning
 
 
-def make_row(number_ptoir="ТО0001", active="", counter_type="Пробег", interval=2,
-             date_activation=None, service_value=1000) -> dict:
+def make_row(
+    number_ptoir="ТО0001", active="", counter_type="Пробег", interval=2, date_activation=None, service_value=1000
+) -> dict:
     return {
         "ПТОиР": number_ptoir,
         "Актив": active,
@@ -59,7 +60,7 @@ async def test_missing_ptoir_reported(db_session):
 
 
 async def test_missing_counter_type_reported(db_session):
-    ptoir_id = await make_ptoir(db_session, "ТО0001")
+    await make_ptoir(db_session, "ТО0001")
 
     errors, valid_rows = await validate(db_session, [make_row(counter_type="Неизвестный")])
 
@@ -69,7 +70,7 @@ async def test_missing_counter_type_reported(db_session):
 
 
 async def test_missing_level_warning_reported(db_session):
-    ct_id = await make_counter_type(db_session, "Пробег")
+    await make_counter_type(db_session, "Пробег")
     await make_ptoir(db_session, "ТО0001")
     # no ptoir_level_warning exists for this ПТОиР and counter type
 
@@ -82,7 +83,7 @@ async def test_missing_level_warning_reported(db_session):
 
 async def test_active_mismatch_reported(db_session):
     ct_id = await make_counter_type(db_session, "Пробег")
-    active_id = await make_active(db_session, "SPV000001")
+    await make_active(db_session, "SPV000001")
     other_active_id = await make_active(db_session, "SPV000002")
     ptoir_id = await make_ptoir(db_session, "ТО0001", id_active=other_active_id)
     await make_ptoir_level_warning(db_session, ptoir_id, ct_id)

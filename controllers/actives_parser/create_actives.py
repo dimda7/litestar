@@ -1,31 +1,39 @@
 import base64
 import logging
-from io import BytesIO
 from datetime import datetime
+from io import BytesIO
 
 import openpyxl
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Consignment, DesignNumber, IteratorNumberLast, Storage, StoragePlace
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, start_task
 from sql_builders import actives as actives_sql
 from sql_builders.actives import ACTIVE_NUMBER_COUNTER_DESCRIPTION, ACTIVE_NUMBER_LENGTH
 
-from .common import PREFIX, StorageRepository, StoragePlaceRepository, ConsignmentRepository, DesignNumberRepository, IteratorNumberLastRepository
-
+from .common import (
+    PREFIX,
+    ConsignmentRepository,
+    DesignNumberRepository,
+    IteratorNumberLastRepository,
+    StoragePlaceRepository,
+    StorageRepository,
+)
 
 logger = logging.getLogger("actives_parser")
 
 
 async def validate_create_actives_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the material rows and build the asset creation plan (replaces add_active_spcial).
 
@@ -57,22 +65,29 @@ async def validate_create_actives_rows(
         IteratorNumberLast.description == ACTIVE_NUMBER_COUNTER_DESCRIPTION
     )
     if counter_row is None or counter_row.number is None:
-        errors.append({
-            "row": 0, "field": "*",
-            "message": f"Не найден счётчик '{ACTIVE_NUMBER_COUNTER_DESCRIPTION}' в iterator_number_last",
-        })
+        errors.append(
+            {
+                "row": 0,
+                "field": "*",
+                "message": f"Не найден счётчик '{ACTIVE_NUMBER_COUNTER_DESCRIPTION}' в iterator_number_last",
+            }
+        )
         return errors, valid_rows
 
     # The material column is called 'АРТИКУЛ' in newer files and
     # 'Номер ТМЦ (DU,KP,A2V)' in older ones; matched ignoring case and edge spaces.
     tmc_column: str | None = next(
-        (k for k in (rows[0] if rows else {})
-         if str(k).strip().lower() in ("артикул", "номер тмц (du,kp,a2v)")),
+        (k for k in (rows[0] if rows else {}) if str(k).strip().lower() in ("артикул", "номер тмц (du,kp,a2v)")),
         None,
     )
     if rows and tmc_column is None:
-        errors.append({"row": 0, "field": "АРТИКУЛ",
-                        "message": "В файле не найдена колонка 'АРТИКУЛ' (или 'Номер ТМЦ (DU,KP,A2V)')"})
+        errors.append(
+            {
+                "row": 0,
+                "field": "АРТИКУЛ",
+                "message": "В файле не найдена колонка 'АРТИКУЛ' (или 'Номер ТМЦ (DU,KP,A2V)')",
+            }
+        )
         return errors, valid_rows
 
     if progress is not None:
@@ -94,7 +109,9 @@ async def validate_create_actives_rows(
             errors.append({"row": row_num, "field": "Количество", "message": f"Некорректное количество: '{count_raw}'"})
             continue
         if count < 1:
-            errors.append({"row": row_num, "field": "Количество", "message": f"Количество должно быть больше 0: '{count_raw}'"})
+            errors.append(
+                {"row": row_num, "field": "Количество", "message": f"Количество должно быть больше 0: '{count_raw}'"}
+            )
             continue
 
         storage_name = str(row.get("Склад") or "").strip()
@@ -112,11 +129,16 @@ async def validate_create_actives_rows(
             errors.append({"row": row_num, "field": "Тип актива", "message": "Поле 'Тип актива' пустое"})
             continue
         if len(type_active) >= ACTIVE_NUMBER_LENGTH:
-            errors.append({
-                "row": row_num, "field": "Тип актива",
-                "message": (f"'{type_active}' слишком длинный для {ACTIVE_NUMBER_LENGTH}-значного "
-                            f"номера актива (префикс + цифры)"),
-            })
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "Тип актива",
+                    "message": (
+                        f"'{type_active}' слишком длинный для {ACTIVE_NUMBER_LENGTH}-значного "
+                        f"номера актива (префикс + цифры)"
+                    ),
+                }
+            )
             continue
 
         special_raw = row.get("Особый учет")
@@ -130,7 +152,9 @@ async def validate_create_actives_rows(
                 storage_place_cache[storage_place_name] = sp.id if sp else None
             id_storage_place = storage_place_cache[storage_place_name]
             if id_storage_place is None:
-                errors.append({"row": row_num, "field": "Ячейка", "message": f"Ячейка не найдена: '{storage_place_name}'"})
+                errors.append(
+                    {"row": row_num, "field": "Ячейка", "message": f"Ячейка не найдена: '{storage_place_name}'"}
+                )
                 continue
 
         consignment_name = str(row.get("Партия") or "").strip()
@@ -153,19 +177,21 @@ async def validate_create_actives_rows(
             errors.append({"row": row_num, "field": tmc_column, "message": f"ТМЦ не найдена: '{design_number_raw}'"})
             continue
 
-        serial_number = (str(row.get("Серийный номер") or "").strip() if count == 1 else "none")
+        serial_number = str(row.get("Серийный номер") or "").strip() if count == 1 else "none"
 
         for _ in range(count):
-            valid_rows.append({
-                "row_num": row_num,
-                "id_design_number": id_design_number,
-                "id_storage": storage.id,
-                "id_storage_place": id_storage_place,
-                "id_consignment": id_consignment,
-                "type_active": type_active,
-                "special_account": special,
-                "serial_number": serial_number or None,
-            })
+            valid_rows.append(
+                {
+                    "row_num": row_num,
+                    "id_design_number": id_design_number,
+                    "id_storage": storage.id,
+                    "id_storage_place": id_storage_place,
+                    "id_consignment": id_consignment,
+                    "type_active": type_active,
+                    "special_account": special,
+                    "serial_number": serial_number or None,
+                }
+            )
 
     return errors, valid_rows
 
@@ -215,8 +241,7 @@ class CreateActivesController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                errors, valid_rows = \
-                    await validate_create_actives_rows(session, rows, progress=progress)
+                errors, valid_rows = await validate_create_actives_rows(session, rows, progress=progress)
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка: {e}"}])
             return
@@ -225,7 +250,9 @@ class CreateActivesController(Controller):
             progress.update(status="error", errors=errors)
             return
         if not valid_rows:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}]
+            )
             return
 
         sql_lines = actives_sql.create_actives(valid_rows)
@@ -248,14 +275,16 @@ class CreateActivesController(Controller):
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
-                errors, valid_rows = \
-                    await validate_create_actives_rows(session, rows, progress=progress)
+                errors, valid_rows = await validate_create_actives_rows(session, rows, progress=progress)
 
                 if errors:
                     progress.update(status="error", errors=errors)
                     return
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}],
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -272,27 +301,34 @@ class CreateActivesController(Controller):
                     raw_conn = await conn.get_raw_connection()
                     await raw_conn.driver_connection.execute(sql_body)
 
-                    counter_after = (await session.execute(
-                        text("SELECT number FROM public.iterator_number_last WHERE description = :d"),
-                        {"d": ACTIVE_NUMBER_COUNTER_DESCRIPTION},
-                    )).scalar()
+                    counter_after = (
+                        await session.execute(
+                            text("SELECT number FROM public.iterator_number_last WHERE description = :d"),
+                            {"d": ACTIVE_NUMBER_COUNTER_DESCRIPTION},
+                        )
+                    ).scalar()
                     created_numbers = reconstruct_created_active_numbers(valid_rows, counter_after)
 
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
 
                 progress["processed"] = 1
 
                 # Serial numbers are read from the database rather than the file, so the
                 # report reflects the records actually created
-                db_rows = (await session.execute(
-                    text("SELECT active_number, serial_number FROM public.actives "
-                         "WHERE active_number = ANY(:nums)"),
-                    {"nums": created_numbers},
-                )).all()
+                db_rows = (
+                    await session.execute(
+                        text(
+                            "SELECT active_number, serial_number FROM public.actives WHERE active_number = ANY(:nums)"
+                        ),
+                        {"nums": created_numbers},
+                    )
+                ).all()
                 serial_by_number = {an: sn for an, sn in db_rows}
                 xlsx_rows = [(n, serial_by_number.get(n)) for n in created_numbers]
         except Exception as e:
@@ -312,7 +348,10 @@ class CreateActivesController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Created %d actives from TMC, log saved to %s", len(valid_rows), log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         xlsx=build_created_actives_xlsx(xlsx_rows),
-                         xlsx_filename="actives.xlsx",
-                         message=f"Успешно создано активов: {len(valid_rows)}")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            xlsx=build_created_actives_xlsx(xlsx_rows),
+            xlsx_filename="actives.xlsx",
+            message=f"Успешно создано активов: {len(valid_rows)}",
+        )

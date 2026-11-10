@@ -1,8 +1,8 @@
 from controllers.actives_parser.common import parse_model_lcn
 from controllers.actives_parser.create_active_from_model import validate_create_active_from_model_rows
 from models import IteratorNumberLast
-from tests.conftest import make_design_number
 from sql_builders import actives as actives_sql
+from tests.conftest import make_design_number
 
 
 async def make_counter(db_session, number: int = 100) -> None:
@@ -119,11 +119,18 @@ async def test_empty_row_skipped_silently(db_session):
 
 
 def test_build_sql_body_single_active():
-    valid_rows = [{
-        "row_num": 1, "id_design_number": 55, "type_active": "SPV",
-        "id_train": 700, "car_number": 1, "id_car_place": 12,
-        "lcn": "700.1.6.4", "serial_number": "none",
-    }]
+    valid_rows = [
+        {
+            "row_num": 1,
+            "id_design_number": 55,
+            "type_active": "SPV",
+            "id_train": 700,
+            "car_number": 1,
+            "id_car_place": 12,
+            "lcn": "700.1.6.4",
+            "serial_number": "none",
+        }
+    ]
     lines = actives_sql.create_active_from_model(valid_rows)
     sql = "\n".join(lines)
 
@@ -133,11 +140,15 @@ def test_build_sql_body_single_active():
     assert "SELECT number INTO active_num FROM public.iterator_number_last" in sql
     assert "FOR UPDATE;" in sql
     assert "active_num := active_num + 1;" in sql
-    assert ("INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
-            "VALUES (loc_ids[1], 2, 700, 1, 12);") in sql
-    assert ("INSERT INTO public.actives (id, active_number, id_design_number, id_location, "
-            "serial_number, lcn) VALUES (act_ids[1], 'SPV' || lpad(active_num::text, 7, '0'), 55, "
-            "loc_ids[1], 'none', '700.1.6.4'::ltree);") in sql
+    assert (
+        "INSERT INTO public.location (id, id_type_location, id_train, car_number, id_car_place) "
+        "VALUES (loc_ids[1], 2, 700, 1, 12);"
+    ) in sql
+    assert (
+        "INSERT INTO public.actives (id, active_number, id_design_number, id_location, "
+        "serial_number, lcn) VALUES (act_ids[1], 'SPV' || lpad(active_num::text, 7, '0'), 55, "
+        "loc_ids[1], 'none', '700.1.6.4'::ltree);"
+    ) in sql
     assert "UPDATE public.iterator_number_last SET number = active_num" in sql
     assert lines[-1] == "END $$;"
     # unlike create-actives, there is no storage.last_lcn counter here
@@ -145,11 +156,18 @@ def test_build_sql_body_single_active():
 
 
 def test_build_sql_body_null_serial_and_car_place():
-    valid_rows = [{
-        "row_num": 1, "id_design_number": 55, "type_active": "SPV",
-        "id_train": 700, "car_number": None, "id_car_place": None,
-        "lcn": "700", "serial_number": None,
-    }]
+    valid_rows = [
+        {
+            "row_num": 1,
+            "id_design_number": 55,
+            "type_active": "SPV",
+            "id_train": 700,
+            "car_number": None,
+            "id_car_place": None,
+            "lcn": "700",
+            "serial_number": None,
+        }
+    ]
     sql = "\n".join(actives_sql.create_active_from_model(valid_rows))
 
     assert "VALUES (loc_ids[1], 2, 700, NULL, NULL);" in sql
@@ -158,10 +176,26 @@ def test_build_sql_body_null_serial_and_car_place():
 
 def test_build_sql_body_multiple_actives_increment_counter():
     valid_rows = [
-        {"row_num": 1, "id_design_number": 1, "type_active": "SPV", "id_train": 700,
-         "car_number": 1, "id_car_place": 12, "lcn": "700.1.6.4", "serial_number": "none"},
-        {"row_num": 1, "id_design_number": 1, "type_active": "SPV", "id_train": 701,
-         "car_number": 1, "id_car_place": 12, "lcn": "701.1.6.4", "serial_number": "none"},
+        {
+            "row_num": 1,
+            "id_design_number": 1,
+            "type_active": "SPV",
+            "id_train": 700,
+            "car_number": 1,
+            "id_car_place": 12,
+            "lcn": "700.1.6.4",
+            "serial_number": "none",
+        },
+        {
+            "row_num": 1,
+            "id_design_number": 1,
+            "type_active": "SPV",
+            "id_train": 701,
+            "car_number": 1,
+            "id_car_place": 12,
+            "lcn": "701.1.6.4",
+            "serial_number": "none",
+        },
     ]
     lines = actives_sql.create_active_from_model(valid_rows)
     sql = "\n".join(lines)

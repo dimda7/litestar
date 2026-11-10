@@ -2,8 +2,16 @@ import re
 
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 
-from models import Actives, CounterActive, Consignment, DesignNumber, IteratorNumberLast, MileageStart, Storage, StoragePlace
-
+from models import (
+    Actives,
+    Consignment,
+    CounterActive,
+    DesignNumber,
+    IteratorNumberLast,
+    MileageStart,
+    Storage,
+    StoragePlace,
+)
 
 PREFIX = "actives_parser"
 

@@ -12,7 +12,9 @@ from .common import PATH, cell_numbers, find_column, load_ptoirs, logger, match_
 
 
 async def validate_delete_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'удалить ПТОиР'.
 
@@ -51,9 +53,14 @@ def _delete_summary(total: int, valid_rows: list[dict], errors: list[dict]) -> t
 
 
 DELETE_PTOIR = sql_tasks.SqlOperation(
-    validate=validate_delete_rows, build=ptoir_sql.delete,
-    log_name="delete_ptoir", log_title="PTOIR delete", summary=_delete_summary,
-    empty_message="Нет ПТОиР для удаления", logger=logger, partial=True,
+    validate=validate_delete_rows,
+    build=ptoir_sql.delete,
+    log_name="delete_ptoir",
+    log_title="PTOIR delete",
+    summary=_delete_summary,
+    empty_message="Нет ПТОиР для удаления",
+    logger=logger,
+    partial=True,
 )
 
 

@@ -1,27 +1,28 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Actives, CarPlace
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, start_task
 from sql_builders import actives as actives_sql
 
 from .common import PREFIX
 
-
 logger = logging.getLogger("actives_parser")
 
 
 async def validate_change_okz(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[tuple[str, int]]]:
     """Validate rows for 'изменить окз': public.location.id_car_place of each asset.
 
@@ -38,8 +39,7 @@ async def validate_change_okz(
         None,
     )
     if rows and position_column is None:
-        errors.append({"row": 0, "field": "position",
-                       "message": "В файле не найдена колонка 'position' (или 'окз')"})
+        errors.append({"row": 0, "field": "position", "message": "В файле не найдена колонка 'position' (или 'окз')"})
         return errors, valid_rows
 
     if progress is not None:
@@ -64,22 +64,25 @@ async def validate_change_okz(
 
         if active_number in batch_positions:
             if batch_positions[active_number] != position:
-                errors.append({"row": row_num, "field": "Актив",
-                               "message": (f"Конфликт: актив '{active_number}' уже сопоставлен другому окз "
-                                           f"('{batch_positions[active_number]}', а не '{position}')")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "Актив",
+                        "message": (
+                            f"Конфликт: актив '{active_number}' уже сопоставлен другому окз "
+                            f"('{batch_positions[active_number]}', а не '{position}')"
+                        ),
+                    }
+                )
             continue
 
-        result = await db_session.execute(
-            select(Actives.id_location).where(Actives.active_number == active_number)
-        )
+        result = await db_session.execute(select(Actives.id_location).where(Actives.active_number == active_number))
         locations = result.scalars().all()
         if not locations:
-            errors.append({"row": row_num, "field": "Актив",
-                           "message": f"Актив не найден: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Актив не найден: '{active_number}'"})
             continue
         if locations[0] is None:
-            errors.append({"row": row_num, "field": "Актив",
-                           "message": f"У актива '{active_number}' нет location"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"У актива '{active_number}' нет location"})
             continue
 
         if position not in car_place_ids:
@@ -87,13 +90,18 @@ async def validate_change_okz(
             car_place_ids[position] = list(cp_result.scalars().all())
         matches = car_place_ids[position]
         if len(matches) == 0:
-            errors.append({"row": row_num, "field": "position",
-                           "message": f"car_place не найден: '{position}'"})
+            errors.append({"row": row_num, "field": "position", "message": f"car_place не найден: '{position}'"})
             continue
         if len(matches) > 1:
-            errors.append({"row": row_num, "field": "position",
-                           "message": (f"car_place неоднозначен: найдено {len(matches)} записей "
-                                       f"с именем '{position}' (id: {matches})")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "position",
+                    "message": (
+                        f"car_place неоднозначен: найдено {len(matches)} записей с именем '{position}' (id: {matches})"
+                    ),
+                }
+            )
             continue
 
         batch_positions[active_number] = position
@@ -127,7 +135,9 @@ class ChangeOkzController(Controller):
             progress.update(status="error", errors=errors)
             return
         if not valid_rows:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]
+            )
             return
 
         sql_lines = actives_sql.change_okz(valid_rows)
@@ -154,7 +164,10 @@ class ChangeOkzController(Controller):
                     progress.update(status="error", errors=errors)
                     return
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -167,7 +180,9 @@ class ChangeOkzController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -186,5 +201,8 @@ class ChangeOkzController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Changed okz for %d assets, log: %s", updated, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                        message=f"Изменено окз у активов: {updated} (строк файла: {len(valid_rows)})")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=f"Изменено окз у активов: {updated} (строк файла: {len(valid_rows)})",
+        )

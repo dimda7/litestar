@@ -21,9 +21,7 @@ def two_phase_lcn_update(valid_rows: list[dict], extra_set: str = "") -> list[st
     if not valid_rows:
         return []
     old_list = ", ".join(f"'{sql_escape(vr['old_lcn'])}'" for vr in valid_rows)
-    tmp_values_list = ", ".join(
-        f"('Z{sql_escape(vr['old_lcn'])}', '{sql_escape(vr['new_lcn'])}')" for vr in valid_rows
-    )
+    tmp_values_list = ", ".join(f"('Z{sql_escape(vr['old_lcn'])}', '{sql_escape(vr['new_lcn'])}')" for vr in valid_rows)
     return [
         f"UPDATE public.actives SET lcn = ('Z' || lcn::text)::ltree WHERE lcn::text IN ({old_list});",
         f"UPDATE public.actives AS act SET lcn = v.new_lcn::ltree{extra_set} "
@@ -75,9 +73,7 @@ def change_model_okz(valid_rows: list[dict]) -> list[str]:
     if not valid_rows:
         return []
     id_list = ", ".join(str(vr["id"]) for vr in valid_rows)
-    values_list = ", ".join(
-        f"({vr['id']}, {car_place_sql.ref_sql(vr['new_car_place'])})" for vr in valid_rows
-    )
+    values_list = ", ".join(f"({vr['id']}, {car_place_sql.ref_sql(vr['new_car_place'])})" for vr in valid_rows)
     return [
         *car_place_sql.insert_missing(vr["new_car_place"] for vr in valid_rows),
         f"UPDATE public.models SET id_car_place = NULL WHERE id IN ({id_list});",
@@ -99,8 +95,7 @@ def change_okz_active(valid_rows: list[dict]) -> list[str]:
     every train has every position) simply matches no row, not an error.
     """
     values_list = ", ".join(
-        f"('{sql_escape(lcn_train)}', {vr['new_car_place_id']})"
-        for vr in valid_rows for lcn_train in vr["lcn_trains"]
+        f"('{sql_escape(lcn_train)}', {vr['new_car_place_id']})" for vr in valid_rows for lcn_train in vr["lcn_trains"]
     )
     if not values_list:
         return []
@@ -136,10 +131,10 @@ def merge_serial_none_lcns(valid_rows: list[dict]) -> list[str]:
     seen: set[str] = set()
     merged: list[str] = []
     for vr in valid_rows:
-        for l in vr["lcn_trains"]:
-            if l not in seen:
-                seen.add(l)
-                merged.append(l)
+        for lcn in vr["lcn_trains"]:
+            if lcn not in seen:
+                seen.add(lcn)
+                merged.append(lcn)
     return merged
 
 
@@ -147,13 +142,18 @@ def set_serial_none(valid_rows: list[dict]) -> list[str]:
     lcns = merge_serial_none_lcns(valid_rows)
     if not lcns:
         return []
-    lcn_list = ", ".join(f"'{sql_escape(l)}'" for l in lcns)
+    lcn_list = ", ".join(f"'{sql_escape(lcn)}'" for lcn in lcns)
     return [f"UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN ({lcn_list});"]
 
 
 def move_actives(
-    valid_rows: list[dict], id_storage: int, id_consignment: int, id_user: int,
-    reason: str, move_date: datetime, id_design_number: int | None = None,
+    valid_rows: list[dict],
+    id_storage: int,
+    id_consignment: int,
+    id_user: int,
+    reason: str,
+    move_date: datetime,
+    id_design_number: int | None = None,
 ) -> list[str]:
     """Build the DO block moving assets into storage (the move_active equivalent).
 
@@ -174,8 +174,7 @@ def move_actives(
 
     sql_lines: list[str] = ["DO $$", "DECLARE"]
     sql_lines.append(
-        f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
-        f"FROM generate_series(1, {total}));"
+        f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') FROM generate_series(1, {total}));"
     )
     sql_lines.append("    lcn_new bigint;")
     sql_lines.append("BEGIN")
@@ -238,7 +237,8 @@ _DESIGN_NUMBER_ACTIVE_MATCH = "act.lcn::text = v.lcn_train AND act.id_design_num
 def _design_number_active_values(valid_rows: list[dict]) -> str:
     values_list = ", ".join(
         f"('{sql_escape(lcn_train)}', {vr['old_id_design_number']}, {vr['id_design_number']})"
-        for vr in valid_rows for lcn_train in vr["lcn_trains"]
+        for vr in valid_rows
+        for lcn_train in vr["lcn_trains"]
     )
     return f"(VALUES {values_list}) AS v(lcn_train, old_design_number, new_design_number)" if values_list else ""
 

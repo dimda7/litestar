@@ -2,13 +2,13 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
 from models import CarPlace, Train
@@ -18,12 +18,13 @@ from sql_builders import models as models_sql
 
 from .common import parse_model_lcn
 
-
 logger = logging.getLogger("parser")
 
 
 async def validate_change_okz_active_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'изменить okz в активе по модели'.
 
@@ -86,8 +87,9 @@ async def validate_change_okz_active_rows(
 
         parsed = parse_model_lcn(lcn_raw)
         if parsed is None:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": f"Не удалось распознать id_train_type в lcn '{lcn_raw}'"})
+            errors.append(
+                {"row": row_num, "field": "lcn", "message": f"Не удалось распознать id_train_type в lcn '{lcn_raw}'"}
+            )
             continue
         id_train_type, rest = parsed
         # Keyed by the parsed (id_train_type, rest) pair, not the raw text — two
@@ -96,9 +98,16 @@ async def validate_change_okz_active_rows(
         lsn_key = (id_train_type, rest)
 
         if lsn_key in batch_lsn and batch_lsn[lsn_key] != new_raw:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": (f"Конфликт: lsn='{lcn_raw}' уже сопоставлен другому okz "
-                                       f"('{batch_lsn[lsn_key]}', а не '{new_raw}')")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "lcn",
+                    "message": (
+                        f"Конфликт: lsn='{lcn_raw}' уже сопоставлен другому okz "
+                        f"('{batch_lsn[lsn_key]}', а не '{new_raw}')"
+                    ),
+                }
+            )
             continue
 
         if id_train_type not in train_ids_by_type:
@@ -107,28 +116,32 @@ async def validate_change_okz_active_rows(
         train_ids = train_ids_by_type[id_train_type]
 
         if not train_ids:
-            errors.append({"row": row_num, "field": "lcn",
-                           "message": f"Поезда с id_train_type={id_train_type} не найдены"})
+            errors.append(
+                {"row": row_num, "field": "lcn", "message": f"Поезда с id_train_type={id_train_type} не найдены"}
+            )
             continue
 
         cp_result = await db_session.execute(select(CarPlace.id).where(CarPlace.name == new_raw))
         matches = cp_result.scalars().all()
         if len(matches) == 0:
-            errors.append({"row": row_num, "field": "new_position",
-                           "message": f"car_place не найден: '{new_raw}'"})
+            errors.append({"row": row_num, "field": "new_position", "message": f"car_place не найден: '{new_raw}'"})
             continue
         if len(matches) > 1:
-            errors.append({"row": row_num, "field": "new_position",
-                           "message": (f"car_place неоднозначен: найдено {len(matches)} записей "
-                                       f"с именем '{new_raw}' (id: {matches})")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "new_position",
+                    "message": (
+                        f"car_place неоднозначен: найдено {len(matches)} записей с именем '{new_raw}' (id: {matches})"
+                    ),
+                }
+            )
             continue
 
         # Cast on an ltree column (Postgres-only, SQLite in the unit suite can't
         # parse it) — kept last so a row already doomed by a missing train or an
         # unresolved car_place fails there first, without ever reaching this query.
-        result = await db_session.execute(
-            text("SELECT 1 FROM public.models WHERE lcn::text = :lcn"), {"lcn": lcn_raw}
-        )
+        result = await db_session.execute(text("SELECT 1 FROM public.models WHERE lcn::text = :lcn"), {"lcn": lcn_raw})
         if result.first() is None:
             errors.append({"row": row_num, "field": "lcn", "message": f"Модель с lcn='{lcn_raw}' не найдена"})
             continue
@@ -188,7 +201,9 @@ class ChangeOkzActiveController(Controller):
                 try:
                     errors, valid_rows = await validate_change_okz_active_rows(session, rows, progress=progress)
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -196,7 +211,9 @@ class ChangeOkzActiveController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для изменения"}]
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -208,7 +225,9 @@ class ChangeOkzActiveController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -227,5 +246,8 @@ class ChangeOkzActiveController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Changed okz for %d assets, log: %s", total_updated, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Изменено okz у активов: {total_updated} (строк файла: {len(valid_rows)})")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=f"Изменено okz у активов: {total_updated} (строк файла: {len(valid_rows)})",
+        )

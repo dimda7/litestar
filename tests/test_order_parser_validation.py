@@ -1,8 +1,8 @@
 """Validation tests for OrderParserController._validate_and_build_rows (controllers/order_parser.py)."""
 
 from controllers.order_parser import OrderParserController
-from tests.conftest import make_order
 from sql_builders import orders as orders_sql
+from tests.conftest import make_order
 
 
 def make_row(child="ЗН000783610", parent="ЗН000464234") -> dict:

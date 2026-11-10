@@ -3,7 +3,6 @@
 import pytest
 
 from controllers.parser.insert_models import validate_insert_rows
-
 from models import Models
 from sql_builders import models as models_sql
 from tests.conftest import make_car_place, make_design_number, make_train_type
@@ -32,9 +31,7 @@ async def test_valid_row_passes(db_session):
     cp_id = await make_car_place(db_session, "Вагон 1")
     dn_id = await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await validate(
-        db_session, [make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.1")]
-    )
+    errors, valid_rows = await validate(db_session, [make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.1")])
 
     assert errors == []
     assert valid_rows == [(tt_id, cp_id, dn_id, "M1.1", False)]
@@ -44,9 +41,7 @@ async def test_missing_train_type_reported(db_session):
     await make_car_place(db_session, "Вагон 1")
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await validate(
-        db_session, [make_row("Неизвестный поезд", "Вагон 1", "DN-001")]
-    )
+    errors, valid_rows = await validate(db_session, [make_row("Неизвестный поезд", "Вагон 1", "DN-001")])
 
     assert valid_rows == []
     assert error_fields(errors) == ["model"]
@@ -57,9 +52,7 @@ async def test_missing_car_place_becomes_one_to_create(db_session):
     tt_id = await make_train_type(db_session, "Ласточка")
     dn_id = await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await validate(
-        db_session, [make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1")]
-    )
+    errors, valid_rows = await validate(db_session, [make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1")])
 
     assert errors == []
     assert valid_rows == [(tt_id, "+106.20-01_(01)", dn_id, "M1.1", False)]
@@ -106,9 +99,7 @@ async def test_ambiguous_car_place_reported(db_session):
     await make_car_place(db_session, "Вагон 1")  # duplicate name, different id
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await validate(
-        db_session, [make_row("Ласточка", "Вагон 1", "DN-001")]
-    )
+    errors, valid_rows = await validate(db_session, [make_row("Ласточка", "Вагон 1", "DN-001")])
 
     assert valid_rows == []
     assert error_fields(errors) == ["position"]
@@ -151,10 +142,13 @@ async def test_row_with_other_errors_creates_no_car_place(db_session):
     tt_id = await make_train_type(db_session, "Ласточка")
     dn_id = await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await validate(db_session, [
-        make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1"),
-        make_row("Неизвестный поезд", "+106.20-02_(01)", "DN-001", lsn="M1.2"),
-    ])
+    errors, valid_rows = await validate(
+        db_session,
+        [
+            make_row("Ласточка", "+106.20-01_(01)", "DN-001", lsn="M1.1"),
+            make_row("Неизвестный поезд", "+106.20-02_(01)", "DN-001", lsn="M1.2"),
+        ],
+    )
 
     assert error_fields(errors) == ["model"]
     assert valid_rows == [(tt_id, "+106.20-01_(01)", dn_id, "M1.1", False)]
@@ -165,9 +159,7 @@ async def test_missing_design_number_reported(db_session):
     await make_train_type(db_session, "Ласточка")
     await make_car_place(db_session, "Вагон 1")
 
-    errors, valid_rows = await validate(
-        db_session, [make_row("Ласточка", "Вагон 1", "DN-999")]
-    )
+    errors, valid_rows = await validate(db_session, [make_row("Ласточка", "Вагон 1", "DN-999")])
 
     assert valid_rows == []
     assert error_fields(errors) == ["itemnum"]
@@ -178,13 +170,12 @@ async def test_duplicate_against_existing_db_row(db_session):
     tt_id = await make_train_type(db_session, "Ласточка")
     cp_id = await make_car_place(db_session, "Вагон 1")
     dn_id = await make_design_number(db_session, "DN-001")
-    db_session.add(Models(id_train_type=tt_id, lcn="M1.1", id_car_place=cp_id,
-                           id_design_number=dn_id, is_default=False))
+    db_session.add(
+        Models(id_train_type=tt_id, lcn="M1.1", id_car_place=cp_id, id_design_number=dn_id, is_default=False)
+    )
     await db_session.flush()
 
-    errors, valid_rows = await validate(
-        db_session, [make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.1")]
-    )
+    errors, valid_rows = await validate(db_session, [make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.1")])
 
     assert valid_rows == []
     assert error_fields(errors) == ["*"]
@@ -214,8 +205,7 @@ async def test_unique_conflict_lcn_car_place_default_against_existing(db_session
     cp_id = await make_car_place(db_session, "Вагон 1")
     dn1 = await make_design_number(db_session, "DN-001")
     dn2 = await make_design_number(db_session, "DN-002")
-    db_session.add(Models(id_train_type=tt1, lcn="M1.1", id_car_place=cp_id,
-                           id_design_number=dn1, is_default=True))
+    db_session.add(Models(id_train_type=tt1, lcn="M1.1", id_car_place=cp_id, id_design_number=dn1, is_default=True))
     await db_session.flush()
 
     # Different (train_type, design_number) but the same (lcn, car_place) and is_default=True
@@ -231,10 +221,10 @@ async def test_unique_conflict_lcn_car_place_default_against_existing(db_session
 
 async def test_unique_conflict_lcn_car_place_default_within_batch(db_session):
     tt1 = await make_train_type(db_session, "Ласточка")
-    tt2 = await make_train_type(db_session, "Финист")
+    await make_train_type(db_session, "Финист")
     cp_id = await make_car_place(db_session, "Вагон 1")
     dn1 = await make_design_number(db_session, "DN-001")
-    dn2 = await make_design_number(db_session, "DN-002")
+    await make_design_number(db_session, "DN-002")
 
     rows = [
         make_row("Ласточка", "Вагон 1", "DN-001", lsn="M1.1", is_default=True),
@@ -252,8 +242,7 @@ async def test_unique_conflict_car_place_train_type_design_against_existing(db_s
     tt_id = await make_train_type(db_session, "Ласточка")
     cp_id = await make_car_place(db_session, "Вагон 1")
     dn_id = await make_design_number(db_session, "DN-001")
-    db_session.add(Models(id_train_type=tt_id, lcn="M1.1", id_car_place=cp_id,
-                           id_design_number=dn_id, is_default=True))
+    db_session.add(Models(id_train_type=tt_id, lcn="M1.1", id_car_place=cp_id, id_design_number=dn_id, is_default=True))
     await db_session.flush()
 
     # Same (car_place, train_type, design_number) but a different lcn and is_default=True

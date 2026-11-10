@@ -3,6 +3,7 @@
 These are the paths the SQLite suite cannot reach: ltree columns, the `::text`
 cast, and the UNIQUE indexes the two-phase update exists to work around.
 """
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -12,11 +13,17 @@ from controllers.parser.change_design_number import validate_change_model_design
 from controllers.parser.change_design_number_active import validate_change_design_number_active_rows
 from controllers.parser.change_okz_active import validate_change_okz_active_rows
 from controllers.parser.common import execute_sql_lines
-
 from sql_builders import models as models_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import (
-    TEST_PREFIX, car_place_name, lcn_of, make_active, make_design_number, make_location, make_train, next_id,
+    TEST_PREFIX,
+    car_place_name,
+    lcn_of,
+    make_active,
+    make_design_number,
+    make_location,
+    make_train,
+    next_id,
     reference_ids,
     second_car_place_id,
 )
@@ -26,17 +33,27 @@ async def make_two_assets(session) -> tuple[dict, int, int, int]:
     """Two assets on one train at <train>.1 and <train>.2."""
     ids = await reference_ids(session)
     id_train = await make_train(session, ids["train_type"])
-    first = await make_active(session, f"{id_train}.1", ids["design_number"],
-                              await make_location(session, id_type_location=2, id_train=id_train, car_number=1))
-    second = await make_active(session, f"{id_train}.2", ids["design_number"],
-                               await make_location(session, id_type_location=2, id_train=id_train, car_number=1))
+    first = await make_active(
+        session,
+        f"{id_train}.1",
+        ids["design_number"],
+        await make_location(session, id_type_location=2, id_train=id_train, car_number=1),
+    )
+    second = await make_active(
+        session,
+        f"{id_train}.2",
+        ids["design_number"],
+        await make_location(session, id_type_location=2, id_train=id_train, car_number=1),
+    )
     return ids, id_train, first, second
 
 
 async def test_two_phase_update_survives_a_chain_of_renames(pg_session):
     ids, id_train, first, second = await make_two_assets(pg_session)
-    pairs = [{"old_lcn": f"{id_train}.1", "new_lcn": f"{id_train}.2"},
-             {"old_lcn": f"{id_train}.2", "new_lcn": f"{id_train}.3"}]
+    pairs = [
+        {"old_lcn": f"{id_train}.1", "new_lcn": f"{id_train}.2"},
+        {"old_lcn": f"{id_train}.2", "new_lcn": f"{id_train}.3"},
+    ]
 
     await run_generated_sql(pg_session, "\n".join(models_sql.move_no_relocate(pairs)))
 
@@ -51,26 +68,34 @@ async def test_a_single_update_on_the_same_chain_would_violate_actives_lcn_key(p
     with pytest.raises(IntegrityError):
         async with pg_session.begin_nested():
             await pg_session.execute(
-                text("UPDATE public.actives AS act SET lcn = v.new_lcn::ltree "
-                     "FROM (VALUES (:old1, :new1), (:old2, :new2)) AS v(old_lcn, new_lcn) "
-                     "WHERE act.lcn::text = v.old_lcn"),
-                {"old1": f"{id_train}.1", "new1": f"{id_train}.2",
-                 "old2": f"{id_train}.2", "new2": f"{id_train}.3"},
+                text(
+                    "UPDATE public.actives AS act SET lcn = v.new_lcn::ltree "
+                    "FROM (VALUES (:old1, :new1), (:old2, :new2)) AS v(old_lcn, new_lcn) "
+                    "WHERE act.lcn::text = v.old_lcn"
+                ),
+                {"old1": f"{id_train}.1", "new1": f"{id_train}.2", "old2": f"{id_train}.2", "new2": f"{id_train}.3"},
             )
 
 
 async def test_move_no_relocate_leaves_location_and_parent_untouched(pg_session):
     ids, id_train, first, _ = await make_two_assets(pg_session)
-    before = (await pg_session.execute(
-        text("SELECT id_location, id_actves_parent, id_actives_root FROM public.actives WHERE id = :id"),
-        {"id": first})).first()
+    before = (
+        await pg_session.execute(
+            text("SELECT id_location, id_actves_parent, id_actives_root FROM public.actives WHERE id = :id"),
+            {"id": first},
+        )
+    ).first()
 
-    await run_generated_sql(pg_session, "\n".join(
-        models_sql.move_no_relocate([{"old_lcn": f"{id_train}.1", "new_lcn": f"{id_train}.9"}])))
+    await run_generated_sql(
+        pg_session, "\n".join(models_sql.move_no_relocate([{"old_lcn": f"{id_train}.1", "new_lcn": f"{id_train}.9"}]))
+    )
 
-    after = (await pg_session.execute(
-        text("SELECT id_location, id_actves_parent, id_actives_root FROM public.actives WHERE id = :id"),
-        {"id": first})).first()
+    after = (
+        await pg_session.execute(
+            text("SELECT id_location, id_actves_parent, id_actives_root FROM public.actives WHERE id = :id"),
+            {"id": first},
+        )
+    ).first()
     assert after == before
     assert await lcn_of(pg_session, first) == f"{id_train}.9"
 
@@ -81,9 +106,13 @@ async def test_set_serial_none_matches_assets_by_lcn_text(pg_session):
 
     await run_generated_sql(pg_session, "\n".join(models_sql.set_serial_none(rows)))
 
-    serials = dict((await pg_session.execute(
-        text("SELECT id, serial_number FROM public.actives WHERE id = ANY(:ids)"),
-        {"ids": [first, second]})).all())
+    serials = dict(
+        (
+            await pg_session.execute(
+                text("SELECT id, serial_number FROM public.actives WHERE id = ANY(:ids)"), {"ids": [first, second]}
+            )
+        ).all()
+    )
     assert serials[first] == "none"
     assert serials[second] is None
 
@@ -94,10 +123,17 @@ async def test_change_model_lcn_updates_models_through_the_chain(pg_session):
     for suffix in ("1", "2"):
         model_id = await next_id(pg_session, "models_id_seq")
         await pg_session.execute(
-            text("INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
-                 "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"),
-            {"id": model_id, "tt": ids["train_type"], "lcn": f"M{ids['train_type']}.{model_id}.{suffix}",
-             "cp": ids["car_place"], "dn": ids["design_number"]},
+            text(
+                "INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
+                "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"
+            ),
+            {
+                "id": model_id,
+                "tt": ids["train_type"],
+                "lcn": f"M{ids['train_type']}.{model_id}.{suffix}",
+                "cp": ids["car_place"],
+                "dn": ids["design_number"],
+            },
         )
         made.append((model_id, f"M{ids['train_type']}.{model_id}.{suffix}"))
     (first_id, first_lcn), (second_id, second_lcn) = made
@@ -105,9 +141,13 @@ async def test_change_model_lcn_updates_models_through_the_chain(pg_session):
     rows = [{"id": first_id, "new_lcn": second_lcn}, {"id": second_id, "new_lcn": f"{second_lcn}.9"}]
     await run_generated_sql(pg_session, "\n".join(models_sql.change_model_lcn(rows)))
 
-    lcns = dict((await pg_session.execute(
-        text("SELECT id, lcn::text FROM public.models WHERE id = ANY(:ids)"),
-        {"ids": [first_id, second_id]})).all())
+    lcns = dict(
+        (
+            await pg_session.execute(
+                text("SELECT id, lcn::text FROM public.models WHERE id = ANY(:ids)"), {"ids": [first_id, second_id]}
+            )
+        ).all()
+    )
     assert lcns[first_id] == second_lcn
     assert lcns[second_id] == f"{second_lcn}.9"
 
@@ -119,25 +159,35 @@ async def test_change_model_okz_survives_a_swap(pg_session):
         pytest.skip("copy needs at least two public.car_place rows")
 
     made = []
-    for suffix in ("1", "2"):
+    for _ in ("1", "2"):
         model_id = await next_id(pg_session, "models_id_seq")
         await pg_session.execute(
-            text("INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
-                 "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"),
-            {"id": model_id, "tt": ids["train_type"], "lcn": f"M{ids['train_type']}.{model_id}",
-             "cp": ids["car_place"], "dn": ids["design_number"]},
+            text(
+                "INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
+                "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"
+            ),
+            {
+                "id": model_id,
+                "tt": ids["train_type"],
+                "lcn": f"M{ids['train_type']}.{model_id}",
+                "cp": ids["car_place"],
+                "dn": ids["design_number"],
+            },
         )
         made.append(model_id)
     first_id, second_id = made
 
     # Swap: first -> other_car_place, second -> ids["car_place"] (first's old place).
-    rows = [{"id": first_id, "new_car_place": other_car_place},
-            {"id": second_id, "new_car_place": ids["car_place"]}]
+    rows = [{"id": first_id, "new_car_place": other_car_place}, {"id": second_id, "new_car_place": ids["car_place"]}]
     await run_generated_sql(pg_session, "\n".join(models_sql.change_model_okz(rows)))
 
-    places = dict((await pg_session.execute(
-        text("SELECT id, id_car_place FROM public.models WHERE id = ANY(:ids)"),
-        {"ids": [first_id, second_id]})).all())
+    places = dict(
+        (
+            await pg_session.execute(
+                text("SELECT id, id_car_place FROM public.models WHERE id = ANY(:ids)"), {"ids": [first_id, second_id]}
+            )
+        ).all()
+    )
     assert places[first_id] == other_car_place
     assert places[second_id] == ids["car_place"]
 
@@ -150,11 +200,17 @@ async def model_at_reference_car_place(session: AsyncSession, ids: dict) -> int:
 async def car_place_flag_defaults(session: AsyncSession) -> dict[str, str | None]:
     """is_active / is_delete as the catalog defines them — the copy's defaults
     differ from the working database's, so tests must not hardcode them."""
-    return dict((await session.execute(text(
-        "SELECT column_name, column_default FROM information_schema.columns "
-        "WHERE table_schema = 'public' AND table_name = 'car_place' "
-        "AND column_name IN ('is_active', 'is_delete')"
-    ))).all())
+    return dict(
+        (
+            await session.execute(
+                text(
+                    "SELECT column_name, column_default FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'car_place' "
+                    "AND column_name IN ('is_active', 'is_delete')"
+                )
+            )
+        ).all()
+    )
 
 
 async def test_change_model_okz_creates_a_missing_car_place(pg_session):
@@ -162,18 +218,25 @@ async def test_change_model_okz_creates_a_missing_car_place(pg_session):
     model_id = await model_at_reference_car_place(pg_session, ids)
     name = f"{TEST_PREFIX}+106.20-01_(01)"
 
-    await run_generated_sql(pg_session, "\n".join(models_sql.change_model_okz([{"id": model_id, "new_car_place": name}])))
+    await run_generated_sql(
+        pg_session, "\n".join(models_sql.change_model_okz([{"id": model_id, "new_car_place": name}]))
+    )
 
-    created = (await pg_session.execute(
-        text("SELECT id, car_number, short_name, is_active, is_delete FROM public.car_place WHERE name = :name"),
-        {"name": name})).one()
+    created = (
+        await pg_session.execute(
+            text("SELECT id, car_number, short_name, is_active, is_delete FROM public.car_place WHERE name = :name"),
+            {"name": name},
+        )
+    ).one()
     assert created.car_number == 1
     assert created.short_name is None
     defaults = await car_place_flag_defaults(pg_session)
     assert str(created.is_active).lower() == defaults["is_active"]
     assert str(created.is_delete).lower() == defaults["is_delete"]
-    assert await pg_session.scalar(
-        text("SELECT id_car_place FROM public.models WHERE id = :id"), {"id": model_id}) == created.id
+    assert (
+        await pg_session.scalar(text("SELECT id_car_place FROM public.models WHERE id = :id"), {"id": model_id})
+        == created.id
+    )
 
 
 async def test_change_model_okz_reuses_a_car_place_created_after_generation(pg_session):
@@ -182,15 +245,19 @@ async def test_change_model_okz_reuses_a_car_place_created_after_generation(pg_s
     name = f"{TEST_PREFIX}+106.20-02_(01)"
     sql = "\n".join(models_sql.change_model_okz([{"id": model_id, "new_car_place": name}]))
     existing_id = await pg_session.scalar(
-        text("INSERT INTO public.car_place (name, car_number) VALUES (:name, 7) RETURNING id"), {"name": name})
+        text("INSERT INTO public.car_place (name, car_number) VALUES (:name, 7) RETURNING id"), {"name": name}
+    )
 
     await run_generated_sql(pg_session, sql)
 
-    rows = (await pg_session.execute(
-        text("SELECT id, car_number FROM public.car_place WHERE name = :name"), {"name": name})).all()
+    rows = (
+        await pg_session.execute(text("SELECT id, car_number FROM public.car_place WHERE name = :name"), {"name": name})
+    ).all()
     assert [(r.id, r.car_number) for r in rows] == [(existing_id, 7)]
-    assert await pg_session.scalar(
-        text("SELECT id_car_place FROM public.models WHERE id = :id"), {"id": model_id}) == existing_id
+    assert (
+        await pg_session.scalar(text("SELECT id_car_place FROM public.models WHERE id = :id"), {"id": model_id})
+        == existing_id
+    )
 
 
 async def test_execute_sql_lines_reports_only_the_car_places_it_created(pg_session):
@@ -207,16 +274,24 @@ async def test_execute_sql_lines_reports_only_the_car_places_it_created(pg_sessi
     assert created == [name]
     assert updated == 1
     assert created_again == []
-    assert await pg_session.scalar(text(
-        "SELECT cp.name FROM public.models m JOIN public.car_place cp ON cp.id = m.id_car_place WHERE m.id = :id"),
-        {"id": model_id}) == name
+    assert (
+        await pg_session.scalar(
+            text(
+                "SELECT cp.name FROM public.models m JOIN public.car_place cp ON cp.id = m.id_car_place WHERE m.id = :id"
+            ),
+            {"id": model_id},
+        )
+        == name
+    )
 
 
 async def make_model(pg_session, id_train_type: int, lcn: str, id_car_place: int, id_design_number: int) -> int:
     model_id = await next_id(pg_session, "models_id_seq")
     await pg_session.execute(
-        text("INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
-             "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"),
+        text(
+            "INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
+            "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, false)"
+        ),
         {"id": model_id, "tt": id_train_type, "lcn": lcn, "cp": id_car_place, "dn": id_design_number},
     )
     return model_id
@@ -233,9 +308,7 @@ async def test_change_okz_active_validate_resolves_every_train_of_the_type(pg_se
         pytest.skip("copy needs at least two public.car_place rows")
     target_name = await car_place_name(pg_session, target_cp)
 
-    errors, valid_rows = await validate_change_okz_active_rows(
-        pg_session, [{"lsn": lcn, "new_position": target_name}]
-    )
+    errors, valid_rows = await validate_change_okz_active_rows(pg_session, [{"lsn": lcn, "new_position": target_name}])
 
     assert errors == []
     assert len(valid_rows) == 1
@@ -271,10 +344,13 @@ async def test_change_okz_active_conflicting_new_position_for_same_lsn_reported(
     name_a = await car_place_name(pg_session, ids["car_place"])
     name_b = await car_place_name(pg_session, other_cp)
 
-    errors, valid_rows = await validate_change_okz_active_rows(pg_session, [
-        {"lsn": lcn, "new_position": name_a},
-        {"lsn": lcn, "new_position": name_b},
-    ])
+    errors, valid_rows = await validate_change_okz_active_rows(
+        pg_session,
+        [
+            {"lsn": lcn, "new_position": name_a},
+            {"lsn": lcn, "new_position": name_b},
+        ],
+    )
 
     assert [e["field"] for e in errors] == ["lcn"]
     assert "Конфликт" in errors[0]["message"]
@@ -296,10 +372,13 @@ async def test_change_okz_active_conflict_check_normalizes_lsn_text(pg_session):
     name_a = await car_place_name(pg_session, ids["car_place"])
     name_b = await car_place_name(pg_session, other_cp)
 
-    errors, valid_rows = await validate_change_okz_active_rows(pg_session, [
-        {"lsn": lcn_a, "new_position": name_a},
-        {"lsn": lcn_b, "new_position": name_b},
-    ])
+    errors, valid_rows = await validate_change_okz_active_rows(
+        pg_session,
+        [
+            {"lsn": lcn_a, "new_position": name_a},
+            {"lsn": lcn_b, "new_position": name_b},
+        ],
+    )
 
     assert [e["field"] for e in errors] == ["lcn"]
     assert "Конфликт" in errors[0]["message"]
@@ -312,20 +391,29 @@ async def test_change_okz_active_updates_location_only_for_the_matching_asset(pg
     if other_cp is None:
         pytest.skip("copy needs at least two public.car_place rows")
 
-    matched_loc = await make_location(pg_session, id_type_location=2, id_train=id_train,
-                                       car_number=1, id_car_place=ids["car_place"])
+    matched_loc = await make_location(
+        pg_session, id_type_location=2, id_train=id_train, car_number=1, id_car_place=ids["car_place"]
+    )
     matched_active = await make_active(pg_session, f"{id_train}.6.5", ids["design_number"], matched_loc)
-    unmatched_loc = await make_location(pg_session, id_type_location=2, id_train=id_train,
-                                         car_number=1, id_car_place=ids["car_place"])
+    unmatched_loc = await make_location(
+        pg_session, id_type_location=2, id_train=id_train, car_number=1, id_car_place=ids["car_place"]
+    )
     unmatched_active = await make_active(pg_session, f"{id_train}.9.9", ids["design_number"], unmatched_loc)
 
     valid_rows = [{"lcn_trains": [f"{id_train}.6.5"], "new_car_place_id": other_cp}]
     await run_generated_sql(pg_session, "\n".join(models_sql.change_okz_active(valid_rows)))
 
-    places = dict((await pg_session.execute(
-        text("SELECT act.id, loc.id_car_place FROM public.actives act "
-             "JOIN public.location loc ON loc.id = act.id_location WHERE act.id = ANY(:ids)"),
-        {"ids": [matched_active, unmatched_active]})).all())
+    places = dict(
+        (
+            await pg_session.execute(
+                text(
+                    "SELECT act.id, loc.id_car_place FROM public.actives act "
+                    "JOIN public.location loc ON loc.id = act.id_location WHERE act.id = ANY(:ids)"
+                ),
+                {"ids": [matched_active, unmatched_active]},
+            )
+        ).all()
+    )
     assert places[matched_active] == other_cp
     assert places[unmatched_active] == ids["car_place"]
 
@@ -338,7 +426,8 @@ async def test_insert_and_delete_models_round_trip(pg_session):
     await run_generated_sql(pg_session, "\n".join(models_sql.insert_models(rows)))
     model_id = await pg_session.scalar(
         text("SELECT id FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
-        {"lcn": lcn, "dn": ids["design_number"]})
+        {"lcn": lcn, "dn": ids["design_number"]},
+    )
     assert model_id is not None
 
     await run_generated_sql(pg_session, "\n".join(models_sql.delete_models([model_id])))
@@ -353,16 +442,22 @@ async def test_insert_models_creates_a_missing_car_place(pg_session):
 
     await run_generated_sql(pg_session, "\n".join(models_sql.insert_models(rows)))
 
-    created = (await pg_session.execute(
-        text("SELECT id, car_number, is_active, is_delete FROM public.car_place WHERE name = :name"),
-        {"name": name})).one()
+    created = (
+        await pg_session.execute(
+            text("SELECT id, car_number, is_active, is_delete FROM public.car_place WHERE name = :name"), {"name": name}
+        )
+    ).one()
     assert created.car_number == 2
     defaults = await car_place_flag_defaults(pg_session)
     assert str(created.is_active).lower() == defaults["is_active"]
     assert str(created.is_delete).lower() == defaults["is_delete"]
-    assert await pg_session.scalar(
-        text("SELECT id_car_place FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
-        {"lcn": lcn, "dn": ids["design_number"]}) == created.id
+    assert (
+        await pg_session.scalar(
+            text("SELECT id_car_place FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
+            {"lcn": lcn, "dn": ids["design_number"]},
+        )
+        == created.id
+    )
 
 
 async def test_insert_models_reuses_a_car_place_created_after_generation(pg_session):
@@ -371,25 +466,38 @@ async def test_insert_models_reuses_a_car_place_created_after_generation(pg_sess
     name = f"{TEST_PREFIX}+106.20-04_(02)"
     sql = "\n".join(models_sql.insert_models([(ids["train_type"], name, ids["design_number"], lcn, False)]))
     existing_id = await pg_session.scalar(
-        text("INSERT INTO public.car_place (name, car_number) VALUES (:name, 7) RETURNING id"), {"name": name})
+        text("INSERT INTO public.car_place (name, car_number) VALUES (:name, 7) RETURNING id"), {"name": name}
+    )
 
     await run_generated_sql(pg_session, sql)
 
-    rows = (await pg_session.execute(
-        text("SELECT id, car_number FROM public.car_place WHERE name = :name"), {"name": name})).all()
+    rows = (
+        await pg_session.execute(text("SELECT id, car_number FROM public.car_place WHERE name = :name"), {"name": name})
+    ).all()
     assert [(r.id, r.car_number) for r in rows] == [(existing_id, 7)]
-    assert await pg_session.scalar(
-        text("SELECT id_car_place FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
-        {"lcn": lcn, "dn": ids["design_number"]}) == existing_id
+    assert (
+        await pg_session.scalar(
+            text("SELECT id_car_place FROM public.models WHERE lcn::text = :lcn AND id_design_number = :dn"),
+            {"lcn": lcn, "dn": ids["design_number"]},
+        )
+        == existing_id
+    )
 
 
 async def make_default_model(pg_session, ids: dict, id_design_number: int) -> int:
     model_id = await next_id(pg_session, "models_id_seq")
     await pg_session.execute(
-        text("INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
-             "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, true)"),
-        {"id": model_id, "tt": ids["train_type"], "lcn": f"M{ids['train_type']}.{model_id}",
-         "cp": ids["car_place"], "dn": id_design_number},
+        text(
+            "INSERT INTO public.models (id, id_train_type, lcn, id_car_place, id_design_number, is_default) "
+            "VALUES (:id, :tt, CAST(:lcn AS ltree), :cp, :dn, true)"
+        ),
+        {
+            "id": model_id,
+            "tt": ids["train_type"],
+            "lcn": f"M{ids['train_type']}.{model_id}",
+            "cp": ids["car_place"],
+            "dn": id_design_number,
+        },
     )
     return model_id
 
@@ -401,15 +509,20 @@ async def test_change_model_design_number_updates_the_model_only(pg_session):
     model_id = await make_default_model(pg_session, ids, old)
     active = await make_active(pg_session, f"{await make_train(pg_session, ids['train_type'])}.1", old)
 
-    errors, valid_rows = await validate_change_model_design_number_rows(pg_session, [
-        {"id": str(model_id), "itemnum": f"{TEST_PREFIX}-DN-OLD", "new_itemnum": f"{TEST_PREFIX}-DN-NEW"}])
+    errors, valid_rows = await validate_change_model_design_number_rows(
+        pg_session, [{"id": str(model_id), "itemnum": f"{TEST_PREFIX}-DN-OLD", "new_itemnum": f"{TEST_PREFIX}-DN-NEW"}]
+    )
     assert errors == []
     await run_generated_sql(pg_session, "\n".join(models_sql.change_model_design_number(valid_rows)))
 
-    assert await pg_session.scalar(
-        text("SELECT id_design_number FROM public.models WHERE id = :id"), {"id": model_id}) == new
-    assert await pg_session.scalar(
-        text("SELECT id_design_number FROM public.actives WHERE id = :id"), {"id": active}) == old
+    assert (
+        await pg_session.scalar(text("SELECT id_design_number FROM public.models WHERE id = :id"), {"id": model_id})
+        == new
+    )
+    assert (
+        await pg_session.scalar(text("SELECT id_design_number FROM public.actives WHERE id = :id"), {"id": active})
+        == old
+    )
 
 
 async def test_change_model_design_number_catches_the_real_default_index(pg_session):
@@ -420,18 +533,27 @@ async def test_change_model_design_number_catches_the_real_default_index(pg_sess
     taken = await make_default_model(pg_session, ids, b)
 
     errors, _ = await validate_change_model_design_number_rows(
-        pg_session, [{"id": str(model_id), "new_itemnum": f"{TEST_PREFIX}-DN-B"}])
+        pg_session, [{"id": str(model_id), "new_itemnum": f"{TEST_PREFIX}-DN-B"}]
+    )
 
-    assert errors == [{"row": 1, "field": "new_itemnum",
-                       "message": f"Конфликт с моделью id={taken}: такой ТМЦ уже стоит на этом месте"}]
+    assert errors == [
+        {
+            "row": 1,
+            "field": "new_itemnum",
+            "message": f"Конфликт с моделью id={taken}: такой ТМЦ уже стоит на этом месте",
+        }
+    ]
     with pytest.raises(IntegrityError):
         async with pg_session.begin_nested():
-            await pg_session.execute(text("UPDATE public.models SET id_design_number = :dn WHERE id = :id"),
-                                     {"dn": b, "id": model_id})
+            await pg_session.execute(
+                text("UPDATE public.models SET id_design_number = :dn WHERE id = :id"), {"dn": b, "id": model_id}
+            )
 
 
 async def design_number_of_active(pg_session, id_active: int) -> int:
-    return await pg_session.scalar(text("SELECT id_design_number FROM public.actives WHERE id = :id"), {"id": id_active})
+    return await pg_session.scalar(
+        text("SELECT id_design_number FROM public.actives WHERE id = :id"), {"id": id_active}
+    )
 
 
 async def test_change_design_number_active_changes_only_the_models_assets_with_the_old_number(pg_session):
@@ -442,16 +564,27 @@ async def test_change_design_number_active_changes_only_the_models_assets_with_t
     model_id = await make_default_model(pg_session, ids, new)
     rest = str(model_id)
     trains = [await make_train(pg_session, ids["train_type"]) for _ in range(3)]
-    matching = [await make_active(pg_session, f"{trains[0]}.{rest}", old),
-                await make_active(pg_session, f"{trains[1]}.{rest}", old)]
+    matching = [
+        await make_active(pg_session, f"{trains[0]}.{rest}", old),
+        await make_active(pg_session, f"{trains[1]}.{rest}", old),
+    ]
     replaced = await make_active(pg_session, f"{trains[2]}.{rest}", other)
     elsewhere = await make_active(pg_session, f"{trains[0]}.{rest}9", old)
     counters = "SELECT count(*) FROM public.counter_active WHERE id_active = ANY(:ids)"
     all_ids = [*matching, replaced, elsewhere]
     counters_before = await pg_session.scalar(text(counters), {"ids": all_ids})
 
-    errors, valid_rows = await validate_change_design_number_active_rows(pg_session, [
-        {"id": str(model_id), "lsn": "M0.0", "itemnum": f"{TEST_PREFIX}-DN-OLD", "new_itemnum": f"{TEST_PREFIX}-DN-NEW"}])
+    errors, valid_rows = await validate_change_design_number_active_rows(
+        pg_session,
+        [
+            {
+                "id": str(model_id),
+                "lsn": "M0.0",
+                "itemnum": f"{TEST_PREFIX}-DN-OLD",
+                "new_itemnum": f"{TEST_PREFIX}-DN-NEW",
+            }
+        ],
+    )
     assert errors == []
     await run_generated_sql(pg_session, "\n".join(models_sql.change_design_number_active(valid_rows)))
 

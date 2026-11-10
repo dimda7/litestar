@@ -41,8 +41,13 @@ def start_task(total: int, runner: Callable[[dict], Awaitable[None]]) -> Respons
     """Run `runner` against a fresh progress state in the background; answer with its task_id."""
     _cleanup()
     task_id = uuid.uuid4().hex
-    progress: dict = {"processed": 0, "total": total, "phase": "validating",
-                      "status": "running", "created_at": time.time()}
+    progress: dict = {
+        "processed": 0,
+        "total": total,
+        "phase": "validating",
+        "status": "running",
+        "created_at": time.time(),
+    }
     _progress[task_id] = progress
     task = asyncio.ensure_future(runner(progress))
     task.add_done_callback(lambda t: _tasks.pop(task_id, None))
@@ -53,5 +58,7 @@ def start_task(total: int, runner: Callable[[dict], Awaitable[None]]) -> Respons
 def progress_response(task_id: str) -> Response:
     state = _progress.get(task_id)
     if state is None:
-        return _json_response({"status": "error", "errors": [{"row": 0, "field": "*", "message": "Задача не найдена или устарела"}]})
+        return _json_response(
+            {"status": "error", "errors": [{"row": 0, "field": "*", "message": "Задача не найдена или устарела"}]}
+        )
     return _json_response({k: v for k, v in state.items() if k != "created_at"})

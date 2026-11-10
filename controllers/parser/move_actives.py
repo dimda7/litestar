@@ -2,22 +2,21 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import bindparam, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
-from models import DesignNumber, Storage, Consignment, User
+from models import Consignment, DesignNumber, Storage, User
 from parser_storage import LOG_DIR
 from progress_tasks import start_task
 from sql_builders import models as models_sql
 
 from .serial_none import validate_serial_none_rows
-
 
 logger = logging.getLogger("parser")
 
@@ -43,8 +42,12 @@ async def resolve_user_by_fullname(db_session: AsyncSession, fullname: str) -> i
 
 
 async def validate_move_rows(
-    db_session: AsyncSession, rows: list[dict],
-    storage_name: str, consignment_name: str, user_fullname: str, set_nocm: bool,
+    db_session: AsyncSession,
+    rows: list[dict],
+    storage_name: str,
+    consignment_name: str,
+    user_fullname: str,
+    set_nocm: bool,
     progress: dict | None = None,
 ) -> tuple[list[dict], list[dict], int | None, int | None, int | None, int | None]:
     """Validate the Excel rows for 'Переместить активы' (the move_active equivalent).
@@ -112,17 +115,19 @@ async def validate_move_rows(
         errors.append({"row": 0, "field": "lcn", "message": "Не найдено ни одного lcn для перемещения"})
         return errors, valid_rows, id_storage, id_consignment, id_user, id_design_number
 
-    stmt = text(
-        "SELECT id, active_number, id_location FROM public.actives WHERE lcn::text IN :lcns"
-    ).bindparams(bindparam("lcns", expanding=True))
+    stmt = text("SELECT id, active_number, id_location FROM public.actives WHERE lcn::text IN :lcns").bindparams(
+        bindparam("lcns", expanding=True)
+    )
     result = await db_session.execute(stmt, {"lcns": merged_lcns})
     for row_num, (id_active, active_number, id_location_old) in enumerate(result.all(), start=1):
-        valid_rows.append({
-            "row": row_num,
-            "active_number": active_number,
-            "id_active": id_active,
-            "id_location_old": id_location_old,
-        })
+        valid_rows.append(
+            {
+                "row": row_num,
+                "active_number": active_number,
+                "id_active": id_active,
+                "id_location_old": id_location_old,
+            }
+        )
 
     return errors, valid_rows, id_storage, id_consignment, id_user, id_design_number
 
@@ -144,19 +149,34 @@ class MoveActivesController(Controller):
         user_fullname = str(data.get("user_fullname", "") or "")
         set_nocm = str(data.get("set_nocm", "") or "").strip().lower() in ("1", "true", "on")
 
-        return start_task(len(rows), lambda progress: self._run_move_actives_generate(
-            progress, rows, reason, storage_name, consignment_name, user_fullname, set_nocm
-        ))
+        return start_task(
+            len(rows),
+            lambda progress: self._run_move_actives_generate(
+                progress, rows, reason, storage_name, consignment_name, user_fullname, set_nocm
+            ),
+        )
 
     async def _run_move_actives_generate(
-        self, progress: dict, rows: list[dict],
-        reason: str, storage_name: str, consignment_name: str, user_fullname: str, set_nocm: bool,
+        self,
+        progress: dict,
+        rows: list[dict],
+        reason: str,
+        storage_name: str,
+        consignment_name: str,
+        user_fullname: str,
+        set_nocm: bool,
     ) -> None:
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
                 errors, valid_rows, id_storage, id_consignment, id_user, id_design_number = await validate_move_rows(
-                    session, rows, storage_name, consignment_name, user_fullname, set_nocm, progress=progress,
+                    session,
+                    rows,
+                    storage_name,
+                    consignment_name,
+                    user_fullname,
+                    set_nocm,
+                    progress=progress,
                 )
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
@@ -166,12 +186,20 @@ class MoveActivesController(Controller):
             progress.update(status="error", errors=errors)
             return
         if not valid_rows:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}]
+            )
             return
 
         move_date = datetime.now() - MOVE_TZ_SHIFT
         sql_lines = models_sql.move_actives(
-            valid_rows, id_storage, id_consignment, id_user, reason, move_date, id_design_number,
+            valid_rows,
+            id_storage,
+            id_consignment,
+            id_user,
+            reason,
+            move_date,
+            id_design_number,
         )
         full_sql = "\n".join(["BEGIN;", *sql_lines, "COMMIT;"])
         progress.update(status="done", sql=full_sql, count=len(valid_rows))
@@ -190,37 +218,70 @@ class MoveActivesController(Controller):
         user_fullname = str(data.get("user_fullname", "") or "")
         set_nocm = str(data.get("set_nocm", "") or "").strip().lower() in ("1", "true", "on")
 
-        return start_task(len(rows), lambda progress: self._run_move_actives_execute(
-            progress, rows, reason, storage_name, consignment_name, user_fullname, set_nocm
-        ))
+        return start_task(
+            len(rows),
+            lambda progress: self._run_move_actives_execute(
+                progress, rows, reason, storage_name, consignment_name, user_fullname, set_nocm
+            ),
+        )
 
     async def _run_move_actives_execute(
-        self, progress: dict, rows: list[dict],
-        reason: str, storage_name: str, consignment_name: str, user_fullname: str, set_nocm: bool,
+        self,
+        progress: dict,
+        rows: list[dict],
+        reason: str,
+        storage_name: str,
+        consignment_name: str,
+        user_fullname: str,
+        set_nocm: bool,
     ) -> None:
         try:
             session_maker = get_session_maker()
             async with session_maker() as session:
                 try:
-                    errors, valid_rows, id_storage, id_consignment, id_user, id_design_number = await validate_move_rows(
-                        session, rows, storage_name, consignment_name, user_fullname, set_nocm, progress=progress,
+                    (
+                        errors,
+                        valid_rows,
+                        id_storage,
+                        id_consignment,
+                        id_user,
+                        id_design_number,
+                    ) = await validate_move_rows(
+                        session,
+                        rows,
+                        storage_name,
+                        consignment_name,
+                        user_fullname,
+                        set_nocm,
+                        progress=progress,
                     )
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
                     progress.update(status="error", errors=errors)
                     return
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для перемещения"}],
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
                 move_date = datetime.now() - MOVE_TZ_SHIFT
                 sql_body = "\n".join(
                     models_sql.move_actives(
-                        valid_rows, id_storage, id_consignment, id_user, reason, move_date, id_design_number,
+                        valid_rows,
+                        id_storage,
+                        id_consignment,
+                        id_user,
+                        reason,
+                        move_date,
+                        id_design_number,
                     )
                 )
                 try:
@@ -237,7 +298,9 @@ class MoveActivesController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -258,5 +321,8 @@ class MoveActivesController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Moved %d actives to storage '%s', log: %s", len(valid_rows), storage_name, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Перемещено активов: {len(valid_rows)} (склад: {storage_name})")
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=f"Перемещено активов: {len(valid_rows)} (склад: {storage_name})",
+        )

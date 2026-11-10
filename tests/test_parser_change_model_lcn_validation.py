@@ -15,7 +15,6 @@ happy path were verified by hand against the real grom-tk database.
 """
 
 from controllers.parser.change_lcn import validate_change_model_lcn_rows
-
 from sql_builders import models as models_sql
 
 

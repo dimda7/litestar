@@ -3,7 +3,6 @@ import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
 PREFIX = "parser"
 
 
@@ -37,7 +36,9 @@ def parse_model_id(raw: str) -> int | None:
 
 
 async def execute_sql_lines(
-    session: AsyncSession, sql_lines: list[str], progress: dict | None = None,
+    session: AsyncSession,
+    sql_lines: list[str],
+    progress: dict | None = None,
 ) -> tuple[list[str], int]:
     """Run a builder's statements one by one; return the car place names its
     INSERTs created (the only statements returning rows) and the last statement's rowcount.

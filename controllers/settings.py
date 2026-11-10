@@ -46,8 +46,7 @@ class SettingsController(Controller):
         # source, the browser cache and proxy logs. The edit modal fetches one
         # connection's password in a separate request.
         profiles = [
-            {"id": p.id, "name": p.name, "host": p.host, "port": p.port,
-             "user": p.user, "dbname": p.dbname}
+            {"id": p.id, "name": p.name, "host": p.host, "port": p.port, "user": p.user, "dbname": p.dbname}
             for p in db_profiles.load()
         ]
         return Template(
@@ -125,8 +124,12 @@ class SettingsController(Controller):
     ) -> Response:
         try:
             created = db_profiles.add(
-                name=data.name, host=data.host, port=data.port,
-                user=data.user, password=data.password, dbname=data.dbname,
+                name=data.name,
+                host=data.host,
+                port=data.port,
+                user=data.user,
+                password=data.password,
+                dbname=data.dbname,
             )
         except ValueError as e:
             return _json("error", str(e))
@@ -134,7 +137,11 @@ class SettingsController(Controller):
             return _save_failed(e)
 
         logger.info(
-            "DB profile added: %s (%s:%s/%s)", created.name, created.host, created.port, created.dbname,
+            "DB profile added: %s (%s:%s/%s)",
+            created.name,
+            created.host,
+            created.port,
+            created.dbname,
         )
         return _json("ok", f"Подключение «{created.name}» добавлено")
 
@@ -150,8 +157,13 @@ class SettingsController(Controller):
 
         try:
             updated = db_profiles.update(
-                data.profile, name=data.name, host=data.host, port=data.port,
-                user=data.user, password=data.password, dbname=data.dbname,
+                data.profile,
+                name=data.name,
+                host=data.host,
+                port=data.port,
+                user=data.user,
+                password=data.password,
+                dbname=data.dbname,
             )
         except ValueError as e:
             return _json("error", str(e))
@@ -166,8 +178,7 @@ class SettingsController(Controller):
         # users: a session issued by the old one is no good there. Editing the
         # name, user or password does not log anyone out.
         relogin = (
-            not db_profiles.targets_same_database(existing, updated)
-            and data.profile == db_manager.get_active_profile()
+            not db_profiles.targets_same_database(existing, updated) and data.profile == db_manager.get_active_profile()
         )
         if relogin:
             # Everyone else's sessions were issued by the old database too and
@@ -177,7 +188,11 @@ class SettingsController(Controller):
             request.clear_session()
 
         logger.info(
-            "DB profile updated: %s (%s:%s/%s)", updated.name, updated.host, updated.port, updated.dbname,
+            "DB profile updated: %s (%s:%s/%s)",
+            updated.name,
+            updated.host,
+            updated.port,
+            updated.dbname,
         )
         return _json("ok", f"Подключение «{updated.name}» сохранено", relogin=relogin)
 

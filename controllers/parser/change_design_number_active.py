@@ -19,12 +19,13 @@ from sql_builders import models as models_sql
 
 from .common import column_key, execute_sql_lines, parse_model_id, parse_model_lcn, row_text
 
-
 logger = logging.getLogger("parser")
 
 
 async def validate_change_design_number_active_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     errors: list[dict] = []
     valid_rows: list[dict] = []
@@ -33,8 +34,9 @@ async def validate_change_design_number_active_rows(
     new_column = column_key(rows, "new_itemnum")
 
     async def design_number_id(number: str) -> int | None:
-        return (await db_session.execute(
-            select(DesignNumber.id).where(DesignNumber.number == number))).scalar_one_or_none()
+        return (
+            await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == number))
+        ).scalar_one_or_none()
 
     for name, found in (("id", id_column), ("itemnum", old_column), ("new_itemnum", new_column)):
         if rows and found is None:
@@ -60,8 +62,9 @@ async def validate_change_design_number_active_rows(
             errors.append({"row": row_num, "field": "id", "message": f"Некорректный id: '{id_raw}'"})
             continue
         old_number, new_number = row_text(row, old_column), row_text(row, new_column)
-        lcn = (await db_session.execute(
-            select(cast(Models.lcn, String)).where(Models.id == model_id))).scalar_one_or_none()
+        lcn = (
+            await db_session.execute(select(cast(Models.lcn, String)).where(Models.id == model_id))
+        ).scalar_one_or_none()
         if lcn is None:
             errors.append({"row": row_num, "field": "id", "message": f"Модель с id={model_id} не найдена"})
             continue
@@ -74,9 +77,16 @@ async def validate_change_design_number_active_rows(
         repeat = (model_id, old_number)
         if repeat in batch_numbers:
             if batch_numbers[repeat] != new_number:
-                errors.append({"row": row_num, "field": "id", "message": (
-                    f"Конфликт: id={model_id} уже сопоставлен другому ТМЦ "
-                    f"('{batch_numbers[repeat]}', а не '{new_number}')")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "id",
+                        "message": (
+                            f"Конфликт: id={model_id} уже сопоставлен другому ТМЦ "
+                            f"('{batch_numbers[repeat]}', а не '{new_number}')"
+                        ),
+                    }
+                )
             continue
         if new_number == old_number:
             batch_numbers[repeat] = new_number
@@ -91,15 +101,27 @@ async def validate_change_design_number_active_rows(
             continue
         parsed = parse_model_lcn(lcn)
         if parsed is None:
-            errors.append({"row": row_num, "field": "id",
-                           "message": f"Не удалось распознать id_train_type в lcn модели id={model_id}: '{lcn}'"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "id",
+                    "message": f"Не удалось распознать id_train_type в lcn модели id={model_id}: '{lcn}'",
+                }
+            )
             continue
         id_train_type, rest = parsed
         position = (id_train_type, rest, old_id)
         if position in batch_positions:
-            errors.append({"row": row_num, "field": "id", "message": (
-                f"Конфликт со строкой {batch_positions[position]}: те же активы "
-                f"(позиция {rest}, ТМЦ '{old_number}') уже меняются")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "id",
+                    "message": (
+                        f"Конфликт со строкой {batch_positions[position]}: те же активы "
+                        f"(позиция {rest}, ТМЦ '{old_number}') уже меняются"
+                    ),
+                }
+            )
             continue
         # X->Y and Y->Z on one position run correctly once, but re-running the
         # same file would carry the X assets on to Z.
@@ -110,24 +132,39 @@ async def validate_change_design_number_active_rows(
         elif position in batch_targets:
             chained = (batch_targets[position], old_number)
         if chained is not None:
-            errors.append({"row": row_num, "field": "id", "message": (
-                f"Цепочка со строкой {chained[0]} на позиции {rest}: ТМЦ '{chained[1]}' там и ставится, "
-                "и заменяется — разнесите по двум запускам")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "id",
+                    "message": (
+                        f"Цепочка со строкой {chained[0]} на позиции {rest}: ТМЦ '{chained[1]}' там и ставится, "
+                        "и заменяется — разнесите по двум запускам"
+                    ),
+                }
+            )
             continue
-        train_ids = (await db_session.execute(
-            select(Train.id).where(Train.id_train_type == id_train_type).order_by(Train.id))).scalars().all()
+        train_ids = (
+            (await db_session.execute(select(Train.id).where(Train.id_train_type == id_train_type).order_by(Train.id)))
+            .scalars()
+            .all()
+        )
         if not train_ids:
-            errors.append({"row": row_num, "field": "id",
-                           "message": f"Поезда с id_train_type={id_train_type} не найдены"})
+            errors.append(
+                {"row": row_num, "field": "id", "message": f"Поезда с id_train_type={id_train_type} не найдены"}
+            )
             continue
         batch_numbers[repeat] = new_number
         batch_positions[position] = row_num
         batch_targets[target] = row_num
-        valid_rows.append({
-            "lcn_trains": [f"{tid}.{rest}" if rest else str(tid) for tid in train_ids],
-            "old_id_design_number": old_id, "id_design_number": new_id,
-            "old_number": old_number, "new_number": new_number,
-        })
+        valid_rows.append(
+            {
+                "lcn_trains": [f"{tid}.{rest}" if rest else str(tid) for tid in train_ids],
+                "old_id_design_number": old_id,
+                "id_design_number": new_id,
+                "old_number": old_number,
+                "new_number": new_number,
+            }
+        )
 
     return errors, valid_rows
 
@@ -177,9 +214,12 @@ class ChangeDesignNumberActiveController(Controller):
             async with session_maker() as session:
                 try:
                     errors, valid_rows = await validate_change_design_number_active_rows(
-                        session, rows, progress=progress)
+                        session, rows, progress=progress
+                    )
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -187,7 +227,9 @@ class ChangeDesignNumberActiveController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет строк с изменением ТМЦ"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет строк с изменением ТМЦ"}]
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -204,9 +246,11 @@ class ChangeDesignNumberActiveController(Controller):
                         f"=== Execute change-design-number-active: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
                         f"Rows: {len(valid_rows)}, assets to update: {len(targets)}",
                         "",
-                        *(f"active id={id_active} lcn={lcn}: '{numbers[old]}' (id_design_number {old}) "
-                          f"-> '{numbers[new]}' (id_design_number {new})"
-                          for id_active, lcn, old, new in targets),
+                        *(
+                            f"active id={id_active} lcn={lcn}: '{numbers[old]}' (id_design_number {old}) "
+                            f"-> '{numbers[new]}' (id_design_number {new})"
+                            for id_active, lcn, old, new in targets
+                        ),
                         "",
                         *sql_lines,
                         "",
@@ -222,14 +266,21 @@ class ChangeDesignNumberActiveController(Controller):
                     if log_file is not None:
                         with open(log_file, "a", encoding="utf-8") as f:
                             f.write(f"-- ROLLED BACK, nothing was changed: {e}\n")
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
             return
 
         logger.info("Changed design number of %d actives, log: %s", total_updated, log_file)
-        progress.update(status="done", count=total_updated, message=(
-            f"Изменён ТМЦ у активов: {total_updated} (строк файла: {len(valid_rows)})\n"
-            "counter_active не пересчитан: при смене группы счётчиков запустите "
-            "«Синхронизация counter_active» на странице «Парсинг ТМЦ»"))
+        progress.update(
+            status="done",
+            count=total_updated,
+            message=(
+                f"Изменён ТМЦ у активов: {total_updated} (строк файла: {len(valid_rows)})\n"
+                "counter_active не пересчитан: при смене группы счётчиков запустите "
+                "«Синхронизация counter_active» на странице «Парсинг ТМЦ»"
+            ),
+        )

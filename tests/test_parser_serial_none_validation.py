@@ -2,8 +2,8 @@
 
 from controllers.parser.common import parse_model_lcn
 from controllers.parser.serial_none import validate_serial_none_rows
-from tests.conftest import make_train
 from sql_builders import models as models_sql
+from tests.conftest import make_train
 
 
 async def validate(db_session, rows):
@@ -107,8 +107,7 @@ def test_duplicate_lsn_rows_merge_into_single_update():
     assert len(sql_lines) == 1
     assert sql_lines[0].count("UPDATE public.actives") == 1
     assert sql_lines[0] == (
-        "UPDATE public.actives SET serial_number = 'none' "
-        "WHERE lcn::text IN ('281.6.5', '275.6.5', '278.6.5');"
+        "UPDATE public.actives SET serial_number = 'none' WHERE lcn::text IN ('281.6.5', '275.6.5', '278.6.5');"
     )
 
 

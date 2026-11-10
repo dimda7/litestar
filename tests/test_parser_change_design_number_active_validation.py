@@ -23,17 +23,27 @@ async def test_positions_come_from_the_model_lcn_on_every_train_of_its_type(db_s
     await make_train(db_session, 4, "Чужой тип")
     model = await make_model(db_session, "M9.1.9.2", old)
 
-    errors, valid_rows = await validate(db_session, [{"id": str(model), "lsn": "M9.1.9.4", "itemnum": " KP00008506",
-                                                      "new_itemnum": "KP00008505 "}])
+    errors, valid_rows = await validate(
+        db_session, [{"id": str(model), "lsn": "M9.1.9.4", "itemnum": " KP00008506", "new_itemnum": "KP00008505 "}]
+    )
 
     assert errors == []
-    assert valid_rows == [{"lcn_trains": [f"{first}.1.9.2", f"{second}.1.9.2"], "old_id_design_number": old,
-                           "id_design_number": new, "old_number": "KP00008506", "new_number": "KP00008505"}]
+    assert valid_rows == [
+        {
+            "lcn_trains": [f"{first}.1.9.2", f"{second}.1.9.2"],
+            "old_id_design_number": old,
+            "id_design_number": new,
+            "old_number": "KP00008506",
+            "new_number": "KP00008505",
+        }
+    ]
 
 
 async def test_missing_columns_reported(db_session):
-    results = [await validate(db_session, [row]) for row in (
-        {"itemnum": "A", "new_itemnum": "B"}, {"id": "1", "new_itemnum": "B"}, {"id": "1", "itemnum": "A"})]
+    results = [
+        await validate(db_session, [row])
+        for row in ({"itemnum": "A", "new_itemnum": "B"}, {"id": "1", "new_itemnum": "B"}, {"id": "1", "itemnum": "A"})
+    ]
 
     assert [errors for errors, _ in results] == [
         [{"row": 0, "field": "id", "message": "В файле не найдена колонка 'id'"}],
@@ -43,11 +53,14 @@ async def test_missing_columns_reported(db_session):
 
 
 async def test_bad_ids_reported(db_session):
-    errors, valid_rows = await validate(db_session, [
-        {"id": "", "itemnum": "A", "new_itemnum": "B"},
-        {"id": "1.5", "itemnum": "A", "new_itemnum": "B"},
-        {"id": "999", "itemnum": "A", "new_itemnum": "B"},
-    ])
+    errors, valid_rows = await validate(
+        db_session,
+        [
+            {"id": "", "itemnum": "A", "new_itemnum": "B"},
+            {"id": "1.5", "itemnum": "A", "new_itemnum": "B"},
+            {"id": "999", "itemnum": "A", "new_itemnum": "B"},
+        ],
+    )
 
     assert valid_rows == []
     assert errors == [
@@ -66,14 +79,17 @@ async def test_design_numbers_checked_and_no_op_rows_skipped(db_session):
     db_session.add(orphan)
     await db_session.flush()
 
-    errors, valid_rows = await validate(db_session, [
-        {"id": str(model), "itemnum": "", "new_itemnum": "KP00008505"},
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": " "},
-        {"id": str(model), "itemnum": "KP-OLD?", "new_itemnum": "KP00008505"},
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP-NEW?"},
-        {"id": str(model), "itemnum": "KP00008505", "new_itemnum": "KP00008505"},
-        {"id": str(orphan.id), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
-    ])
+    errors, valid_rows = await validate(
+        db_session,
+        [
+            {"id": str(model), "itemnum": "", "new_itemnum": "KP00008505"},
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": " "},
+            {"id": str(model), "itemnum": "KP-OLD?", "new_itemnum": "KP00008505"},
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP-NEW?"},
+            {"id": str(model), "itemnum": "KP00008505", "new_itemnum": "KP00008505"},
+            {"id": str(orphan.id), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
+        ],
+    )
 
     assert valid_rows == []
     assert errors == [
@@ -95,19 +111,28 @@ async def test_repeated_id_and_two_models_on_one_position_reported(db_session):
     db_session.add(twin)
     await db_session.flush()
 
-    errors, valid_rows = await validate(db_session, [
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00013484"},
-        {"id": str(twin.id), "itemnum": "KP00008506", "new_itemnum": "KP00013484"},
-    ])
+    errors, valid_rows = await validate(
+        db_session,
+        [
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00013484"},
+            {"id": str(twin.id), "itemnum": "KP00008506", "new_itemnum": "KP00013484"},
+        ],
+    )
 
     assert len(valid_rows) == 1
     assert errors == [
-        {"row": 3, "field": "id", "message": (
-            f"Конфликт: id={model} уже сопоставлен другому ТМЦ ('KP00008505', а не 'KP00013484')")},
-        {"row": 4, "field": "id", "message": (
-            "Конфликт со строкой 1: те же активы (позиция 1.9.2, ТМЦ 'KP00008506') уже меняются")},
+        {
+            "row": 3,
+            "field": "id",
+            "message": (f"Конфликт: id={model} уже сопоставлен другому ТМЦ ('KP00008505', а не 'KP00013484')"),
+        },
+        {
+            "row": 4,
+            "field": "id",
+            "message": ("Конфликт со строкой 1: те же активы (позиция 1.9.2, ТМЦ 'KP00008506') уже меняются"),
+        },
     ]
 
 
@@ -118,8 +143,9 @@ async def test_unparsable_model_lcn_reported(db_session):
 
     errors, _ = await validate(db_session, [{"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"}])
 
-    assert errors == [{"row": 1, "field": "id",
-                       "message": f"Не удалось распознать id_train_type в lcn модели id={model}: 'MX'"}]
+    assert errors == [
+        {"row": 1, "field": "id", "message": f"Не удалось распознать id_train_type в lcn модели id={model}: 'MX'"}
+    ]
 
 
 async def test_one_model_with_several_old_numbers_keeps_every_row(db_session):
@@ -129,10 +155,13 @@ async def test_one_model_with_several_old_numbers_keeps_every_row(db_session):
     await make_train(db_session, 9)
     model = await make_model(db_session, "M9.1.9.2")
 
-    errors, valid_rows = await validate(db_session, [
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
-        {"id": str(model), "itemnum": "KP00008507", "new_itemnum": "KP00008505"},
-    ])
+    errors, valid_rows = await validate(
+        db_session,
+        [
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
+            {"id": str(model), "itemnum": "KP00008507", "new_itemnum": "KP00008505"},
+        ],
+    )
 
     assert errors == []
     assert [vr["old_id_design_number"] for vr in valid_rows] == [first_old, second_old]
@@ -148,13 +177,23 @@ async def test_chain_on_one_position_reported(db_session):
     db_session.add(twin)
     await db_session.flush()
 
-    errors, _ = await validate(db_session, [
-        {"id": str(model), "itemnum": "KP-X", "new_itemnum": "KP-Y"},
-        {"id": str(twin.id), "itemnum": "KP-Y", "new_itemnum": "KP-Z"},
-    ])
+    errors, _ = await validate(
+        db_session,
+        [
+            {"id": str(model), "itemnum": "KP-X", "new_itemnum": "KP-Y"},
+            {"id": str(twin.id), "itemnum": "KP-Y", "new_itemnum": "KP-Z"},
+        ],
+    )
 
-    assert errors == [{"row": 2, "field": "id", "message": (
-        "Цепочка со строкой 1 на позиции 1.9.2: ТМЦ 'KP-Y' там и ставится, и заменяется — разнесите по двум запускам")}]
+    assert errors == [
+        {
+            "row": 2,
+            "field": "id",
+            "message": (
+                "Цепочка со строкой 1 на позиции 1.9.2: ТМЦ 'KP-Y' там и ставится, и заменяется — разнесите по двум запускам"
+            ),
+        }
+    ]
 
 
 async def test_no_op_row_still_pins_the_model_and_old_number(db_session):
@@ -163,14 +202,20 @@ async def test_no_op_row_still_pins_the_model_and_old_number(db_session):
     await make_train(db_session, 9)
     model = await make_model(db_session, "M9.1.9.2")
 
-    errors, _ = await validate(db_session, [
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008506"},
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
-        {"id": str(model), "itemnum": "KP00008506", "new_itemnum": ""},
-    ])
+    errors, _ = await validate(
+        db_session,
+        [
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008506"},
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": "KP00008505"},
+            {"id": str(model), "itemnum": "KP00008506", "new_itemnum": ""},
+        ],
+    )
 
     assert errors == [
-        {"row": 2, "field": "id", "message": (
-            f"Конфликт: id={model} уже сопоставлен другому ТМЦ ('KP00008506', а не 'KP00008505')")},
+        {
+            "row": 2,
+            "field": "id",
+            "message": (f"Конфликт: id={model} уже сопоставлен другому ТМЦ ('KP00008506', а не 'KP00008505')"),
+        },
         {"row": 3, "field": "new_itemnum", "message": "Поле 'new_itemnum' пустое"},
     ]

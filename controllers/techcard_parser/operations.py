@@ -4,13 +4,24 @@ from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Techcard, TechcardWorkOperation
 import sql_tasks
+from models import Techcard, TechcardWorkOperation
 from sql_builders import techcards as techcards_sql
 
 from .common import (
-    PATH, RowError, TechcardRepository, TechcardWorkOperationRepository, cell, header_columns, labelled_cell,
-    missing_columns, one_id, parse_int, require, resolve_rows, operation,
+    PATH,
+    RowError,
+    TechcardRepository,
+    TechcardWorkOperationRepository,
+    cell,
+    header_columns,
+    labelled_cell,
+    missing_columns,
+    one_id,
+    operation,
+    parse_int,
+    require,
+    resolve_rows,
 )
 
 HEAD_COLUMN = "Техкарта"
@@ -26,7 +37,9 @@ MAX_INTEGER = 2_147_483_647
 
 
 async def validate_operation_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     columns = header_columns(rows)
     missing = missing_columns(rows, columns, EXPECTED_COLUMNS)
@@ -78,8 +91,11 @@ async def validate_operation_rows(
             id_nested = await one_id(techcards, field, nested, Techcard.name == nested)
             db_description = (await techcards.get(id_nested)).description or ""
             if description and description != db_description.strip():
-                raise RowError(description_field, f"{description_field}: '{description}' не совпадает с описанием "
-                                                  f"техкарты '{nested}' в базе: '{db_description}'")
+                raise RowError(
+                    description_field,
+                    f"{description_field}: '{description}' не совпадает с описанием "
+                    f"техкарты '{nested}' в базе: '{db_description}'",
+                )
 
         batch_tasks.add((id_head, task))
         return {"id_techcard_head": id_head, "task": task, "task_name": task_name, "id_techcard_early": id_nested}
@@ -87,8 +103,9 @@ async def validate_operation_rows(
     return await resolve_rows(rows, resolve, progress)
 
 
-ADD_OPERATIONS = operation(validate_operation_rows, techcards_sql.add_operations,
-                           "add_techcard_operations", "Добавлено операций: {count}")
+ADD_OPERATIONS = operation(
+    validate_operation_rows, techcards_sql.add_operations, "add_techcard_operations", "Добавлено операций: {count}"
+)
 
 
 class AddOperationsController(Controller):

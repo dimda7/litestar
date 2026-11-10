@@ -2,20 +2,20 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
-from litestar.response import Template, Response, Redirect
+from litestar.response import Redirect, Response, Template
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Orders
-from schemas import SelectSheetRequest
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import progress_response, start_task
+from schemas import SelectSheetRequest
 from sql_builders import orders as orders_sql
 
 logger = logging.getLogger("order_parser")
@@ -56,7 +56,7 @@ class OrderParserController(Controller):
             page = total_pages
 
         offset = (page - 1) * per_page
-        rows = all_rows[offset:offset + per_page]
+        rows = all_rows[offset : offset + per_page]
 
         return Template(
             template_name="order_parser.html",
@@ -93,7 +93,9 @@ class OrderParserController(Controller):
         return excel_upload.handle_sheet_choice(request, PREFIX, "/order-parser", data.sheet_name, skip_blank_rows=True)
 
     async def _validate_and_build_rows(
-        self, db_session: AsyncSession, rows: list[dict],
+        self,
+        db_session: AsyncSession,
+        rows: list[dict],
         progress: dict | None = None,
     ) -> tuple[list[dict], list[tuple[int, int, str, str]]]:
         """Validate the Excel rows for assigning a parent work order.
@@ -108,13 +110,13 @@ class OrderParserController(Controller):
         batch_children: set[str] = set()
 
         if rows and "Заказ-наряд" not in rows[0]:
-            errors.append({"row": 0, "field": "Заказ-наряд",
-                            "message": "В файле не найдена колонка 'Заказ-наряд'"})
+            errors.append({"row": 0, "field": "Заказ-наряд", "message": "В файле не найдена колонка 'Заказ-наряд'"})
             return errors, valid_rows
 
         if rows and "Родительский ЗН" not in rows[0]:
-            errors.append({"row": 0, "field": "Родительский ЗН",
-                            "message": "В файле не найдена колонка 'Родительский ЗН'"})
+            errors.append(
+                {"row": 0, "field": "Родительский ЗН", "message": "В файле не найдена колонка 'Родительский ЗН'"}
+            )
             return errors, valid_rows
 
         if progress is not None:
@@ -137,27 +139,35 @@ class OrderParserController(Controller):
                 continue
 
             if child_number == parent_number:
-                errors.append({"row": row_num, "field": "Родительский ЗН",
-                                "message": f"Заказ-наряд не может быть родителем самому себе: '{child_number}'"})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "Родительский ЗН",
+                        "message": f"Заказ-наряд не может быть родителем самому себе: '{child_number}'",
+                    }
+                )
                 continue
 
             if child_number in batch_children:
-                errors.append({"row": row_num, "field": "Заказ-наряд",
-                                "message": f"Дубликат внутри файла: '{child_number}'"})
+                errors.append(
+                    {"row": row_num, "field": "Заказ-наряд", "message": f"Дубликат внутри файла: '{child_number}'"}
+                )
                 continue
 
             result = await db_session.execute(select(Orders.id).where(Orders.order_number == child_number))
             child_id = result.scalar_one_or_none()
             if child_id is None:
-                errors.append({"row": row_num, "field": "Заказ-наряд",
-                                "message": f"Заказ-наряд не найден: '{child_number}'"})
+                errors.append(
+                    {"row": row_num, "field": "Заказ-наряд", "message": f"Заказ-наряд не найден: '{child_number}'"}
+                )
                 continue
 
             result = await db_session.execute(select(Orders.id).where(Orders.order_number == parent_number))
             parent_id = result.scalar_one_or_none()
             if parent_id is None:
-                errors.append({"row": row_num, "field": "Родительский ЗН",
-                                "message": f"Заказ-наряд не найден: '{parent_number}'"})
+                errors.append(
+                    {"row": row_num, "field": "Родительский ЗН", "message": f"Заказ-наряд не найден: '{parent_number}'"}
+                )
                 continue
 
             batch_children.add(child_number)
@@ -206,7 +216,9 @@ class OrderParserController(Controller):
                 try:
                     errors, valid_rows = await self._validate_and_build_rows(session, rows, progress=progress)
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -214,12 +226,15 @@ class OrderParserController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    )
                     return
 
                 progress.update(processed=0, total=len(valid_rows), phase="executing")
                 try:
-                    for i, (child_id, parent_id, child_number, parent_number) in enumerate(valid_rows, start=1):
+                    for i, (child_id, parent_id, _child_number, _parent_number) in enumerate(valid_rows, start=1):
                         await session.execute(
                             text(
                                 "INSERT INTO public.order_to_order (id_parent, id_child) "
@@ -233,7 +248,9 @@ class OrderParserController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -253,8 +270,9 @@ class OrderParserController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Assigned parent order for %d rows, log: %s", len(valid_rows), log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Успешно присвоено {len(valid_rows)} родительских ЗН")
+        progress.update(
+            status="done", count=len(valid_rows), message=f"Успешно присвоено {len(valid_rows)} родительских ЗН"
+        )
 
     @get("/progress/{task_id:str}")
     async def get_progress(self, task_id: str) -> Response:

@@ -4,12 +4,17 @@ Two seams: resolve_correction (controllers/mileage_correction.py), which turns a
 train and a selected mileage row into everything the SQL needs, and
 sql_builders.mileage, the pure function that turns that into SQL text.
 """
+
 from datetime import date, datetime
 
 from controllers.mileage_correction import resolve_correction
 from sql_builders import mileage as mileage_sql
 from tests.conftest import (
-    make_active, make_counter_active, make_mileage_train, make_train, make_train_type,
+    make_active,
+    make_counter_active,
+    make_mileage_train,
+    make_train,
+    make_train_type,
 )
 
 
@@ -204,7 +209,9 @@ async def test_latest_earlier_row_wins_among_several(db_session):
     id_train, _ = await train_with_counter(db_session)
     await make_mileage_train(db_session, id_train, date(2023, 10, 10), 198000, datetime(2023, 10, 10, 9, 0))
     await make_mileage_train(db_session, id_train, date(2023, 10, 15), 199145, datetime(2023, 10, 15, 9, 0))
-    later_same_day = await make_mileage_train(db_session, id_train, date(2023, 10, 15), 199200, datetime(2023, 10, 15, 14, 0))
+    later_same_day = await make_mileage_train(
+        db_session, id_train, date(2023, 10, 15), 199200, datetime(2023, 10, 15, 14, 0)
+    )
     selected = await make_mileage_train(db_session, id_train, date(2023, 10, 16), 250000, datetime(2023, 10, 16, 9, 0))
 
     error, correction = await resolve_correction(db_session, id_train, selected)

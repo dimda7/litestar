@@ -95,7 +95,7 @@ def test_read_sheet_reads_the_named_sheet(tmp_path):
 async def test_upload_without_a_file_reports_an_error():
     request = FakeRequest(upload=None)
 
-    response = await excel_upload.handle_upload(request, "parser", "/parser")
+    await excel_upload.handle_upload(request, "parser", "/parser")
 
     assert request.session["parser_error"] == "Файл не выбран"
     assert "parser_session_id" not in request.session
@@ -117,7 +117,9 @@ async def test_upload_of_a_single_sheet_file_stores_the_rows(tmp_path):
     await excel_upload.handle_upload(request, "parser", "/parser")
 
     assert stored_data(request, "parser") == {
-        "headers": ["Актив"], "rows": [{"Актив": "ES1"}], "filename": "поезда.xlsx",
+        "headers": ["Актив"],
+        "rows": [{"Актив": "ES1"}],
+        "filename": "поезда.xlsx",
     }
     assert "parser_pending_file" not in request.session
 
@@ -155,7 +157,9 @@ async def test_sheet_choice_parses_the_chosen_sheet_and_clears_the_pending_state
     excel_upload.handle_sheet_choice(request, "parser", "/parser", "Второй")
 
     assert stored_data(request, "parser") == {
-        "headers": ["B"], "rows": [{"B": "2"}], "filename": "f.xlsx [Второй]",
+        "headers": ["B"],
+        "rows": [{"B": "2"}],
+        "filename": "f.xlsx [Второй]",
     }
     assert "parser_pending_file" not in request.session
     assert not Path(tmp_file).exists()

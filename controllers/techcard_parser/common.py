@@ -6,8 +6,15 @@ from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 from sqlalchemy import ColumnElement
 
 from models import (
-    Classifier, ClassifierType, GroupType, Priorities, Specification, Techcard, TechcardStatusTypes,
-    TechcardWorkOperation, WorkType,
+    Classifier,
+    ClassifierType,
+    GroupType,
+    Priorities,
+    Specification,
+    Techcard,
+    TechcardStatusTypes,
+    TechcardWorkOperation,
+    WorkType,
 )
 from sql_tasks import SqlOperation, Validator
 
@@ -65,8 +72,11 @@ def header_columns(rows: list[dict]) -> dict[str, str]:
 
 
 def missing_columns(rows: list[dict], columns: dict[str, str], expected: tuple[str, ...]) -> list[dict]:
-    return [{"row": 0, "field": c, "message": f"В файле не найдена колонка '{c}'"}
-            for c in expected if rows and c.lower() not in columns]
+    return [
+        {"row": 0, "field": c, "message": f"В файле не найдена колонка '{c}'"}
+        for c in expected
+        if rows and c.lower() not in columns
+    ]
 
 
 def cell(row: dict, columns: dict[str, str], name: str) -> str:
@@ -89,7 +99,9 @@ def require(row: dict, columns: dict[str, str], names: tuple[str, ...]) -> None:
 
 
 async def resolve_rows(
-    rows: list[dict], resolve: Callable[[dict], Awaitable[dict | None]], progress: dict | None,
+    rows: list[dict],
+    resolve: Callable[[dict], Awaitable[dict | None]],
+    progress: dict | None,
 ) -> tuple[list[dict], list[dict]]:
     """Run resolve over every row: a RowError becomes an error, None skips the row."""
     errors: list[dict] = []
@@ -130,11 +142,19 @@ async def one_id(repo: SQLAlchemyAsyncRepository, field: str, value: str, *filte
     return found[0].id
 
 
-def operation(validate: Validator, build: Callable[[list[dict]], list[str]], log_name: str, message: str) -> SqlOperation:
+def operation(
+    validate: Validator, build: Callable[[list[dict]], list[str]], log_name: str, message: str
+) -> SqlOperation:
     """A techcards operation for sql_tasks; message is formatted with {count}, the number of rows written."""
     return SqlOperation(
-        validate=validate, build=build, log_name=log_name, log_title=log_name,
-        summary=lambda total, valid_rows, errors: (message.format(count=len(valid_rows)),
-                                                   [f"Rows written: {len(valid_rows)}"]),
-        empty_message="Нет строк для записи в базу", logger=logger,
+        validate=validate,
+        build=build,
+        log_name=log_name,
+        log_title=log_name,
+        summary=lambda total, valid_rows, errors: (
+            message.format(count=len(valid_rows)),
+            [f"Rows written: {len(valid_rows)}"],
+        ),
+        empty_message="Нет строк для записи в базу",
+        logger=logger,
     )

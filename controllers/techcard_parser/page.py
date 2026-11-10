@@ -46,7 +46,7 @@ class TechcardParserController(Controller):
             template_name="techcard_parser.html",
             context={
                 "headers": headers,
-                "rows": all_rows[offset:offset + per_page],
+                "rows": all_rows[offset : offset + per_page],
                 "all_rows": all_rows,
                 "filename": filename,
                 "error": error,

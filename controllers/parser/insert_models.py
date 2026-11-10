@@ -2,16 +2,16 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
-from models import TrainType, CarPlace, DesignNumber, Models
+from models import CarPlace, DesignNumber, Models, TrainType
 from parser_storage import LOG_DIR
 from progress_tasks import start_task
 from sql_builders import car_place as car_place_sql
@@ -19,19 +19,19 @@ from sql_builders import models as models_sql
 
 from .common import execute_sql_lines
 
-
 logger = logging.getLogger("parser")
 
 
 async def validate_insert_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict[str, str]], list[tuple[int, int | str, int, str, bool]]]:
     if progress is not None:
         progress.update(processed=0, total=len(rows), phase="validating")
 
     existing_rows = await db_session.execute(
-        select(Models.id_train_type, Models.lcn, Models.id_car_place,
-               Models.id_design_number, Models.is_default)
+        select(Models.id_train_type, Models.lcn, Models.id_car_place, Models.id_design_number, Models.is_default)
     )
     existing_set: set[tuple] = set()
     for er in existing_rows.all():
@@ -64,75 +64,92 @@ async def validate_insert_rows(
 
         train_type_id: int | None = None
         if model_name:
-            result = await db_session.execute(
-                select(TrainType.id).where(TrainType.name == model_name)
-            )
+            result = await db_session.execute(select(TrainType.id).where(TrainType.name == model_name))
             r = result.scalar_one_or_none()
             if r is not None:
                 train_type_id = r
             else:
-                errors.append({"row": row_num, "field": "model",
-                               "message": f"train_type не найден: '{model_name}'"})
+                errors.append({"row": row_num, "field": "model", "message": f"train_type не найден: '{model_name}'"})
 
         # An existing car place by id, or one to create by its name (see car_place_sql.new_names).
         car_place: int | str | None = None
         if not position:
             errors.append({"row": row_num, "field": "position", "message": "Пустой position"})
         elif position != "null":
-            result = await db_session.execute(
-                select(CarPlace.id).where(CarPlace.name == position)
-            )
+            result = await db_session.execute(select(CarPlace.id).where(CarPlace.name == position))
             matches = result.scalars().all()
             if len(matches) == 1:
                 car_place = matches[0]
             elif len(matches) == 0:
                 car_place = position
             else:
-                errors.append({"row": row_num, "field": "position",
-                               "message": (f"car_place неоднозначен: найдено {len(matches)} записей "
-                                           f"с именем '{position}' (id: {matches})")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "position",
+                        "message": (
+                            f"car_place неоднозначен: найдено {len(matches)} записей "
+                            f"с именем '{position}' (id: {matches})"
+                        ),
+                    }
+                )
 
         design_number_id: int | None = None
         if itemnum:
-            result = await db_session.execute(
-                select(DesignNumber.id).where(DesignNumber.number == itemnum)
-            )
+            result = await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == itemnum))
             r = result.scalar_one_or_none()
             if r is not None:
                 design_number_id = r
             else:
-                errors.append({"row": row_num, "field": "itemnum",
-                               "message": f"design_number не найден: '{itemnum}'"})
+                errors.append({"row": row_num, "field": "itemnum", "message": f"design_number не найден: '{itemnum}'"})
 
         if train_type_id is None or car_place is None or design_number_id is None:
             continue
 
         full_tuple = (train_type_id, lcn, car_place, design_number_id, is_default)
         if full_tuple in existing_set or full_tuple in batch_full:
-            errors.append({
-                "row": row_num, "field": "*",
-                "message": (f"Дубликат: строка (train_type={train_type_id}, lcn='{lcn}', "
-                            f"car_place={car_place}, design_number={design_number_id}, "
-                            f"is_default={is_default}) уже существует"),
-            })
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "*",
+                    "message": (
+                        f"Дубликат: строка (train_type={train_type_id}, lcn='{lcn}', "
+                        f"car_place={car_place}, design_number={design_number_id}, "
+                        f"is_default={is_default}) уже существует"
+                    ),
+                }
+            )
             continue
 
         if is_default:
             if (lcn, car_place) in existing_default_lcn_car or (lcn, car_place) in batch_default_lcn_car:
-                errors.append({
-                    "row": row_num, "field": "lcn",
-                    "message": (f"Конфликт unique (lcn, car_place) WHERE is_default=true: "
-                                f"lcn='{lcn}', car_place={car_place} уже заняты"),
-                })
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "lcn",
+                        "message": (
+                            f"Конфликт unique (lcn, car_place) WHERE is_default=true: "
+                            f"lcn='{lcn}', car_place={car_place} уже заняты"
+                        ),
+                    }
+                )
                 continue
-            if ((car_place, train_type_id, design_number_id) in existing_default_car_type_design
-                    or (car_place, train_type_id, design_number_id) in batch_default_car_type_design):
-                errors.append({
-                    "row": row_num, "field": "*",
-                    "message": (f"Конфликт unique (car_place, train_type, design_number) WHERE is_default=true: "
-                                f"car_place={car_place}, train_type={train_type_id}, "
-                                f"design_number={design_number_id} уже заняты"),
-                })
+            if (car_place, train_type_id, design_number_id) in existing_default_car_type_design or (
+                car_place,
+                train_type_id,
+                design_number_id,
+            ) in batch_default_car_type_design:
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "*",
+                        "message": (
+                            f"Конфликт unique (car_place, train_type, design_number) WHERE is_default=true: "
+                            f"car_place={car_place}, train_type={train_type_id}, "
+                            f"design_number={design_number_id} уже заняты"
+                        ),
+                    }
+                )
                 continue
 
         batch_full.add(full_tuple)
@@ -172,8 +189,12 @@ class InsertModelsController(Controller):
             return
 
         sql_lines = models_sql.insert_models(valid_rows)
-        progress.update(status="done", sql="\n".join(["BEGIN;", *sql_lines, "COMMIT;"]), count=len(valid_rows),
-                        new_car_places=car_place_sql.new_names(vr[1] for vr in valid_rows))
+        progress.update(
+            status="done",
+            sql="\n".join(["BEGIN;", *sql_lines, "COMMIT;"]),
+            count=len(valid_rows),
+            new_car_places=car_place_sql.new_names(vr[1] for vr in valid_rows),
+        )
 
     @post("/execute-sql/start")
     async def execute_sql_start(
@@ -194,7 +215,9 @@ class InsertModelsController(Controller):
                 try:
                     errors, valid_rows = await validate_insert_rows(session, rows, progress=progress)
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors and not skip_errors:
@@ -202,7 +225,9 @@ class InsertModelsController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для вставки"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для вставки"}]
+                    )
                     return
 
                 # The builder's own statements, so a car place to create is inserted and
@@ -214,7 +239,9 @@ class InsertModelsController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -232,8 +259,12 @@ class InsertModelsController(Controller):
         log_file = LOG_DIR / f"insert_models_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(log_lines))
-        logger.info("SQL executed: %d rows inserted, %d car places created, log saved to %s",
-                    len(valid_rows), len(created), log_file)
+        logger.info(
+            "SQL executed: %d rows inserted, %d car places created, log saved to %s",
+            len(valid_rows),
+            len(created),
+            log_file,
+        )
 
         message = f"Успешно вставлено {len(valid_rows)} строк"
         if errors:

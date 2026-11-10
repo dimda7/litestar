@@ -14,10 +14,16 @@ async def test_found_main_ptoir_comes_with_its_ptoir_and_their_orders(db_session
     errors, valid_rows = await validate_delete_main_rows(db_session, [{"БПТОиР": "VR_SPEC_0093_odnoraz"}])
 
     assert errors == []
-    assert valid_rows == [{"id": id_main, "number_ptoir": "VR_SPEC_0093_odnoraz", "ptoirs": [
-        {"id": first, "number_ptoir": "ТО0001", "order_numbers": ["ЗН1"]},
-        {"id": second, "number_ptoir": "ТО0002", "order_numbers": []},
-    ]}]
+    assert valid_rows == [
+        {
+            "id": id_main,
+            "number_ptoir": "VR_SPEC_0093_odnoraz",
+            "ptoirs": [
+                {"id": first, "number_ptoir": "ТО0001", "order_numbers": ["ЗН1"]},
+                {"id": second, "number_ptoir": "ТО0002", "order_numbers": []},
+            ],
+        }
+    ]
 
 
 async def test_missing_main_ptoir_is_a_row_error_and_other_rows_stay_valid(db_session):
@@ -42,7 +48,8 @@ async def test_repeated_number_is_taken_once_without_error(db_session):
     await make_main_ptoir(db_session, "VR_SPEC_0001")
 
     errors, valid_rows = await validate_delete_main_rows(
-        db_session, [{"БПТОиР": "VR_SPEC_0001"}, {"БПТОиР": "VR_SPEC_0001"}])
+        db_session, [{"БПТОиР": "VR_SPEC_0001"}, {"БПТОиР": "VR_SPEC_0001"}]
+    )
 
     assert errors == []
     assert len(valid_rows) == 1

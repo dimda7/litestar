@@ -1,26 +1,27 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Actives, Consignment, DesignNumber, Storage
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, start_task
 from sql_builders import actives as actives_sql
 
-from .common import PREFIX, ActivesRepository, StorageRepository, ConsignmentRepository, DesignNumberRepository
-
+from .common import PREFIX, ActivesRepository, ConsignmentRepository, DesignNumberRepository, StorageRepository
 
 logger = logging.getLogger("actives_parser")
 
 
 async def validate_create_named_actives(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the rows creating named assets (the asset number comes from the file).
 
@@ -42,10 +43,13 @@ async def validate_create_named_actives(
     if rows:
         missing = [c for c in required_columns if c not in rows[0]]
         if missing:
-            errors.append({
-                "row": 0, "field": ", ".join(missing),
-                "message": f"В файле не найдены колонки: {', '.join(missing)}",
-            })
+            errors.append(
+                {
+                    "row": 0,
+                    "field": ", ".join(missing),
+                    "message": f"В файле не найдены колонки: {', '.join(missing)}",
+                }
+            )
             return errors, valid_rows
 
     storage_cache: dict[str, int | None] = {}
@@ -66,14 +70,12 @@ async def validate_create_named_actives(
             continue
 
         if active_number in batch_numbers:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Дубликат внутри файла: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Дубликат внутри файла: '{active_number}'"})
             continue
 
         existing = await actives_repo.get_one_or_none(Actives.active_number == active_number)
         if existing is not None:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Актив уже существует: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Актив уже существует: '{active_number}'"})
             continue
 
         design_number = str(row.get("ТМЦ") or "").strip()
@@ -113,13 +115,15 @@ async def validate_create_named_actives(
             continue
 
         batch_numbers.add(active_number)
-        valid_rows.append({
-            "row_num": row_num,
-            "active_number": active_number,
-            "id_design_number": id_design_number,
-            "id_storage": id_storage,
-            "id_consignment": id_consignment,
-        })
+        valid_rows.append(
+            {
+                "row_num": row_num,
+                "active_number": active_number,
+                "id_design_number": id_design_number,
+                "id_storage": id_storage,
+                "id_consignment": id_consignment,
+            }
+        )
 
     return errors, valid_rows
 
@@ -149,7 +153,9 @@ class CreateNamedActivesController(Controller):
             progress.update(status="error", errors=errors)
             return
         if not valid_rows:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}]
+            )
             return
 
         sql_lines = actives_sql.create_named_actives(valid_rows)
@@ -177,7 +183,10 @@ class CreateNamedActivesController(Controller):
                     progress.update(status="error", errors=errors)
                     return
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для создания активов"}],
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -197,7 +206,9 @@ class CreateNamedActivesController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
 
                 progress["processed"] = 1
@@ -218,5 +229,6 @@ class CreateNamedActivesController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Created %d named actives, log: %s", len(valid_rows), log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=f"Успешно создано именных активов: {len(valid_rows)}")
+        progress.update(
+            status="done", count=len(valid_rows), message=f"Успешно создано именных активов: {len(valid_rows)}"
+        )

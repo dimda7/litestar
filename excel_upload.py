@@ -13,7 +13,9 @@ SUPPORTED_SUFFIXES = (".xlsx", ".xls")
 
 
 def read_sheet(
-    tmp_path: str, sheet_name: str | None = None, skip_blank_rows: bool = False,
+    tmp_path: str,
+    sheet_name: str | None = None,
+    skip_blank_rows: bool = False,
 ) -> tuple[list[str], list[dict]]:
     """Read one sheet of an Excel file into (headers, rows).
 
@@ -41,8 +43,11 @@ def read_sheet(
 
 
 async def handle_upload(
-    request: Request, prefix: str, redirect_path: str,
-    allow_sheet_choice: bool = True, skip_blank_rows: bool = False,
+    request: Request,
+    prefix: str,
+    redirect_path: str,
+    allow_sheet_choice: bool = True,
+    skip_blank_rows: bool = False,
 ) -> Redirect:
     """Handle the Excel upload form of a parser page.
 
@@ -94,7 +99,10 @@ async def handle_upload(
 
 
 def handle_sheet_choice(
-    request: Request, prefix: str, redirect_path: str, sheet_name: str,
+    request: Request,
+    prefix: str,
+    redirect_path: str,
+    sheet_name: str,
     skip_blank_rows: bool = False,
 ) -> Redirect:
     """Parse the sheet chosen on the picker page of a multi-sheet upload."""

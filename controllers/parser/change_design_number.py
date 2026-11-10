@@ -9,8 +9,8 @@ from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy import String, and_, cast, or_, select
 from sqlalchemy.engine import Row
-from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from db_manager import get_session_maker
 from models import DesignNumber, Models
@@ -19,7 +19,6 @@ from progress_tasks import start_task
 from sql_builders import models as models_sql
 
 from .common import column_key, execute_sql_lines, parse_model_id, row_text
-
 
 logger = logging.getLogger("parser")
 
@@ -43,20 +42,30 @@ def _index_keys(model: Row, id_design_number: int) -> list[tuple]:
 
 async def _index_conflict(db_session: AsyncSession, model_id: int, id_design_number: int) -> int | None:
     model, other = aliased(Models), aliased(Models)
-    return (await db_session.execute(
-        select(other.id).join(model, model.id == model_id).where(
-            other.id != model_id,
-            other.id_design_number == id_design_number,
-            other.id_train_type == model.id_train_type,
-            other.id_car_place == model.id_car_place,
-            or_(and_(model.is_default.is_(True), other.is_default.is_(True)),
-                and_(other.lcn == model.lcn, other.is_default == model.is_default)),
-        ).order_by(other.id).limit(1)
-    )).scalar_one_or_none()
+    return (
+        await db_session.execute(
+            select(other.id)
+            .join(model, model.id == model_id)
+            .where(
+                other.id != model_id,
+                other.id_design_number == id_design_number,
+                other.id_train_type == model.id_train_type,
+                other.id_car_place == model.id_car_place,
+                or_(
+                    and_(model.is_default.is_(True), other.is_default.is_(True)),
+                    and_(other.lcn == model.lcn, other.is_default == model.is_default),
+                ),
+            )
+            .order_by(other.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 async def validate_change_model_design_number_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     errors: list[dict] = []
     valid_rows: list[dict] = []
@@ -88,26 +97,46 @@ async def validate_change_model_design_number_rows(
         if model_id is None:
             errors.append({"row": row_num, "field": "id", "message": f"Некорректный id: '{id_raw}'"})
             continue
-        model = (await db_session.execute(
-            select(Models.id_train_type, cast(Models.lcn, String).label("lcn"), Models.id_car_place,
-                   Models.is_default, Models.id_design_number, DesignNumber.number)
-            .outerjoin(DesignNumber, DesignNumber.id == Models.id_design_number)
-            .where(Models.id == model_id)
-        )).first()
+        model = (
+            await db_session.execute(
+                select(
+                    Models.id_train_type,
+                    cast(Models.lcn, String).label("lcn"),
+                    Models.id_car_place,
+                    Models.is_default,
+                    Models.id_design_number,
+                    DesignNumber.number,
+                )
+                .outerjoin(DesignNumber, DesignNumber.id == Models.id_design_number)
+                .where(Models.id == model_id)
+            )
+        ).first()
         if model is None:
             errors.append({"row": row_num, "field": "id", "message": f"Модель с id={model_id} не найдена"})
             continue
         current = model.number
         old_number = row_text(row, old_column)
         if old_number and old_number != current:
-            errors.append({"row": row_num, "field": "itemnum",
-                           "message": f"У модели id={model_id} в БД ТМЦ {_shown(current)}, а в файле '{old_number}'"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "itemnum",
+                    "message": f"У модели id={model_id} в БД ТМЦ {_shown(current)}, а в файле '{old_number}'",
+                }
+            )
             continue
         if model_id in batch_numbers:
             if batch_numbers[model_id] != new_number:
-                errors.append({"row": row_num, "field": "id", "message": (
-                    f"Конфликт: id={model_id} уже сопоставлен другому ТМЦ "
-                    f"('{batch_numbers[model_id]}', а не '{new_number}')")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "id",
+                        "message": (
+                            f"Конфликт: id={model_id} уже сопоставлен другому ТМЦ "
+                            f"('{batch_numbers[model_id]}', а не '{new_number}')"
+                        ),
+                    }
+                )
             continue
         if not new_number:
             errors.append({"row": row_num, "field": "new_itemnum", "message": "Поле 'new_itemnum' пустое"})
@@ -115,27 +144,43 @@ async def validate_change_model_design_number_rows(
         batch_numbers[model_id] = new_number
         if new_number == current:
             continue
-        id_design_number = (await db_session.execute(
-            select(DesignNumber.id).where(DesignNumber.number == new_number)
-        )).scalar_one_or_none()
+        id_design_number = (
+            await db_session.execute(select(DesignNumber.id).where(DesignNumber.number == new_number))
+        ).scalar_one_or_none()
         if id_design_number is None:
             errors.append({"row": row_num, "field": "new_itemnum", "message": f"ТМЦ не найден: '{new_number}'"})
             continue
         conflict = await _index_conflict(db_session, model_id, id_design_number)
         if conflict is not None:
-            errors.append({"row": row_num, "field": "new_itemnum",
-                           "message": f"Конфликт с моделью id={conflict}: такой ТМЦ уже стоит на этом месте"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "new_itemnum",
+                    "message": f"Конфликт с моделью id={conflict}: такой ТМЦ уже стоит на этом месте",
+                }
+            )
             continue
         keys = _index_keys(model, id_design_number)
         clash = next((batch_keys[key] for key in keys if key in batch_keys), None)
         if clash is not None:
-            errors.append({"row": row_num, "field": "new_itemnum",
-                           "message": f"Конфликт со строкой {clash}: такой ТМЦ уже ставится на это место"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "new_itemnum",
+                    "message": f"Конфликт со строкой {clash}: такой ТМЦ уже ставится на это место",
+                }
+            )
             continue
         batch_keys.update((key, row_num) for key in keys)
-        valid_rows.append({"id": model_id, "id_design_number": id_design_number,
-                           "old_id_design_number": model.id_design_number, "old_number": current,
-                           "new_number": new_number})
+        valid_rows.append(
+            {
+                "id": model_id,
+                "id_design_number": id_design_number,
+                "old_id_design_number": model.id_design_number,
+                "old_number": current,
+                "new_number": new_number,
+            }
+        )
 
     return errors, valid_rows
 
@@ -183,9 +228,12 @@ class ChangeModelDesignNumberController(Controller):
             async with session_maker() as session:
                 try:
                     errors, valid_rows = await validate_change_model_design_number_rows(
-                        session, rows, progress=progress)
+                        session, rows, progress=progress
+                    )
                 except Exception as e:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка валидации: {e}"}]
+                    )
                     return
 
                 if errors:
@@ -193,7 +241,9 @@ class ChangeModelDesignNumberController(Controller):
                     return
 
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет строк с изменением ТМЦ"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": "Нет строк с изменением ТМЦ"}]
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -203,7 +253,9 @@ class ChangeModelDesignNumberController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -214,9 +266,11 @@ class ChangeModelDesignNumberController(Controller):
             f"=== Execute change-model-design-number: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
             f"Models updated: {len(valid_rows)}",
             "",
-            *(f"model id={vr['id']}: {_shown(vr['old_number'])} (id_design_number {vr['old_id_design_number']}) "
-              f"-> '{vr['new_number']}' (id_design_number {vr['id_design_number']})"
-              for vr in valid_rows),
+            *(
+                f"model id={vr['id']}: {_shown(vr['old_number'])} (id_design_number {vr['old_id_design_number']}) "
+                f"-> '{vr['new_number']}' (id_design_number {vr['id_design_number']})"
+                for vr in valid_rows
+            ),
             "",
             *models_sql.change_model_design_number(valid_rows),
             "",
@@ -226,5 +280,4 @@ class ChangeModelDesignNumberController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Changed design number of %d models, log: %s", len(valid_rows), log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                        message=f"Изменён ТМЦ у моделей: {len(valid_rows)}")
+        progress.update(status="done", count=len(valid_rows), message=f"Изменён ТМЦ у моделей: {len(valid_rows)}")

@@ -1,21 +1,20 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, post
 from litestar.connection.request import Request
 from litestar.response import Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import excel_upload
 from db_manager import get_session_maker
 from models import Actives
-import excel_upload
 from parser_storage import LOG_DIR
 from progress_tasks import error_response, start_task
 from sql_builders import actives as actives_sql
 
 from .common import PREFIX
-
 
 logger = logging.getLogger("actives_parser")
 
@@ -23,7 +22,9 @@ LOOKUP_CHUNK = 500
 
 
 async def validate_serial_number(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[tuple[str, str, str | None]]]:
     """Validate rows for the actives.serial_number + actives.modification update.
 
@@ -44,11 +45,13 @@ async def validate_serial_number(
         None,
     )
     if rows and serial_column is None:
-        errors.append({
-            "row": 0,
-            "field": "Новый с/н",
-            "message": "В файле не найдена колонка 'Новый с/н' (или 'Новый серийный номер')",
-        })
+        errors.append(
+            {
+                "row": 0,
+                "field": "Новый с/н",
+                "message": "В файле не найдена колонка 'Новый с/н' (или 'Новый серийный номер')",
+            }
+        )
         return errors, valid_rows
     if rows and modification_column is None:
         errors.append({"row": 0, "field": "Модификация", "message": "В файле не найдена колонка 'Модификация'"})
@@ -62,7 +65,7 @@ async def validate_serial_number(
     existing: set[str] = set()
     for start in range(0, len(numbers), LOOKUP_CHUNK):
         result = await db_session.execute(
-            select(Actives.active_number).where(Actives.active_number.in_(numbers[start:start + LOOKUP_CHUNK]))
+            select(Actives.active_number).where(Actives.active_number.in_(numbers[start : start + LOOKUP_CHUNK]))
         )
         existing.update(result.scalars().all())
 
@@ -79,13 +82,11 @@ async def validate_serial_number(
             continue
 
         if active_number in batch_numbers:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Дубликат внутри файла: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Дубликат внутри файла: '{active_number}'"})
             continue
 
         if active_number not in existing:
-            errors.append({"row": row_num, "field": "Актив",
-                            "message": f"Актив не найден: '{active_number}'"})
+            errors.append({"row": row_num, "field": "Актив", "message": f"Актив не найден: '{active_number}'"})
             continue
 
         if not serial_number:
@@ -123,7 +124,9 @@ class SerialNumberController(Controller):
             progress.update(status="error", errors=errors)
             return
         if not valid_rows:
-            progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+            progress.update(
+                status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}]
+            )
             return
 
         sql_lines = actives_sql.update_serial_number(valid_rows)
@@ -150,7 +153,10 @@ class SerialNumberController(Controller):
                     progress.update(status="error", errors=errors)
                     return
                 if not valid_rows:
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}])
+                    progress.update(
+                        status="error",
+                        errors=[{"row": 0, "field": "*", "message": "Нет валидных строк для обновления"}],
+                    )
                     return
 
                 progress.update(processed=0, total=1, phase="executing")
@@ -163,7 +169,9 @@ class SerialNumberController(Controller):
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
-                    progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
+                    progress.update(
+                        status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}]
+                    )
                     return
         except Exception as e:
             progress.update(status="error", errors=[{"row": 0, "field": "*", "message": f"Ошибка выполнения: {e}"}])
@@ -183,6 +191,11 @@ class SerialNumberController(Controller):
             f.write("\n".join(log_lines))
         logger.info("Updated serial_number for %d actives, log: %s", updated, log_file)
 
-        progress.update(status="done", count=len(valid_rows),
-                         message=(f"Обновлены serial_number и modification: {updated} активов "
-                                 f"(строк файла: {len(valid_rows)}, остальные уже совпадали)"))
+        progress.update(
+            status="done",
+            count=len(valid_rows),
+            message=(
+                f"Обновлены serial_number и modification: {updated} активов "
+                f"(строк файла: {len(valid_rows)}, остальные уже совпадали)"
+            ),
+        )

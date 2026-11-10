@@ -2,13 +2,13 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from litestar import Controller, get, post
 from litestar.connection.request import Request
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
-from litestar.response import Template, Response
+from litestar.response import Response, Template
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import CounterActive, MileageTrain, Train
 from parser_storage import LOG_DIR
@@ -22,12 +22,13 @@ RECENT_LIMIT = 10
 
 
 def _json(payload: dict) -> Response:
-    return Response(content=json.dumps(payload, ensure_ascii=False), status_code=200,
-                    media_type="application/json")
+    return Response(content=json.dumps(payload, ensure_ascii=False), status_code=200, media_type="application/json")
 
 
 async def resolve_correction(
-    db_session: AsyncSession, train_id: int, mileage_row_id: int,
+    db_session: AsyncSession,
+    train_id: int,
+    mileage_row_id: int,
 ) -> tuple[str, Correction | None]:
     """Everything needed to roll a train's mileage back to before the selected row.
 
@@ -38,9 +39,11 @@ async def resolve_correction(
     if train is None:
         return "Поезд не найден", None
 
-    selected = (await db_session.execute(
-        select(MileageTrain).where(MileageTrain.id == mileage_row_id, MileageTrain.id_train == train_id)
-    )).scalar_one_or_none()
+    selected = (
+        await db_session.execute(
+            select(MileageTrain).where(MileageTrain.id == mileage_row_id, MileageTrain.id_train == train_id)
+        )
+    ).scalar_one_or_none()
     if selected is None:
         return "Выбранная запись о пробеге не найдена у этого поезда", None
     if selected.date is None:
@@ -52,13 +55,19 @@ async def resolve_correction(
     if train.active is None:
         return "У поезда не задан актив (train.active)", None
 
-    counters = (await db_session.execute(
-        select(CounterActive.id).where(
-            CounterActive.id_active == train.active,
-            CounterActive.id_counter_type == MILEAGE_COUNTER_TYPE_ID,
-            CounterActive.is_train.is_(True),
+    counters = (
+        (
+            await db_session.execute(
+                select(CounterActive.id).where(
+                    CounterActive.id_active == train.active,
+                    CounterActive.id_counter_type == MILEAGE_COUNTER_TYPE_ID,
+                    CounterActive.is_train.is_(True),
+                )
+            )
         )
-    )).scalars().all()
+        .scalars()
+        .all()
+    )
     if not counters:
         return f"Счётчик пробега не найден для актива {train.active}", None
     if len(counters) > 1:
@@ -70,13 +79,18 @@ async def resolve_correction(
     # between two manual readings belongs to the entry being undone, not to a
     # surviving prior state — "previous" must be the last manual reading, not
     # merely the closest earlier row.
-    previous = (await db_session.execute(
-        select(MileageTrain.id, MileageTrain.milage, MileageTrain.date, MileageTrain.date_average)
-        .where(MileageTrain.id_train == train_id, MileageTrain.date_average < selected.date_average,
-               MileageTrain.date.is_not(None))
-        .order_by(MileageTrain.date_average.desc(), MileageTrain.id.desc())
-        .limit(1)
-    )).first()
+    previous = (
+        await db_session.execute(
+            select(MileageTrain.id, MileageTrain.milage, MileageTrain.date, MileageTrain.date_average)
+            .where(
+                MileageTrain.id_train == train_id,
+                MileageTrain.date_average < selected.date_average,
+                MileageTrain.date.is_not(None),
+            )
+            .order_by(MileageTrain.date_average.desc(), MileageTrain.id.desc())
+            .limit(1)
+        )
+    ).first()
     if previous is None:
         return "Нет более ранней записи о пробеге — счётчик не к чему откатывать", None
     if previous.milage is None:
@@ -88,7 +102,9 @@ async def resolve_correction(
     # intermediate rows carrying a null date, which the page's list — and a
     # boundary of the selected row's own date — would both miss.
     delete_count = await db_session.scalar(
-        select(func.count()).select_from(MileageTrain).where(
+        select(func.count())
+        .select_from(MileageTrain)
+        .where(
             MileageTrain.id_train == train_id,
             MileageTrain.date_average > previous.date_average,
         )
@@ -106,11 +122,11 @@ async def resolve_correction(
 
 
 async def _resolve_from_form(
-    db_session: AsyncSession, data: dict,
+    db_session: AsyncSession,
+    data: dict,
 ) -> tuple[Response | None, Correction | None]:
     """The prologue the three action routes share: resolve, or answer the error."""
-    error, correction = await resolve_correction(
-        db_session, int(data["train_id"]), int(data["mileage_row_id"]))
+    error, correction = await resolve_correction(db_session, int(data["train_id"]), int(data["mileage_row_id"]))
     if correction is None:
         return _json({"status": "error", "message": error}), None
     return None, correction
@@ -121,11 +137,13 @@ class MileageCorrectionController(Controller):
 
     @get("/")
     async def index(self, request: Request, db_session: AsyncSession) -> Template:
-        trains = (await db_session.execute(
-            select(Train.id, Train.name)
-            .where(Train.is_delete.is_not(True), Train.name.is_not(None))
-            .order_by(Train.name)
-        )).all()
+        trains = (
+            await db_session.execute(
+                select(Train.id, Train.name)
+                .where(Train.is_delete.is_not(True), Train.name.is_not(None))
+                .order_by(Train.name)
+            )
+        ).all()
 
         return Template(
             template_name="mileage_correction.html",
@@ -142,27 +160,36 @@ class MileageCorrectionController(Controller):
     async def mileage(self, train_id: int, db_session: AsyncSession) -> Response:
         # Only the readings an operator actually entered: every other row of
         # mileage_train was generated by counter_active_trigger with a null date.
-        rows = (await db_session.execute(
-            select(MileageTrain.id, MileageTrain.date, MileageTrain.date_average,
-                   MileageTrain.milage, MileageTrain.mileage_average)
-            .where(MileageTrain.id_train == train_id, MileageTrain.date.is_not(None))
-            .order_by(MileageTrain.date_average.desc(), MileageTrain.id.desc())
-            .limit(RECENT_LIMIT)
-        )).all()
+        rows = (
+            await db_session.execute(
+                select(
+                    MileageTrain.id,
+                    MileageTrain.date,
+                    MileageTrain.date_average,
+                    MileageTrain.milage,
+                    MileageTrain.mileage_average,
+                )
+                .where(MileageTrain.id_train == train_id, MileageTrain.date.is_not(None))
+                .order_by(MileageTrain.date_average.desc(), MileageTrain.id.desc())
+                .limit(RECENT_LIMIT)
+            )
+        ).all()
 
-        return _json({
-            "status": "ok",
-            "rows": [
-                {
-                    "id": r.id,
-                    "date": r.date.strftime("%Y-%m-%d %H:%M:%S"),
-                    "date_average": r.date_average.strftime("%Y-%m-%d"),
-                    "milage": r.milage,
-                    "mileage_average": r.mileage_average,
-                }
-                for r in rows
-            ],
-        })
+        return _json(
+            {
+                "status": "ok",
+                "rows": [
+                    {
+                        "id": r.id,
+                        "date": r.date.strftime("%Y-%m-%d %H:%M:%S"),
+                        "date_average": r.date_average.strftime("%Y-%m-%d"),
+                        "milage": r.milage,
+                        "mileage_average": r.mileage_average,
+                    }
+                    for r in rows
+                ],
+            }
+        )
 
     @post("/preview")
     async def preview(
@@ -174,13 +201,15 @@ class MileageCorrectionController(Controller):
         if failed is not None:
             return failed
 
-        return _json({
-            "status": "ok",
-            "delete_count": correction.delete_count,
-            "counter_value": correction.counter_value,
-            "counter_date": correction.counter_date.strftime("%Y-%m-%d %H:%M:%S"),
-            "kept_date": correction.source_date_average.strftime("%Y-%m-%d"),
-        })
+        return _json(
+            {
+                "status": "ok",
+                "delete_count": correction.delete_count,
+                "counter_value": correction.counter_value,
+                "counter_date": correction.counter_date.strftime("%Y-%m-%d %H:%M:%S"),
+                "kept_date": correction.source_date_average.strftime("%Y-%m-%d"),
+            }
+        )
 
     @post("/generate-sql")
     async def generate_sql(
@@ -224,22 +253,33 @@ class MileageCorrectionController(Controller):
         now = datetime.now()
         log_file = LOG_DIR / f"mileage_correction_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
         with open(log_file, "a", encoding="utf-8") as f:
-            f.write("\n".join([
-                f"=== Execute mileage correction: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
-                f"Train={correction.id_train}, active={correction.id_active}, "
-                f"rows deleted={correction.delete_count}, "
-                f"counter set to {correction.counter_value} at {correction.counter_date}",
-                "",
-                sql_body,
-                "",
-            ]))
-        logger.info("Corrected mileage of train %d: %d rows deleted, counter = %d at %s, log: %s",
-                    correction.id_train, correction.delete_count, correction.counter_value,
-                    correction.counter_date, log_file)
+            f.write(
+                "\n".join(
+                    [
+                        f"=== Execute mileage correction: {now.strftime('%Y-%m-%d %H:%M:%S')} ===",
+                        f"Train={correction.id_train}, active={correction.id_active}, "
+                        f"rows deleted={correction.delete_count}, "
+                        f"counter set to {correction.counter_value} at {correction.counter_date}",
+                        "",
+                        sql_body,
+                        "",
+                    ]
+                )
+            )
+        logger.info(
+            "Corrected mileage of train %d: %d rows deleted, counter = %d at %s, log: %s",
+            correction.id_train,
+            correction.delete_count,
+            correction.counter_value,
+            correction.counter_date,
+            log_file,
+        )
 
-        return _json({
-            "status": "ok",
-            "message": f"Удалено записей: {correction.delete_count}. "
-                       f"Счётчик установлен: {correction.counter_value} "
-                       f"на {correction.counter_date.strftime('%Y-%m-%d %H:%M:%S')}",
-        })
+        return _json(
+            {
+                "status": "ok",
+                "message": f"Удалено записей: {correction.delete_count}. "
+                f"Счётчик установлен: {correction.counter_value} "
+                f"на {correction.counter_date.strftime('%Y-%m-%d %H:%M:%S')}",
+            }
+        )

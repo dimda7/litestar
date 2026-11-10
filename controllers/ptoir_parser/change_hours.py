@@ -30,7 +30,9 @@ def _parse_hours(raw: object) -> int | None:
 
 
 async def validate_change_hours_rows(
-    db_session: AsyncSession, rows: list[dict], progress: dict | None = None,
+    db_session: AsyncSession,
+    rows: list[dict],
+    progress: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate the Excel rows for 'изменение моточасов'.
 
@@ -76,16 +78,30 @@ async def validate_change_hours_rows(
             continue
         value = _parse_hours(value_raw)
         if value is None:
-            errors.append({"row": row_num, "field": "значение",
-                           "message": (f"Некорректное значение: '{value_raw}' (ожидается неотрицательное "
-                                       f"число, не более одного знака после запятой)")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "значение",
+                    "message": (
+                        f"Некорректное значение: '{value_raw}' (ожидается неотрицательное "
+                        f"число, не более одного знака после запятой)"
+                    ),
+                }
+            )
             continue
 
         if number_ptoir in batch_ptoirs:
             if batch_ptoirs[number_ptoir] != value:
-                errors.append({"row": row_num, "field": "птоир",
-                               "message": (f"Конфликт: ПТОиР '{number_ptoir}' уже сопоставлен другому значению "
-                                           f"({batch_ptoirs[number_ptoir]}, а не {value})")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "птоир",
+                        "message": (
+                            f"Конфликт: ПТОиР '{number_ptoir}' уже сопоставлен другому значению "
+                            f"({batch_ptoirs[number_ptoir]}, а не {value})"
+                        ),
+                    }
+                )
             continue
 
         result = await db_session.execute(
@@ -103,17 +119,30 @@ async def validate_change_hours_rows(
             continue
 
         if active_raw and active_raw != active_number:
-            errors.append({"row": row_num, "field": "актив",
-                           "message": (f"Актив '{active_raw}' не соответствует активу ПТОиР "
-                                       f"'{number_ptoir}' ('{active_number}')")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "актив",
+                    "message": (
+                        f"Актив '{active_raw}' не соответствует активу ПТОиР '{number_ptoir}' ('{active_number}')"
+                    ),
+                }
+            )
             continue
 
         if id_active in batch_actives:
             other_value, other_ptoir = batch_actives[id_active]
             if other_value != value:
-                errors.append({"row": row_num, "field": "значение",
-                               "message": (f"Конфликт: актив '{active_number}' уже получил другое значение "
-                                           f"от ПТОиР '{other_ptoir}' ({other_value}, а не {value})")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "значение",
+                        "message": (
+                            f"Конфликт: актив '{active_number}' уже получил другое значение "
+                            f"от ПТОиР '{other_ptoir}' ({other_value}, а не {value})"
+                        ),
+                    }
+                )
                 continue
             batch_ptoirs[number_ptoir] = value
             continue
@@ -126,15 +155,27 @@ async def validate_change_hours_rows(
         )
         counter_row = result.first()
         if counter_row is None:
-            errors.append({"row": row_num, "field": "птоир",
-                           "message": f"У актива '{active_number}' (ПТОиР '{number_ptoir}') нет счётчика моточасов"})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "птоир",
+                    "message": f"У актива '{active_number}' (ПТОиР '{number_ptoir}') нет счётчика моточасов",
+                }
+            )
             continue
 
         batch_ptoirs[number_ptoir] = value
         batch_actives[id_active] = (value, number_ptoir)
-        valid_rows.append({"id_active": id_active, "value": value, "number_ptoir": number_ptoir,
-                           "active_number": active_number, "old_value": counter_row[0],
-                           "old_value_source": counter_row[1]})
+        valid_rows.append(
+            {
+                "id_active": id_active,
+                "value": value,
+                "number_ptoir": number_ptoir,
+                "active_number": active_number,
+                "old_value": counter_row[0],
+                "old_value_source": counter_row[1],
+            }
+        )
 
     return errors, valid_rows
 
@@ -158,9 +199,13 @@ def _change_hours_summary(total: int, valid_rows: list[dict], errors: list[dict]
 # so a failed UPDATE cannot hand the pooled (pgbouncer) connection back with the
 # triggers still off.
 CHANGE_HOURS = sql_tasks.SqlOperation(
-    validate=validate_change_hours_rows, build=ptoir_sql.change_hours,
-    log_name="ptoir_hours", log_title="change-hours update", summary=_change_hours_summary,
-    empty_message="Нет валидных строк для изменения", logger=logger,
+    validate=validate_change_hours_rows,
+    build=ptoir_sql.change_hours,
+    log_name="ptoir_hours",
+    log_title="change-hours update",
+    summary=_change_hours_summary,
+    empty_message="Нет валидных строк для изменения",
+    logger=logger,
 )
 
 

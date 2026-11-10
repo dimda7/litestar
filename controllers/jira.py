@@ -31,11 +31,13 @@ class JiraController(Controller):
             )
 
         return Response(
-            content=json.dumps({
-                "status": "ok",
-                "attachments": result["attachments"],
-                "description": result["description"],
-            }),
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "attachments": result["attachments"],
+                    "description": result["description"],
+                }
+            ),
             status_code=200,
             media_type="application/json",
         )

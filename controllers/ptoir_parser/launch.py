@@ -21,7 +21,8 @@ MSK_OFFSET = timedelta(hours=3)
 
 
 async def validate_launch_rows(
-    db_session: AsyncSession, rows: list[dict],
+    db_session: AsyncSession,
+    rows: list[dict],
     progress: dict | None = None,
 ) -> tuple[list[dict], list[tuple[int, datetime, int, int, int]]]:
     """Validate the Excel rows for a maintenance (ПТОиР) run.
@@ -52,55 +53,57 @@ async def validate_launch_rows(
             errors.append({"row": row_num, "field": "ПТОиР", "message": "Поле 'ПТОиР' пустое"})
             continue
 
-        result = await db_session.execute(
-            select(Ptoir.id, Ptoir.id_active).where(Ptoir.number_ptoir == number_ptoir)
-        )
+        result = await db_session.execute(select(Ptoir.id, Ptoir.id_active).where(Ptoir.number_ptoir == number_ptoir))
         ptoir_row = result.first()
         if ptoir_row is None:
-            errors.append({"row": row_num, "field": "ПТОиР",
-                            "message": f"ПТОиР не найден: '{number_ptoir}'"})
+            errors.append({"row": row_num, "field": "ПТОиР", "message": f"ПТОиР не найден: '{number_ptoir}'"})
             continue
         ptoir_id, ptoir_active_id = ptoir_row
 
         if active_number:
-            result = await db_session.execute(
-                select(Actives.id).where(Actives.active_number == active_number)
-            )
+            result = await db_session.execute(select(Actives.id).where(Actives.active_number == active_number))
             active_id = result.scalar_one_or_none()
             if active_id is None:
-                errors.append({"row": row_num, "field": "Актив",
-                                "message": f"Актив не найден: '{active_number}'"})
+                errors.append({"row": row_num, "field": "Актив", "message": f"Актив не найден: '{active_number}'"})
                 continue
             if ptoir_active_id is not None and active_id != ptoir_active_id:
-                errors.append({"row": row_num, "field": "Актив",
-                                "message": (f"Актив '{active_number}' не соответствует "
-                                            f"активу ПТОиР '{number_ptoir}'")})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "Актив",
+                        "message": (f"Актив '{active_number}' не соответствует активу ПТОиР '{number_ptoir}'"),
+                    }
+                )
                 continue
 
         if not type_counter:
             errors.append({"row": row_num, "field": "Тип счетчика", "message": "Поле 'Тип счетчика' пустое"})
             continue
 
-        result = await db_session.execute(
-            select(CounterType.id).where(CounterType.type == type_counter)
-        )
+        result = await db_session.execute(select(CounterType.id).where(CounterType.type == type_counter))
         counter_type_id = result.scalar_one_or_none()
         if counter_type_id is None:
-            errors.append({"row": row_num, "field": "Тип счетчика",
-                            "message": f"Тип счетчика не найден: '{type_counter}'"})
+            errors.append(
+                {"row": row_num, "field": "Тип счетчика", "message": f"Тип счетчика не найден: '{type_counter}'"}
+            )
             continue
 
         result = await db_session.execute(
             select(PtoirLevelWarning.id).where(
-                (PtoirLevelWarning.id_ptoir == ptoir_id)
-                & (PtoirLevelWarning.id_counter_type == counter_type_id)
+                (PtoirLevelWarning.id_ptoir == ptoir_id) & (PtoirLevelWarning.id_counter_type == counter_type_id)
             )
         )
         level_warning_id = result.scalar_one_or_none()
         if level_warning_id is None:
-            errors.append({"row": row_num, "field": "*",
-                            "message": (f"Уровень предупреждения не найден для ПТОиР "
-                                        f"'{number_ptoir}' и типа счетчика '{type_counter}'")})
+            errors.append(
+                {
+                    "row": row_num,
+                    "field": "*",
+                    "message": (
+                        f"Уровень предупреждения не найден для ПТОиР '{number_ptoir}' и типа счетчика '{type_counter}'"
+                    ),
+                }
+            )
             continue
 
         try:
@@ -109,15 +112,15 @@ async def validate_launch_rows(
             else:
                 date_activation = date_parser.parse(str(date_raw), dayfirst=True) - MSK_OFFSET
         except Exception:
-            errors.append({"row": row_num, "field": "Дата активации",
-                            "message": f"Некорректная дата активации: '{date_raw}'"})
+            errors.append(
+                {"row": row_num, "field": "Дата активации", "message": f"Некорректная дата активации: '{date_raw}'"}
+            )
             continue
 
         try:
             interval = int(interval_raw)
         except (TypeError, ValueError):
-            errors.append({"row": row_num, "field": "Интервал",
-                            "message": f"Некорректный интервал: '{interval_raw}'"})
+            errors.append({"row": row_num, "field": "Интервал", "message": f"Некорректный интервал: '{interval_raw}'"})
             continue
 
         if isinstance(service_raw, (int, float)) and not isinstance(service_raw, bool):
@@ -131,8 +134,13 @@ async def validate_launch_rows(
                 service_dt = service_dt.replace(tzinfo=timezone.utc)
                 zero_point_value = int(service_dt.timestamp())
             except Exception:
-                errors.append({"row": row_num, "field": "Данные последнего обслуживания",
-                                "message": f"Некорректное значение обслуживания: '{service_raw}'"})
+                errors.append(
+                    {
+                        "row": row_num,
+                        "field": "Данные последнего обслуживания",
+                        "message": f"Некорректное значение обслуживания: '{service_raw}'",
+                    }
+                )
                 continue
 
         valid_rows.append((ptoir_id, date_activation, interval, level_warning_id, zero_point_value))
@@ -145,9 +153,13 @@ def _launch_summary(total: int, valid_rows: list, errors: list[dict]) -> tuple[s
 
 
 LAUNCH_PTOIR = sql_tasks.SqlOperation(
-    validate=validate_launch_rows, build=ptoir_sql.update_ptoir,
-    log_name="update_ptoir", log_title="PTOиR update", summary=_launch_summary,
-    empty_message="Нет валидных строк для обновления", logger=logger,
+    validate=validate_launch_rows,
+    build=ptoir_sql.update_ptoir,
+    log_name="update_ptoir",
+    log_title="PTOиR update",
+    summary=_launch_summary,
+    empty_message="Нет валидных строк для обновления",
+    logger=logger,
 )
 
 

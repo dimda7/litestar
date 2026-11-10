@@ -45,7 +45,10 @@ async def test_progress_starts_running_before_the_runner_finishes():
 
     task_id = payload(progress_tasks.start_task(7, runner))["task_id"]
     assert payload(progress_tasks.progress_response(task_id)) == {
-        "processed": 0, "total": 7, "phase": "validating", "status": "running",
+        "processed": 0,
+        "total": 7,
+        "phase": "validating",
+        "status": "running",
     }
     release.set()
     await asyncio.gather(*progress_tasks._tasks.values())

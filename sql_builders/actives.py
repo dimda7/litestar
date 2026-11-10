@@ -169,9 +169,7 @@ def create_actives(valid_rows: list[dict]) -> list[str]:
         # the counter digits, zero-padded on the left to the required width (validation
         # above guarantees len(type_active) < ACTIVE_NUMBER_LENGTH, so the width > 0).
         number_width = ACTIVE_NUMBER_LENGTH - len(vr["type_active"])
-        active_number_expr = (
-            f"'{sql_escape(vr['type_active'])}' || lpad(active_num::text, {number_width}, '0')"
-        )
+        active_number_expr = f"'{sql_escape(vr['type_active'])}' || lpad(active_num::text, {number_width}, '0')"
         lcn_expr = f"('S{vr['id_storage']}.' || {lcn_var})::ltree"
 
         body_lines.append(
@@ -207,12 +205,10 @@ def create_active_from_model(valid_rows: list[dict]) -> list[str]:
 
     sql_lines: list[str] = ["DO $$", "DECLARE"]
     sql_lines.append(
-        f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') "
-        f"FROM generate_series(1, {total}));"
+        f"    loc_ids bigint[] := ARRAY(SELECT nextval('public.location_id_seq') FROM generate_series(1, {total}));"
     )
     sql_lines.append(
-        f"    act_ids bigint[] := ARRAY(SELECT nextval('public.actives_id_seq') "
-        f"FROM generate_series(1, {total}));"
+        f"    act_ids bigint[] := ARRAY(SELECT nextval('public.actives_id_seq') FROM generate_series(1, {total}));"
     )
     sql_lines.append("    active_num bigint;")
     sql_lines.append("BEGIN")
@@ -239,9 +235,7 @@ def create_active_from_model(valid_rows: list[dict]) -> list[str]:
 
         sn_val = f"'{sql_escape(vr['serial_number'])}'" if vr["serial_number"] else "NULL"
         number_width = ACTIVE_NUMBER_LENGTH - len(vr["type_active"])
-        active_number_expr = (
-            f"'{sql_escape(vr['type_active'])}' || lpad(active_num::text, {number_width}, '0')"
-        )
+        active_number_expr = f"'{sql_escape(vr['type_active'])}' || lpad(active_num::text, {number_width}, '0')"
         sql_lines.append(
             f"    INSERT INTO public.actives (id, active_number, id_design_number, id_location, "
             f"serial_number, lcn) VALUES ({act_ref}, {active_number_expr}, {vr['id_design_number']}, {loc_ref}, "
@@ -276,9 +270,7 @@ def delete_actives(valid_rows: list[dict]) -> list[str]:
     only within this transaction (ALTER TABLE takes ACCESS EXCLUSIVE until it ends) and
     requires table owner privileges.
     """
-    sql_lines: list[str] = [
-        "ALTER TABLE public.counter_active DISABLE TRIGGER tr_abort_delete;"
-    ]
+    sql_lines: list[str] = ["ALTER TABLE public.counter_active DISABLE TRIGGER tr_abort_delete;"]
     for vr in valid_rows:
         comment = f" -- '{sql_escape(vr['active_number'])}'"
         sql_lines.append(
