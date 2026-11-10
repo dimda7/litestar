@@ -185,8 +185,7 @@
         setRunningState(true);
         startTimer();
 
-        fetch('/sql-console/execute', { method: 'POST', body: formData })
-            .then(resp => resp.json())
+        postForm('/sql-console/execute', formData)
             .then(data => {
                 let label = 'Выполнено за';
                 if (data.status === 'error') {
@@ -226,7 +225,7 @@
         const timeoutId = setTimeout(() => controller.abort(), 12000);
 
         fetch('/sql-console/cancel', { method: 'POST', body: formData, signal: controller.signal })
-            .then(resp => resp.json())
+            .then(readJsonResponse)
             .then(data => {
                 statusEl.textContent = data.message || (data.status === 'ok' ? 'Сигнал отмены отправлен' : 'Не удалось отменить запрос');
             })

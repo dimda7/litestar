@@ -262,8 +262,7 @@
 
     function pollProgress(taskId, onFinished) {
         progressPollTimer = setInterval(() => {
-            fetch('/order-parser/progress/' + taskId)
-                .then(resp => resp.json())
+            getJson('/order-parser/progress/' + taskId)
                 .then(state => {
                     if (state.status === 'running') {
                         updateProgress(state);
@@ -288,8 +287,7 @@
         document.querySelectorAll('#data-tbody tr').forEach(r => r.classList.remove('error-row'));
         showProgress();
 
-        fetch('/order-parser/generate-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/order-parser/generate-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
@@ -316,8 +314,7 @@
 
         showProgress();
 
-        fetch('/order-parser/execute-sql/start', { method: 'POST', body: buildFormData() })
-            .then(resp => resp.json())
+        postForm('/order-parser/execute-sql/start', buildFormData())
             .then(({ task_id }) => pollProgress(task_id, (data) => {
                 hideProgress();
                 if (data.status === 'error') {
