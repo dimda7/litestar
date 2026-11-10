@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from typing import Any, cast
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -8,6 +9,7 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy import select, text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
@@ -219,7 +221,7 @@ class ChangeOkzActiveController(Controller):
                 progress.update(processed=0, total=1, phase="executing")
                 try:
                     sql_lines = models_sql.change_okz_active(valid_rows)
-                    result = await session.execute(text(sql_lines[0]))
+                    result = cast(CursorResult[Any], await session.execute(text(sql_lines[0])))
                     total_updated = result.rowcount
                     progress["processed"] = 1
                     await session.commit()

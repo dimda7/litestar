@@ -251,7 +251,7 @@ class TrainParserController(Controller):
                 id_type_train, id_train_series, series_error = await self._resolve_type_and_series(
                     session, train_type_name
                 )
-                if series_error:
+                if id_type_train is None or id_train_series is None:
                     progress.update(status="error", errors=[{"row": 0, "field": "train_type", "message": series_error}])
                     return
 
@@ -309,7 +309,7 @@ class TrainParserController(Controller):
                 id_type_train, id_train_series, series_error = await self._resolve_type_and_series(
                     session, train_type_name
                 )
-                if series_error:
+                if id_type_train is None or id_train_series is None:
                     progress.update(status="error", errors=[{"row": 0, "field": "train_type", "message": series_error}])
                     return
 
@@ -356,6 +356,7 @@ class TrainParserController(Controller):
                     # undo nothing. Do not remove the session usage before this point.
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
+                    assert raw_conn.driver_connection is not None
                     await raw_conn.driver_connection.execute(sql_body)
 
                     await session.commit()

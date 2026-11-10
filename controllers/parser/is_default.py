@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from typing import Any, cast
 
 from litestar import Controller, post
 from litestar.connection.request import Request
@@ -8,6 +9,7 @@ from litestar.enums import RequestEncodingType
 from litestar.params import Body
 from litestar.response import Response
 from sqlalchemy import select, text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_manager import get_session_maker
@@ -250,7 +252,7 @@ class IsDefaultController(Controller):
                 progress.update(processed=0, total=len(sql_lines), phase="executing")
                 try:
                     for i, line in enumerate(sql_lines, start=1):
-                        result = await session.execute(text(line))
+                        result = cast(CursorResult[Any], await session.execute(text(line)))
                         total_updated += result.rowcount
                         progress["processed"] = i
                     await session.commit()

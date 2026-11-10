@@ -1,4 +1,5 @@
 import time
+from typing import Any, cast
 
 from litestar.types import ASGIApp, Receive, Scope, Send
 from starlette.responses import JSONResponse, RedirectResponse
@@ -40,6 +41,12 @@ def _reject(scope: Scope, location: str, message: str) -> JSONResponse | Redirec
     return RedirectResponse(location, status_code=303)
 
 
+async def _send_response(response: JSONResponse | RedirectResponse, scope: Scope, receive: Receive, send: Send) -> None:
+    # Starlette responses are typed against Starlette's own ASGI types, which
+    # are looser than Litestar's but not recognised as compatible by mypy.
+    await response(cast(Any, scope), cast(Any, receive), cast(Any, send))
+
+
 class AuthMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -57,7 +64,7 @@ class AuthMiddleware:
         # DB_SELECT_PATH comparisons break for any path carrying query params
         # (e.g. /jira/attachments?issue=...).
         path = path.split("?", 1)[0]
-        session = scope.get("session", {})
+        session = cast("dict[str, Any]", scope.get("session", {}))
 
         if any(path.startswith(p) for p in EXCLUDE_PREFIXES):
             await self.app(scope, receive, send)
@@ -71,7 +78,7 @@ class AuthMiddleware:
         # nothing to validate a login against until a connection is chosen.
         if not db_manager.has_active_connection():
             response = _reject(scope, DB_SELECT_PATH, "Не выбрано подключение к базе данных")
-            await response(scope, receive, send)
+            await _send_response(response, scope, receive, send)
             return
 
         if path in EXCLUDE_PATHS:
@@ -80,7 +87,7 @@ class AuthMiddleware:
 
         if not session.get("user_id"):
             response = _reject(scope, "/auth/login", "Вы не авторизованы — войдите заново")
-            await response(scope, receive, send)
+            await _send_response(response, scope, receive, send)
             return
 
         # The session was issued against the users of whichever database was
@@ -90,7 +97,7 @@ class AuthMiddleware:
         if session.get("db_epoch") != db_manager.get_target_epoch():
             session.clear()
             response = _reject(scope, "/auth/login", "База данных сменилась — войдите заново")
-            await response(scope, receive, send)
+            await _send_response(response, scope, receive, send)
             return
 
         last_activity = session.get("last_activity")
@@ -98,7 +105,7 @@ class AuthMiddleware:
         if last_activity and (now - last_activity) > SESSION_TIMEOUT:
             session.clear()
             response = _reject(scope, "/auth/login", "Сессия истекла — войдите заново")
-            await response(scope, receive, send)
+            await _send_response(response, scope, receive, send)
             return
 
         session["last_activity"] = now

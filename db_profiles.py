@@ -70,22 +70,24 @@ def _seed_from_env() -> list[DBProfile]:
     """Profiles from .env. A set with a missing or broken variable is skipped."""
     profiles: list[DBProfile] = []
     for name, suffix in SEED_ENV_SETS:
-        values = {key: environ.get(f"DB_{key.upper()}{suffix}") for key in ("host", "port", "user", "password", "name")}
-        if any(value is None for value in values.values()):
+        host, port_raw, user, password, dbname = (
+            environ.get(f"DB_{key}{suffix}") for key in ("HOST", "PORT", "USER", "PASSWORD", "NAME")
+        )
+        if host is None or port_raw is None or user is None or password is None or dbname is None:
             continue
         try:
-            port = _validate(name, values["host"], values["port"], values["user"], values["name"])
+            port = _validate(name, host, port_raw, user, dbname)
         except ValueError:
             continue
         profiles.append(
             DBProfile(
                 id=str(uuid.uuid4()),
                 name=name,
-                host=values["host"].strip(),
+                host=host.strip(),
                 port=port,
-                user=values["user"].strip(),
-                password=values["password"],
-                dbname=values["name"].strip(),
+                user=user.strip(),
+                password=password,
+                dbname=dbname.strip(),
             )
         )
     return profiles

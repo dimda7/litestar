@@ -1,11 +1,13 @@
 import json
 import logging
 from datetime import datetime
+from typing import Any, cast
 
 from litestar import Controller, get, post
 from litestar.connection.request import Request
 from litestar.response import Response, Template
 from sqlalchemy import text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from parser_storage import LOG_DIR
@@ -113,7 +115,7 @@ class ActiveHierarchyController(Controller):
                 media_type="application/json",
             )
         try:
-            result = await db_session.execute(text(_update_sql(cfg)))
+            result = cast(CursorResult[Any], await db_session.execute(text(_update_sql(cfg))))
             await db_session.commit()
         except Exception as e:
             await db_session.rollback()

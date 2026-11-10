@@ -36,9 +36,13 @@ def validator(errors: list[dict], valid_rows: list[dict]) -> sql_tasks.Validator
     return validate
 
 
+def build_comments(valid_rows: list[dict]) -> list[str]:
+    return [f"-- row {vr['n']}" for vr in valid_rows]
+
+
 def operation(
     validate: sql_tasks.Validator,
-    build: Callable[[list[dict]], list[str]] = lambda valid_rows: [f"-- row {vr['n']}" for vr in valid_rows],
+    build: Callable[[list[dict]], list[str]] = build_comments,
     **kwargs: object,
 ) -> sql_tasks.SqlOperation:
     return sql_tasks.SqlOperation(

@@ -95,7 +95,9 @@
 ## Linting
 - Config in `pyproject.toml`. Before committing: `venv/bin/ruff check --fix . && venv/bin/ruff format .` — both must be clean.
 - `E501` is off (what the formatter leaves is long strings/SQL); `ASYNC230/240` are off (only small log-file writes after an operation). `Body`/`Parameter`/`Provide` are marked immutable for `B008`.
-- `venv/bin/mypy .` is not clean yet (215 errors in 45 files on 2026-11-10, mostly Litestar `scope`/`session` union types and unchecked `X | None`). Do not mass-fix: when touching a module, leave it with no new mypy errors and fix the existing ones in it if cheap.
+- `venv/bin/mypy .` must be clean too. `tests.*` has `union-attr` and `arg-type` off (fakes like `FakeRequest`/`owner=None` are deliberate). Narrow `X | None` with a real check, or an `assert` where an invariant guarantees it (e.g. `raw_conn.driver_connection`, ids that the validator reports as errors when missing) — never with `or default`, which changes behaviour.
+- Known false positives, suppressed on purpose: `SQLAlchemyAsyncRepository[Model]` gets `# type: ignore[type-var]` (advanced_alchemy's `ModelProtocol` wants instance attributes, `DeclarativeBase` declares class variables; `warn_unused_ignores` flags them once fixed upstream). `rowcount`/`returns_rows` need `cast(CursorResult[Any], ...)`. Starlette responses in `middleware.py` go through `_send_response` (Starlette's ASGI types vs Litestar's). A comprehension inside a lambda used as a default argument trips mypy's `name-defined` — use a named function.
+- `Mapped[...]` annotations in `models.py` must match the column type (`Date` → `dt.date`, `DateTime` → `datetime`); they are only typing, the column type passed to `mapped_column` is what SQLAlchemy uses.
 - Bandit is deliberately not used: SQL is built as strings via `sql_escape()` by design, so its SQL-injection check would flag every builder.
 - The `ruff format` commit is listed in `.git-blame-ignore-revs`; run `git config blame.ignoreRevsFile .git-blame-ignore-revs` in a fresh clone.
 

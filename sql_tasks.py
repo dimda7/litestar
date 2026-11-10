@@ -103,6 +103,7 @@ def start_execute(data: dict, op: SqlOperation) -> Response:
                     # a multi-statement body cannot go through a parameterised execute().
                     conn = await session.connection()
                     raw_conn = await conn.get_raw_connection()
+                    assert raw_conn.driver_connection is not None
                     # Every builder line is one whole statement, so the batch can be split
                     # into parts (still one transaction) to move the progress bar.
                     step = -(-len(sql_lines) // EXECUTE_PROGRESS_STEPS)

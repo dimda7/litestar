@@ -22,3 +22,9 @@ check_untyped_defs = true
 ignore_missing_imports = true
 warn_unused_ignores = true
 exclude = ["^venv/", "^\\.venv/"]
+
+# Tests pass fakes (FakeRequest, owner=None, bad rows on purpose) and read fields
+# of results they have just asserted on — strict argument/None checks are noise there.
+[[tool.mypy.overrides]]
+module = "tests.*"
+disable_error_code = ["union-attr", "arg-type"]

@@ -1,3 +1,4 @@
+import datetime as dt
 from datetime import datetime
 
 from sqlalchemy import Boolean, Date, DateTime, Integer, String, Text
@@ -221,7 +222,7 @@ class MainPtoir(Base):
     __table_args__ = {"schema": "public"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    number_ptoir: Mapped[str | None] = mapped_column(String, nullable=True)
+    number_ptoir: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class Ptoir(Base):
@@ -233,7 +234,7 @@ class Ptoir(Base):
     id_main_ptoir: Mapped[int | None] = mapped_column(Integer, nullable=True)
     id_ptoir_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    date_activation: Mapped[str | None] = mapped_column(DateTime, nullable=True)
+    date_activation: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     interval: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
     bdi: Mapped[str | None] = mapped_column(String, nullable=True, default="GREY")
@@ -258,8 +259,8 @@ class MileageTrain(Base):
     id_train: Mapped[int] = mapped_column(Integer, nullable=False)
     milage: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mileage_average: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    date: Mapped[str | None] = mapped_column(DateTime, nullable=True)
-    date_average: Mapped[str] = mapped_column(Date, nullable=False)
+    date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    date_average: Mapped[dt.date] = mapped_column(Date, nullable=False)
 
 
 class Storage(Base):
@@ -316,7 +317,7 @@ class Relocate(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_location_old: Mapped[int | None] = mapped_column(Integer, nullable=True)
     id_location_new: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    date: Mapped[str | None] = mapped_column(DateTime, nullable=True)
+    date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     id_user: Mapped[int | None] = mapped_column(Integer, nullable=True)
     id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -510,7 +511,7 @@ class MileageStart(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
     milage: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    date: Mapped[str | None] = mapped_column(Date, nullable=True)
+    date: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
     is_recount: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     milage_const: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -521,7 +522,7 @@ class CounterActive(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id_active: Mapped[int] = mapped_column(Integer, nullable=False)
-    date: Mapped[str | None] = mapped_column(DateTime, nullable=False)
+    date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     value: Mapped[int | None] = mapped_column(Integer, nullable=True)
     id_counter_type: Mapped[int] = mapped_column(Integer, nullable=False)
     id_frequency_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -529,4 +530,4 @@ class CounterActive(Base):
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
     value_source: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     id_turning_codes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    date_create: Mapped[str | None] = mapped_column(DateTime, nullable=True)
+    date_create: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -25,11 +25,11 @@ def chunks(values: list) -> list[list]:
     return [values[start : start + LOOKUP_CHUNK] for start in range(0, len(values), LOOKUP_CHUNK)]
 
 
-def cell_numbers(rows: list[dict], column: str) -> list[str]:
+def cell_numbers(rows: list[dict], column: str | None) -> list[str]:
     return [str(row.get(column, "") or "").strip() for row in rows]
 
 
-def match_rows(numbers: list[str], found: Collection[str], label: str) -> tuple[list[dict], list[str]]:
+def match_rows(numbers: list[str], found: Collection[object], label: str) -> tuple[list[dict], list[str]]:
     """Row errors for empty and unknown numbers, and the found ones in file order, each once."""
     errors: list[dict] = []
     matched: list[str] = []

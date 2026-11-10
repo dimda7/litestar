@@ -27,16 +27,16 @@ def _jira_from_env() -> JiraSettings | None:
     or non-numeric block is skipped the same way db_profiles skips a broken DB_*
     set; jira_client then reports the absence per request.
     """
-    values = {key: environ.get(f"JIIRA_{key.upper()}") for key in ("host", "port", "user", "password")}
-    if not all(values.values()):
+    host, port_raw, user, password = (environ.get(f"JIIRA_{key}") for key in ("HOST", "PORT", "USER", "PASSWORD"))
+    if not (host and port_raw and user and password):
         return None
 
     try:
-        port = int(values["port"])
+        port = int(port_raw)
     except ValueError:
         return None
 
-    return JiraSettings(host=values["host"], port=port, user=values["user"], password=values["password"])
+    return JiraSettings(host=host, port=port, user=user, password=password)
 
 
 @dataclass(frozen=True)

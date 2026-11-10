@@ -87,6 +87,7 @@ async def run_generated_sql(session: AsyncSession, sql: str) -> None:
     """
     conn = await session.connection()
     raw_conn = await conn.get_raw_connection()
+    assert raw_conn.driver_connection is not None
     await raw_conn.driver_connection.execute(sql)
 
 
