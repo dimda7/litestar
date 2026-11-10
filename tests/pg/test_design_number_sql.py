@@ -3,12 +3,10 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from controllers.design_number_parser import (
-    snapshot_design_numbers,
-    validate_create_rows,
-    validate_rename_rows,
-    validate_update_rows,
-)
+from controllers.design_number_parser.common import snapshot_design_numbers
+from controllers.design_number_parser.create import validate_create_rows
+from controllers.design_number_parser.rename import validate_rename_rows
+from controllers.design_number_parser.update import validate_update_rows
 from sql_builders import design_number as design_number_sql
 from tests.pg.conftest import run_generated_sql
 from tests.pg.factories import TEST_PREFIX, make_design_number
