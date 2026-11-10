@@ -1,9 +1,14 @@
-"""FK validation tests for DesignNumberParserController (controllers/design_number_parser.py)."""
+"""FK validation tests for the design number parser (controllers/design_number_parser/)."""
 
 import pytest
 
-from controllers import design_number_parser as dn_parser
-from controllers.design_number_parser import DesignNumberParserController
+from controllers.design_number_parser import sync_counter_active as sync
+from controllers.design_number_parser.counter_group import validate_counter_group_rows
+from controllers.design_number_parser.create import validate_create_rows
+from controllers.design_number_parser.is_serial_1c import validate_is_serial_1c_rows
+from controllers.design_number_parser.rename import validate_rename_rows
+from controllers.design_number_parser.unit_type import validate_unit_type_rows
+from controllers.design_number_parser.update import validate_update_rows
 from models import (
     CommodityCode,
     CommodityGroup,
@@ -17,19 +22,14 @@ from models import (
 from sql_builders.design_number import DesignNumberRow
 from tests.conftest import make_counter_group, make_design_number, make_unit_type
 
-
-def controller() -> DesignNumberParserController:
-    return DesignNumberParserController(owner=None)
-
-
-# --- _validate_counter_group -------------------------------------------------
+# --- validate_counter_group_rows -------------------------------------------------
 
 
 async def test_counter_group_valid_row_passes(db_session):
     dn_id = await make_design_number(db_session, "DN-001")
     cg_id = await make_counter_group(db_session, "Группа A")
 
-    errors, valid_rows = await controller()._validate_counter_group(
+    errors, valid_rows = await validate_counter_group_rows(
         db_session, [{"number": "DN-001", "counter_group": "Группа A"}]
     )
 
@@ -41,7 +41,7 @@ async def test_counter_group_match_is_case_insensitive(db_session):
     dn_id = await make_design_number(db_session, "DN-001")
     cg_id = await make_counter_group(db_session, "Группа A")
 
-    errors, valid_rows = await controller()._validate_counter_group(
+    errors, valid_rows = await validate_counter_group_rows(
         db_session, [{"number": "DN-001", "counter_group": "группа a"}]
     )
 
@@ -50,9 +50,7 @@ async def test_counter_group_match_is_case_insensitive(db_session):
 
 
 async def test_counter_group_empty_number_reported(db_session):
-    errors, valid_rows = await controller()._validate_counter_group(
-        db_session, [{"number": "", "counter_group": "Группа A"}]
-    )
+    errors, valid_rows = await validate_counter_group_rows(db_session, [{"number": "", "counter_group": "Группа A"}])
 
     assert valid_rows == []
     assert errors[0]["field"] == "number"
@@ -61,7 +59,7 @@ async def test_counter_group_empty_number_reported(db_session):
 async def test_counter_group_unknown_design_number_reported(db_session):
     await make_counter_group(db_session, "Группа A")
 
-    errors, valid_rows = await controller()._validate_counter_group(
+    errors, valid_rows = await validate_counter_group_rows(
         db_session, [{"number": "DN-999", "counter_group": "Группа A"}]
     )
 
@@ -73,9 +71,7 @@ async def test_counter_group_unknown_design_number_reported(db_session):
 async def test_counter_group_empty_name_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await controller()._validate_counter_group(
-        db_session, [{"number": "DN-001", "counter_group": ""}]
-    )
+    errors, valid_rows = await validate_counter_group_rows(db_session, [{"number": "DN-001", "counter_group": ""}])
 
     assert valid_rows == []
     assert errors[0]["field"] == "counter_group"
@@ -84,7 +80,7 @@ async def test_counter_group_empty_name_reported(db_session):
 async def test_counter_group_unknown_name_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await controller()._validate_counter_group(
+    errors, valid_rows = await validate_counter_group_rows(
         db_session, [{"number": "DN-001", "counter_group": "Нет такой группы"}]
     )
 
@@ -93,14 +89,14 @@ async def test_counter_group_unknown_name_reported(db_session):
     assert "counter_group не найден" in errors[0]["message"]
 
 
-# --- _validate_unit_type ------------------------------------------------------
+# --- validate_unit_type_rows ------------------------------------------------------
 
 
 async def test_unit_type_valid_row_passes(db_session):
     dn_id = await make_design_number(db_session, "DN-001")
     ut_id = await make_unit_type(db_session, "Ось колесной пары")
 
-    errors, valid_rows = await controller()._validate_unit_type(
+    errors, valid_rows = await validate_unit_type_rows(
         db_session, [{"number": "DN-001", "unit_type": "Ось колесной пары"}]
     )
 
@@ -112,7 +108,7 @@ async def test_unit_type_match_is_case_insensitive(db_session):
     dn_id = await make_design_number(db_session, "DN-001")
     ut_id = await make_unit_type(db_session, "Ось колесной пары")
 
-    errors, valid_rows = await controller()._validate_unit_type(
+    errors, valid_rows = await validate_unit_type_rows(
         db_session, [{"number": "DN-001", "unit_type": "ось колесной пары"}]
     )
 
@@ -121,9 +117,7 @@ async def test_unit_type_match_is_case_insensitive(db_session):
 
 
 async def test_unit_type_empty_number_reported(db_session):
-    errors, valid_rows = await controller()._validate_unit_type(
-        db_session, [{"number": "", "unit_type": "Ось колесной пары"}]
-    )
+    errors, valid_rows = await validate_unit_type_rows(db_session, [{"number": "", "unit_type": "Ось колесной пары"}])
 
     assert valid_rows == []
     assert errors[0]["field"] == "number"
@@ -132,7 +126,7 @@ async def test_unit_type_empty_number_reported(db_session):
 async def test_unit_type_unknown_design_number_reported(db_session):
     await make_unit_type(db_session, "Ось колесной пары")
 
-    errors, valid_rows = await controller()._validate_unit_type(
+    errors, valid_rows = await validate_unit_type_rows(
         db_session, [{"number": "DN-999", "unit_type": "Ось колесной пары"}]
     )
 
@@ -144,7 +138,7 @@ async def test_unit_type_unknown_design_number_reported(db_session):
 async def test_unit_type_empty_name_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await controller()._validate_unit_type(db_session, [{"number": "DN-001", "unit_type": ""}])
+    errors, valid_rows = await validate_unit_type_rows(db_session, [{"number": "DN-001", "unit_type": ""}])
 
     assert valid_rows == []
     assert errors[0]["field"] == "unit_type"
@@ -153,7 +147,7 @@ async def test_unit_type_empty_name_reported(db_session):
 async def test_unit_type_unknown_name_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await controller()._validate_unit_type(
+    errors, valid_rows = await validate_unit_type_rows(
         db_session, [{"number": "DN-001", "unit_type": "Нет такого типа"}]
     )
 
@@ -162,7 +156,7 @@ async def test_unit_type_unknown_name_reported(db_session):
     assert "unit_type не найден" in errors[0]["message"]
 
 
-# --- _validate_is_serial_1c ---------------------------------------------------
+# --- validate_is_serial_1c_rows ---------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -179,9 +173,7 @@ async def test_unit_type_unknown_name_reported(db_session):
 async def test_is_serial_1c_accepted_values(db_session, raw, expected):
     dn_id = await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await controller()._validate_is_serial_1c(
-        db_session, [{"number": "DN-001", "is_serial_1c": raw}]
-    )
+    errors, valid_rows = await validate_is_serial_1c_rows(db_session, [{"number": "DN-001", "is_serial_1c": raw}])
 
     assert errors == []
     assert valid_rows == [(dn_id, "DN-001", expected)]
@@ -190,18 +182,14 @@ async def test_is_serial_1c_accepted_values(db_session, raw, expected):
 async def test_is_serial_1c_invalid_value_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await controller()._validate_is_serial_1c(
-        db_session, [{"number": "DN-001", "is_serial_1c": "maybe"}]
-    )
+    errors, valid_rows = await validate_is_serial_1c_rows(db_session, [{"number": "DN-001", "is_serial_1c": "maybe"}])
 
     assert valid_rows == []
     assert errors[0]["field"] == "is_serial_1c"
 
 
 async def test_is_serial_1c_unknown_design_number_reported(db_session):
-    errors, valid_rows = await controller()._validate_is_serial_1c(
-        db_session, [{"number": "DN-999", "is_serial_1c": "true"}]
-    )
+    errors, valid_rows = await validate_is_serial_1c_rows(db_session, [{"number": "DN-999", "is_serial_1c": "true"}])
 
     assert valid_rows == []
     assert errors[0]["field"] == "number"
@@ -209,31 +197,29 @@ async def test_is_serial_1c_unknown_design_number_reported(db_session):
 
 
 async def test_is_serial_1c_empty_number_reported(db_session):
-    errors, valid_rows = await controller()._validate_is_serial_1c(db_session, [{"number": "", "is_serial_1c": "true"}])
+    errors, valid_rows = await validate_is_serial_1c_rows(db_session, [{"number": "", "is_serial_1c": "true"}])
 
     assert valid_rows == []
     assert errors[0]["field"] == "number"
 
 
 def test_counter_is_measured_in_its_own_unit():
-    assert (
-        dn_parser._frequency_type_for(dn_parser.MOTOR_HOURS_COUNTER_TYPE_ID) == dn_parser.ENGINE_HOURS_FREQUENCY_TYPE_ID
-    )
-    assert dn_parser._frequency_type_for(dn_parser.MILEAGE_COUNTER_TYPE_ID) == dn_parser.KM_FREQUENCY_TYPE_ID
+    assert sync._frequency_type_for(sync.MOTOR_HOURS_COUNTER_TYPE_ID) == sync.ENGINE_HOURS_FREQUENCY_TYPE_ID
+    assert sync._frequency_type_for(sync.MILEAGE_COUNTER_TYPE_ID) == sync.KM_FREQUENCY_TYPE_ID
     # wheel and brake disc wear (counter types 4..30) is measured in millimetres
-    assert dn_parser._frequency_type_for(17) == dn_parser.MM_FREQUENCY_TYPE_ID
+    assert sync._frequency_type_for(17) == sync.MM_FREQUENCY_TYPE_ID
 
 
 def test_counter_type_and_frequency_type_ids_match_the_database_dictionaries():
     assert (
-        dn_parser.MOTOR_HOURS_COUNTER_TYPE_ID,
-        dn_parser.TIME_COUNTER_TYPE_ID,
-        dn_parser.MILEAGE_COUNTER_TYPE_ID,
+        sync.MOTOR_HOURS_COUNTER_TYPE_ID,
+        sync.TIME_COUNTER_TYPE_ID,
+        sync.MILEAGE_COUNTER_TYPE_ID,
     ) == (1, 2, 3)
     assert (
-        dn_parser.KM_FREQUENCY_TYPE_ID,
-        dn_parser.ENGINE_HOURS_FREQUENCY_TYPE_ID,
-        dn_parser.MM_FREQUENCY_TYPE_ID,
+        sync.KM_FREQUENCY_TYPE_ID,
+        sync.ENGINE_HOURS_FREQUENCY_TYPE_ID,
+        sync.MM_FREQUENCY_TYPE_ID,
     ) == (5, 7, 8)
 
 
@@ -247,7 +233,7 @@ def rename_row(old: str, new: str) -> dict:
 async def test_rename_valid_row_passes(db_session):
     dn_id = await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_rename_rows(db_session, [rename_row("DN-001", "DN-002")])
+    errors, valid_rows = await validate_rename_rows(db_session, [rename_row("DN-001", "DN-002")])
 
     assert errors == []
     assert valid_rows == [(dn_id, "DN-001", "DN-002")]
@@ -256,7 +242,7 @@ async def test_rename_valid_row_passes(db_session):
 async def test_rename_old_number_is_matched_exactly(db_session):
     dn_id = await make_design_number(db_session, "ИН-00000237 ")
 
-    errors, valid_rows = await dn_parser.validate_rename_rows(
+    errors, valid_rows = await validate_rename_rows(
         db_session, [rename_row("ИН-00000237 ", "ИН-00000237"), rename_row("ИН-00000237", "ИН-1")]
     )
 
@@ -265,7 +251,7 @@ async def test_rename_old_number_is_matched_exactly(db_session):
 
 
 async def test_rename_message_shows_invisible_characters(db_session):
-    errors, _ = await dn_parser.validate_rename_rows(db_session, [rename_row("A2V_\xa0R1", "A2V_R1")])
+    errors, _ = await validate_rename_rows(db_session, [rename_row("A2V_\xa0R1", "A2V_R1")])
 
     assert errors[0]["message"] == "design_number не найден: 'A2V_\\xa0R1'"
 
@@ -273,7 +259,7 @@ async def test_rename_message_shows_invisible_characters(db_session):
 async def test_rename_empty_cells_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_rename_rows(
+    errors, valid_rows = await validate_rename_rows(
         db_session, [rename_row(None, "DN-002"), rename_row("DN-001", None)]
     )
 
@@ -288,7 +274,7 @@ async def test_rename_empty_cells_reported(db_session):
 async def test_rename_new_number_with_whitespace_reported(db_session, new):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_rename_rows(db_session, [rename_row("DN-001", new)])
+    errors, valid_rows = await validate_rename_rows(db_session, [rename_row("DN-001", new)])
 
     assert valid_rows == []
     assert errors == [{"row": 1, "field": "Новый ТМЦ", "message": f"Новый номер содержит пробельные символы: {new!r}"}]
@@ -297,7 +283,7 @@ async def test_rename_new_number_with_whitespace_reported(db_session, new):
 async def test_rename_unchanged_number_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_rename_rows(db_session, [rename_row("DN-001", "DN-001")])
+    errors, valid_rows = await validate_rename_rows(db_session, [rename_row("DN-001", "DN-001")])
 
     assert valid_rows == []
     assert errors == [{"row": 1, "field": "Новый ТМЦ", "message": "Номер не меняется: 'DN-001'"}]
@@ -307,7 +293,7 @@ async def test_rename_to_existing_number_reported(db_session):
     await make_design_number(db_session, "DN-001")
     taken_id = await make_design_number(db_session, "DN-002")
 
-    errors, valid_rows = await dn_parser.validate_rename_rows(db_session, [rename_row("DN-001", "DN-002")])
+    errors, valid_rows = await validate_rename_rows(db_session, [rename_row("DN-001", "DN-002")])
 
     assert valid_rows == []
     assert errors == [{"row": 1, "field": "Новый ТМЦ", "message": f"ТМЦ 'DN-002' уже существует (id={taken_id})"}]
@@ -316,9 +302,7 @@ async def test_rename_to_existing_number_reported(db_session):
 async def test_rename_duplicate_old_number_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, _ = await dn_parser.validate_rename_rows(
-        db_session, [rename_row("DN-001", "DN-002"), rename_row("DN-001", "DN-003")]
-    )
+    errors, _ = await validate_rename_rows(db_session, [rename_row("DN-001", "DN-002"), rename_row("DN-001", "DN-003")])
 
     assert errors == [{"row": 2, "field": "Старый ТМЦ", "message": "Старый номер 'DN-001' уже указан в строке 1"}]
 
@@ -327,9 +311,7 @@ async def test_rename_duplicate_new_number_reported(db_session):
     await make_design_number(db_session, "DN-001")
     await make_design_number(db_session, "DN-002")
 
-    errors, _ = await dn_parser.validate_rename_rows(
-        db_session, [rename_row("DN-001", "DN-003"), rename_row("DN-002", "DN-003")]
-    )
+    errors, _ = await validate_rename_rows(db_session, [rename_row("DN-001", "DN-003"), rename_row("DN-002", "DN-003")])
 
     assert errors == [{"row": 2, "field": "Новый ТМЦ", "message": "Новый номер 'DN-003' уже указан в строке 1"}]
 
@@ -338,12 +320,8 @@ async def test_rename_chains_and_swaps_rejected(db_session):
     a_id = await make_design_number(db_session, "A")
     b_id = await make_design_number(db_session, "B")
 
-    chain_errors, chain_valid = await dn_parser.validate_rename_rows(
-        db_session, [rename_row("A", "B"), rename_row("B", "C")]
-    )
-    swap_errors, swap_valid = await dn_parser.validate_rename_rows(
-        db_session, [rename_row("A", "B"), rename_row("B", "A")]
-    )
+    chain_errors, chain_valid = await validate_rename_rows(db_session, [rename_row("A", "B"), rename_row("B", "C")])
+    swap_errors, swap_valid = await validate_rename_rows(db_session, [rename_row("A", "B"), rename_row("B", "A")])
 
     assert [old for _, old, _ in chain_valid] == ["B"]
     assert chain_errors == [{"row": 1, "field": "Новый ТМЦ", "message": f"ТМЦ 'B' уже существует (id={b_id})"}]
@@ -418,7 +396,7 @@ async def test_update_full_row_resolves_every_column(db_session):
         is_serial_1c="True",
     )
 
-    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [row])
+    errors, valid_rows = await validate_update_rows(db_session, [row])
 
     assert errors == []
     assert valid_rows == [
@@ -449,7 +427,7 @@ async def test_update_missing_headers_reported(db_session):
     row = update_row()
     del row["maint_use"], row["is_serial_1c"]
 
-    errors, valid_rows = await dn_parser.validate_update_rows(db_session, [row])
+    errors, valid_rows = await validate_update_rows(db_session, [row])
 
     assert valid_rows == []
     assert errors == [{"row": 0, "field": "*", "message": "В файле нет колонок: maint_use, is_serial_1c"}]
@@ -458,7 +436,7 @@ async def test_update_missing_headers_reported(db_session):
 async def test_update_number_must_exist_exactly_and_once(db_session):
     dn_id = await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session,
         [
             update_row(number="DN-001"),
@@ -481,7 +459,7 @@ async def test_update_references_matched_case_and_whitespace_insensitively(db_se
     wheelset = await make_ref(db_session, UnitType, id=7, name="Колесная\xa0пара")
     measure = await make_ref(db_session, MeasureType, name="шт")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session, [update_row(unit_type=" колесная\xa0ПАРА ", measure_type="ШТ")]
     )
 
@@ -494,7 +472,7 @@ async def test_update_unknown_and_ambiguous_references_reported(db_session):
     await make_ref(db_session, ProductGroup, name="HE")
     await make_ref(db_session, ProductGroup, name="he")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session, [update_row(measure_type="боб", product_group="HE", design_number_status="NEW")]
     )
 
@@ -512,7 +490,7 @@ async def test_update_maint_use_list_parsed_and_unknown_item_reported(db_session
     cm = await make_ref(db_session, MaintUse, name="CM")
     tools = await make_ref(db_session, MaintUse, name="TOOLS")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session,
         [
             update_row(number="DN-001", maint_use=" tools , CM,TOOLS"),
@@ -527,7 +505,7 @@ async def test_update_maint_use_list_parsed_and_unknown_item_reported(db_session
 async def test_update_booleans_parsed(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session, [update_row(is_serial="ДА", is_created_1c="0", is_repairable=" null ", is_serial_1c="TRUE")]
     )
 
@@ -539,7 +517,7 @@ async def test_update_booleans_parsed(db_session):
 async def test_update_invalid_booleans_and_null_in_not_null_reported(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session, [update_row(is_serial="NULL", is_created_1c="yes", is_serial_1c="")]
     )
 
@@ -561,7 +539,7 @@ async def test_update_train_unit_type_requires_null_repairable_and_measure(db_se
     await make_ref(db_session, UnitType, id=1, name="Поезд")
     await make_ref(db_session, MeasureType, name="шт")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session,
         [
             update_row(number="DN-001", unit_type="Поезд", is_repairable="False", measure_type="шт"),
@@ -579,7 +557,7 @@ async def test_update_train_unit_type_requires_null_repairable_and_measure(db_se
 async def test_update_texts_trimmed_and_null_cleared(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session,
         [
             update_row(description="\xa0Ось 'A' \"Б\" ", description_1c="  ", main_number=" A2V0001\xa0"),
@@ -594,7 +572,7 @@ async def test_update_texts_trimmed_and_null_cleared(db_session):
 async def test_update_native_excel_booleans_and_numbers_are_not_lost(db_session):
     await make_design_number(db_session, "DN-001")
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session,
         [
             update_row(
@@ -620,7 +598,7 @@ async def test_update_duplicate_measure_type_prefers_code_1c_then_max_id(db_sess
     await make_ref(db_session, MeasureType, id=30, name="бухта", code_1c=None)
     none_coded_max = await make_ref(db_session, MeasureType, id=31, name="бухта", code_1c=None)
 
-    errors, valid_rows = await dn_parser.validate_update_rows(
+    errors, valid_rows = await validate_update_rows(
         db_session,
         [
             update_row(number="DN-001", measure_type="пог. м"),
@@ -639,7 +617,7 @@ async def test_update_duplicate_measure_type_prefers_code_1c_then_max_id(db_sess
 async def test_create_new_number_passes_without_id(db_session):
     measure = await make_ref(db_session, MeasureType, name="шт")
 
-    errors, valid_rows = await dn_parser.validate_create_rows(
+    errors, valid_rows = await validate_create_rows(
         db_session, [update_row(number="DN-NEW", description=" Ось ", measure_type="шт", is_serial="True")]
     )
 
@@ -650,7 +628,7 @@ async def test_create_new_number_passes_without_id(db_session):
 
 
 async def test_create_number_format_rules(db_session):
-    errors, valid_rows = await dn_parser.validate_create_rows(
+    errors, valid_rows = await validate_create_rows(
         db_session,
         [
             update_row(number=None),
@@ -674,7 +652,7 @@ async def test_create_existing_number_is_updated_and_similar_numbers_reported(db
     existing = await make_design_number(db_session, "DN-001")
     dirty = await make_design_number(db_session, "ин-00000237\xa0")
 
-    errors, valid_rows = await dn_parser.validate_create_rows(
+    errors, valid_rows = await validate_create_rows(
         db_session,
         [
             update_row(number="DN-001"),
@@ -700,8 +678,8 @@ async def test_create_applies_the_shared_field_rules(db_session):
     no_headers = update_row(number="DN-NEW")
     del no_headers["maint_use"]
 
-    errors, valid_rows = await dn_parser.validate_create_rows(db_session, [row])
-    header_errors, _ = await dn_parser.validate_create_rows(db_session, [no_headers])
+    errors, valid_rows = await validate_create_rows(db_session, [row])
+    header_errors, _ = await validate_create_rows(db_session, [no_headers])
 
     assert valid_rows == []
     assert errors == [
@@ -712,7 +690,7 @@ async def test_create_applies_the_shared_field_rules(db_session):
 
 
 async def test_create_null_text_number_is_empty(db_session):
-    errors, valid_rows = await dn_parser.validate_create_rows(
+    errors, valid_rows = await validate_create_rows(
         db_session, [update_row(number="NULL"), update_row(number="null"), update_row(number="   ")]
     )
 

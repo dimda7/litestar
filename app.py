@@ -15,13 +15,13 @@ from litestar.template.config import TemplateConfig
 import db_manager
 from config import settings
 from controllers import actives_parser as actives_parser_package
+from controllers import design_number_parser as design_number_parser_package
 from controllers import parser as parser_package
 from controllers import ptoir_parser as ptoir_parser_package
 from controllers import techcard_parser as techcard_parser_package
 from controllers.about import AboutController
 from controllers.active_hierarchy import ActiveHierarchyController
 from controllers.auth import AuthController
-from controllers.design_number_parser import DesignNumberParserController
 from controllers.jira import JiraController
 from controllers.mileage_correction import MileageCorrectionController
 from controllers.order_parser import OrderParserController
@@ -86,7 +86,7 @@ app = Litestar(
         *parser_package.CONTROLLERS,
         *techcard_parser_package.CONTROLLERS,
         TrainParserController,
-        DesignNumberParserController,
+        *design_number_parser_package.CONTROLLERS,
         *actives_parser_package.CONTROLLERS,
         ActiveHierarchyController,
         *ptoir_parser_package.CONTROLLERS,
