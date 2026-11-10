@@ -93,6 +93,9 @@
 - `car_place.is_delete` defaults to `false` on the working database but still to `true` on the grom copy, so `tests/pg/` compares a created car place's `is_active`/`is_delete` with the catalog's column defaults instead of hardcoding them.
 
 ## Linting
+- CI (`.github/workflows/ci.yml`, Python 3.12 as in the Docker image) runs `ruff check`, `ruff format --check`, `mypy .` and `pytest -m "not pg"` on every PR and push to `main`; `tests/pg/` is not run there (no grom copy), so run it locally before merging DB-touching changes.
+- Dependency versions are pinned in `constraints.txt` (`pip freeze` of the tested venv); CI and `images/Dockerfile` install with `-c constraints.txt`, and so should a local venv. `requirements*.txt` keep only lower bounds — without the constraints every fresh install picked up untested releases (CI got SQLAlchemy 2.1 while everything had been tested on 2.0). To upgrade: `pip install -U -r requirements-dev.txt`, run the full `pytest` (`tests/pg/` included), then `pip freeze > constraints.txt` keeping its two header comment lines.
+- SQLAlchemy 2.1: `Row` is typed as a tuple, `Result.tuples()` is deprecated — don't use it.
 - Config in `pyproject.toml`. Before committing: `venv/bin/ruff check --fix . && venv/bin/ruff format .` — both must be clean.
 - `E501` is off (what the formatter leaves is long strings/SQL); `ASYNC230/240` are off (only small log-file writes after an operation). `Body`/`Parameter`/`Provide` are marked immutable for `B008`.
 - `venv/bin/mypy .` must be clean too. `tests.*` has `union-attr` and `arg-type` off (fakes like `FakeRequest`/`owner=None` are deliberate). Narrow `X | None` with a real check, or an `assert` where an invariant guarantees it (e.g. `raw_conn.driver_connection`, ids that the validator reports as errors when missing) — never with `or default`, which changes behaviour.

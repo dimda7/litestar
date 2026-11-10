@@ -36,7 +36,7 @@ async def validate_delete_main_rows(
         result = await db_session.execute(
             select(MainPtoir.number_ptoir, MainPtoir.id).where(MainPtoir.number_ptoir.in_(chunk))
         )
-        found.update(result.tuples().all())
+        found.update(result.all())
     errors, matched = match_rows(numbers, found, "БПТОиР")
     ptoirs = await load_ptoirs(db_session, Ptoir.id_main_ptoir, [found[number] for number in matched])
 
