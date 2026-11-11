@@ -22,6 +22,7 @@ from .common import (
     _missing_headers,
     _parse_fields,
     logger,
+    normalize_headers,
     snapshot_design_numbers,
 )
 
@@ -29,6 +30,7 @@ from .common import (
 async def validate_update_rows(
     db_session: AsyncSession, rows: list[dict]
 ) -> tuple[list[dict], list[design_number_sql.DesignNumberRow]]:
+    rows = normalize_headers(rows)
     errors: list[dict] = _missing_headers(rows)
     if errors:
         return errors, []
@@ -36,13 +38,17 @@ async def validate_update_rows(
 
     catalogues = await _field_catalogues(db_session)
     numbers = [_cell_text(row.get("number")) for row in rows]
-    dn_ids: dict[str | None, int] = dict(
-        (
-            await db_session.execute(
-                select(DesignNumber.number, DesignNumber.id).where(DesignNumber.number.in_(numbers))
+    dn_ids: dict[str | None, int] = {}
+    unit_types: dict[str | None, int | None] = {}
+    for number, id_, id_unit_type in (
+        await db_session.execute(
+            select(DesignNumber.number, DesignNumber.id, DesignNumber.id_unit_type).where(
+                DesignNumber.number.in_(numbers)
             )
-        ).all()
-    )
+        )
+    ).all():
+        dn_ids[number] = id_
+        unit_types[number] = id_unit_type
 
     number_rows: dict[str, int] = {}
 
@@ -65,7 +71,7 @@ async def validate_update_rows(
         if number not in dn_ids:
             errors.append({"row": row_num, "field": "number", "message": f"design_number не найден: {number!r}"})
             continue
-        fields = _parse_fields(row, row_num, catalogues, errors)
+        fields = _parse_fields(row, row_num, catalogues, errors, unit_types[number])
         if fields is not None:
             valid_rows.append(design_number_sql.DesignNumberRow(id=dn_ids[number], number=number, **fields))
 

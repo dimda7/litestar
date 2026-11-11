@@ -62,6 +62,28 @@ UPDATE_HEADERS = (
 )
 
 
+# Russian headers of the design number export, accepted alongside the English ones.
+RUSSIAN_HEADERS = {
+    "номер": "number",
+    "описание": "description",
+    "единица измерения": "unit_type",
+    "серийный": "is_serial",
+    "создан в 1с": "is_created_1c",
+    "товарная группа": "commodity_group",
+    "товарный код": "commodity_code",
+    "статус": "design_number_status",
+    "тип измерения": "measure_type",
+    "ремонтопригодный": "is_repairable",
+    "группа продукции": "product_group",
+    "описание 1с": "description_1c",
+    "основной номер": "main_number",
+    "группа счётчиков": "counter_group",
+    "группа счетчиков": "counter_group",
+    "применение в то": "maint_use",
+    "серийный в 1с": "is_serial_1c",
+}
+
+
 TRUE_VALUES = ("true", "1", "да")
 
 
@@ -121,6 +143,16 @@ async def _measure_types(db_session: AsyncSession) -> dict[str, list[int]]:
     return {key: [id_] for key, (_, id_) in best.items()}
 
 
+def _header(name: object) -> object:
+    if not isinstance(name, str):
+        return name
+    return RUSSIAN_HEADERS.get(" ".join(name.split()).lower(), name)
+
+
+def normalize_headers(rows: list[dict]) -> list[dict]:
+    return [{_header(column): value for column, value in row.items()} for row in rows]
+
+
 def _missing_headers(rows: list[dict]) -> list[dict]:
     missing = [header for header in UPDATE_HEADERS if rows and header not in rows[0]]
     return [{"row": 0, "field": "*", "message": f"В файле нет колонок: {', '.join(missing)}"}] if missing else []
@@ -136,13 +168,20 @@ async def _field_catalogues(db_session: AsyncSession) -> dict[str, dict[str, lis
 
 
 def _parse_fields(
-    row: dict, row_num: int, catalogues: dict[str, dict[str, list[int]]], errors: list[dict]
+    row: dict,
+    row_num: int,
+    catalogues: dict[str, dict[str, list[int]]],
+    errors: list[dict],
+    current_unit_type: int | None = None,
 ) -> dict | None:
     row_errors: list[dict] = []
     refs: dict[str, int | None] = {}
     for column in UPDATE_REFERENCES:
         value = _cell(row, column)
         refs[column] = _lookup(catalogues[column], value, row_num, column, row_errors) if value else None
+    # An empty unit_type keeps the design number's current one (user decision).
+    if _cell(row, "unit_type") is None:
+        refs["unit_type"] = current_unit_type
     flags: dict[str, bool | None] = {}
     for column in UPDATE_FLAGS:
         value = _cell(row, column)
