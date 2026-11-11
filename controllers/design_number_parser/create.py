@@ -23,6 +23,7 @@ from .common import (
     _missing_headers,
     _parse_fields,
     logger,
+    normalize_headers,
     snapshot_design_numbers,
 )
 
@@ -37,6 +38,7 @@ def _similarity_key(number: str) -> str:
 async def validate_create_rows(
     db_session: AsyncSession, rows: list[dict]
 ) -> tuple[list[dict], list[design_number_sql.DesignNumberRow]]:
+    rows = normalize_headers(rows)
     errors: list[dict] = _missing_headers(rows)
     if errors:
         return errors, []
@@ -44,10 +46,14 @@ async def validate_create_rows(
 
     catalogues = await _field_catalogues(db_session)
     existing: dict[str, int] = {}
+    unit_types: dict[str, int | None] = {}
     similar: dict[str, tuple[str, int]] = {}
-    for number, id_ in (await db_session.execute(select(DesignNumber.number, DesignNumber.id))).all():
+    for number, id_, id_unit_type in (
+        await db_session.execute(select(DesignNumber.number, DesignNumber.id, DesignNumber.id_unit_type))
+    ).all():
         if number:
             existing[number] = id_
+            unit_types[number] = id_unit_type
             similar.setdefault(_similarity_key(number), (number, id_))
     number_rows: dict[str, int] = {}
     similar_rows: dict[str, int] = {}
@@ -103,7 +109,7 @@ async def validate_create_rows(
                 }
             )
             continue
-        fields = _parse_fields(row, row_num, catalogues, errors)
+        fields = _parse_fields(row, row_num, catalogues, errors, unit_types.get(number))
         if fields is not None:
             valid_rows.append(design_number_sql.DesignNumberRow(id=existing.get(number), number=number, **fields))
 

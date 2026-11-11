@@ -611,6 +611,62 @@ async def test_update_duplicate_measure_type_prefers_code_1c_then_max_id(db_sess
     assert [r.id_measure_type for r in valid_rows] == [with_code, both_coded_max, none_coded_max]
 
 
+RUSSIAN_HEADERS = {
+    "number": "Номер",
+    "description": "Описание",
+    "unit_type": "Единица измерения",
+    "is_serial": "Серийный",
+    "is_created_1c": "Создан в 1С",
+    "commodity_group": "Товарная группа",
+    "commodity_code": "Товарный код",
+    "design_number_status": "Статус",
+    "measure_type": "Тип измерения",
+    "is_repairable": "Ремонтопригодный",
+    "product_group": "Группа продукции",
+    "description_1c": "Описание 1С",
+    "main_number": "Основной номер",
+    "counter_group": "Группа счётчиков",
+    "maint_use": "Применение в ТО",
+    "is_serial_1c": "Серийный в 1С",
+}
+
+
+async def test_update_russian_headers_accepted(db_session):
+    dn_id = await make_design_number(db_session, "DN-001")
+    measure = await make_ref(db_session, MeasureType, name="шт")
+    row = {RUSSIAN_HEADERS[column]: value for column, value in update_row(measure_type="шт").items()}
+    row[" группа  СЧЕТЧИКОВ "] = row.pop("Группа счётчиков")
+
+    errors, valid_rows = await validate_update_rows(db_session, [row])
+
+    assert errors == []
+    assert [(r.id, r.id_measure_type) for r in valid_rows] == [(dn_id, measure)]
+
+
+async def test_update_empty_unit_type_keeps_the_current_one(db_session):
+    wagon = await make_ref(db_session, UnitType, id=5, name="Вагон")
+    await make_design_number(db_session, "DN-001", id_unit_type=wagon)
+    await make_design_number(db_session, "DN-002")
+
+    errors, valid_rows = await validate_update_rows(
+        db_session,
+        [update_row(number="DN-001", unit_type=None), update_row(number="DN-002", unit_type="")],
+    )
+
+    assert errors == []
+    assert [r.id_unit_type for r in valid_rows] == [wagon, None]
+
+
+async def test_update_empty_unit_type_keeps_the_train_rule(db_session):
+    await make_ref(db_session, UnitType, id=1, name="Поезд")
+    await make_design_number(db_session, "DN-001", id_unit_type=1)
+
+    errors, valid_rows = await validate_update_rows(db_session, [update_row(unit_type="", is_repairable="True")])
+
+    assert valid_rows == []
+    assert [e["field"] for e in errors] == ["is_repairable"]
+
+
 # --- validate_create_rows ----------------------------------------------------
 
 
@@ -696,3 +752,17 @@ async def test_create_null_text_number_is_empty(db_session):
 
     assert valid_rows == []
     assert [e["message"] for e in errors] == ["Поле 'number' пустое"] * 3
+
+
+async def test_create_russian_headers_and_empty_unit_type(db_session):
+    wagon = await make_ref(db_session, UnitType, id=5, name="Вагон")
+    existing = await make_design_number(db_session, "DN-001", id_unit_type=wagon)
+    rows = [
+        {RUSSIAN_HEADERS[column]: value for column, value in update_row(number=number, unit_type="").items()}
+        for number in ("DN-001", "DN-NEW")
+    ]
+
+    errors, valid_rows = await validate_create_rows(db_session, rows)
+
+    assert errors == []
+    assert [(r.id, r.id_unit_type) for r in valid_rows] == [(existing, wagon), (None, None)]
