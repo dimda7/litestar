@@ -495,6 +495,6 @@
 
 <script id="all-rows" type="application/json">{{ all_rows | tojson }}</script>
 <script id="headers" type="application/json">{{ headers | tojson }}</script>
-<script src="/static/js/parser.js"></script>
+<script src="{{ static_url('js/parser.js') }}"></script>
 {% endif %}
 {% endblock %}

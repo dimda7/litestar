@@ -76,7 +76,16 @@ class HomeController(Controller):
 
 base_dir = Path(__file__).parent
 
+
+# The file's mtime in the URL makes the browser fetch a changed script/style even
+# if it cached the old one heuristically (the image before no-cache did not send
+# Cache-Control, so browsers kept its api.js for days).
+def static_url(path: str) -> str:
+    return f"/static/{path}?v={int((base_dir / 'static' / path).stat().st_mtime)}"
+
+
 jinja_engine = JinjaTemplateEngine(directory=base_dir / "templates")
+jinja_engine.engine.globals["static_url"] = static_url
 jinja_engine.register_template_callable("current_db_label", lambda context: db_manager.get_active_label())
 
 app = Litestar(

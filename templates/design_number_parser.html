@@ -198,6 +198,6 @@
 </div>
 
 <script id="all-rows" type="application/json">{{ all_rows | tojson }}</script>
-<script src="/static/js/design_number_parser.js"></script>
+<script src="{{ static_url('js/design_number_parser.js') }}"></script>
 {% endif %}
 {% endblock %}
