@@ -72,7 +72,7 @@
 
 ## Litestar Specifics
 - Jinja2: `TemplateConfig(engine=JinjaTemplateEngine(directory="templates"))`
-- Static files: `create_static_files_router(path="/static", directories=[...], cache_control=CacheControlHeader(no_cache=True))` in `route_handlers` (`from litestar.static_files import create_static_files_router`). `no-cache` makes browsers revalidate every page script; without a `Cache-Control` they cache it heuristically for days and pair an old `.js` with new HTML. Litestar does not answer `If-None-Match` with `304`, so a revalidation re-downloads the file — acceptable on the intranet.
+- Static files: `create_static_files_router(path="/static", directories=[...], cache_control=CacheControlHeader(no_cache=True))` in `route_handlers` (`from litestar.static_files import create_static_files_router`). `no-cache` makes browsers revalidate every page script; without a `Cache-Control` they cache it heuristically for days and pair an old `.js` with new HTML. Litestar does not answer `If-None-Match` with `304`, so a revalidation re-downloads the file — acceptable on the intranet. Templates reference static files only through `{{ static_url('js/x.js') }}` (`app.py`), which appends `?v=<mtime>`: browsers that cached a file from an image without `Cache-Control` never revalidate it, so `no-cache` alone did not reach them (an old `api.js` without `pageData` left the parser buttons dead).
 - `litestar run --reload` works correctly only if entrypoint imports without side effects
 - In Litestar 2.24: `Template` argument is `template_name`, not `name`
 - Jinja2 imports: `from litestar.plugins.jinja import JinjaTemplateEngine` + `from litestar.template.config import TemplateConfig` (`litestar.contrib.jinja` is deprecated)

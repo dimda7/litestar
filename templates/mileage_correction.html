@@ -82,7 +82,7 @@
 </div>
 
 <script id="trains" type="application/json">{{ trains | tojson }}</script>
-<script src="/static/js/mileage_correction.js"></script>
+<script src="{{ static_url('js/mileage_correction.js') }}"></script>
 
 <style>
     #mileage-tbody tr.selected-row {

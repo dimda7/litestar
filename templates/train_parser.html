@@ -190,6 +190,6 @@
 </div>
 
 <script id="all-rows" type="application/json">{{ all_rows | tojson }}</script>
-<script src="/static/js/train_parser.js"></script>
+<script src="{{ static_url('js/train_parser.js') }}"></script>
 {% endif %}
 {% endblock %}
