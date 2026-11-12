@@ -35,7 +35,7 @@ function showModal(action) {
         hint.textContent = 'Файл design_number_rename.sql';
         btnSql.style.display = 'flex';
     } else if (action === 'update') {
-        title.textContent = 'Обновление ТМЦ номера';
+        title.textContent = 'Обновление полей ТМЦ номера';
         desc.textContent = 'Перезаписать все поля design_number и связи maint_use по данным файла';
         hint.textContent = 'Файл design_number_update.sql';
         btnSql.style.display = 'flex';
